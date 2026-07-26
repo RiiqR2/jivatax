@@ -6,7 +6,10 @@ import { FilesModule } from './files/files.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../../.env', '.env'] }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: ['../../.env', '.env'],
+    }),
     DatabaseModule,
     FilesModule,
   ],

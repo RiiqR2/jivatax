@@ -1,34 +1,8 @@
-# Dependencies
-node_modules/
-.pnpm-store/
-
-# Build
-.next/
-dist/
-coverage/
-
-# Environment
+node_modules
+dist
+.next
+coverage
 .env
-.env.*
-!.env.example
-
-# Logs
 *.log
-
-# OS
 .DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-
-# TypeScript
-*.tsbuildinfo
-
-# Docker / Volúmenes locales
-docker-data/
-minio-data/
-
-# Turborepo (por si algún día lo incorporan)
-.turbo/
+.pnpm-store

@@ -1,6 +1,14 @@
+import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export const metadata: Metadata = {
+  title: 'JivaTax',
+  description: 'Plataforma para la preparación del Balance Tributario',
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{ children: ReactNode }>) {
   return (
     <html lang="es">
       <body>{children}</body>
