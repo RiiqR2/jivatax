@@ -1,0 +1,22 @@
+{
+  "name": "balance-tributario-saas",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev": "concurrently -n API,WEB -c auto \"pnpm --filter @balance/api dev\" \"pnpm --filter @balance/web dev\"",
+    "dev:api": "pnpm --filter @balance/api dev",
+    "dev:web": "pnpm --filter @balance/web dev",
+    "build": "pnpm -r --if-present build",
+    "start": "concurrently -n API,WEB -c auto \"pnpm --filter @balance/api start\" \"pnpm --filter @balance/web start\"",
+    "lint": "pnpm -r --if-present lint",
+    "format": "prettier --write .",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2"
+  }
+}
