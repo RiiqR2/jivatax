@@ -1,8 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { UserEntity } from './entities/user.entity';
-import { randomBytes } from 'node:crypto';
 
 @Injectable()
 export class UsersService {
@@ -11,13 +10,24 @@ export class UsersService {
     readonly usersRepository: Repository<UserEntity>,
   ) {}
 
-  findByEmail(email: string): Promise<UserEntity | null> {
-    return this.usersRepository.findOneBy({ email: email.toLowerCase() });
+  findByEmail(email: string, manager?: EntityManager): Promise<UserEntity | null> {
+    const repository = manager?.getRepository(UserEntity) ?? this.usersRepository;
+    return repository.findOneBy({ email: email.trim().toLowerCase() });
   }
 
-  createInvitation(email: string, firstName: string, lastName: string): Promise<UserEntity> {
-    // The random, non-disclosed value prevents password login until a future invitation flow sets credentials.
-    const user = this.usersRepository.create({ email, firstName, lastName, passwordHash: `invited:${randomBytes(48).toString('hex')}` });
-    return this.usersRepository.save(user);
+  createInvitation(
+    email: string,
+    firstName: string,
+    lastName: string,
+    manager?: EntityManager,
+  ): Promise<UserEntity> {
+    const repository = manager?.getRepository(UserEntity) ?? this.usersRepository;
+    const user = repository.create({
+      email: email.trim().toLowerCase(),
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      passwordHash: null,
+    });
+    return repository.save(user);
   }
 }
