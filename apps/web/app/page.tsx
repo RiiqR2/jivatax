@@ -1,8 +1,8 @@
 export default function HomePage() {
   return (
-    <main>
+    <main className="page">
       <h1>JivaTax</h1>
-      <p>Base del proyecto configurada correctamente.</p>
+      <p className="description">Selecciona una empresa para administrar sus archivos contables.</p>
     </main>
   );
 }
