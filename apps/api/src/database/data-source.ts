@@ -8,7 +8,6 @@ import { OrganizationEntity } from '../organizations/entities/organization.entit
 import { UserEntity } from '../users/entities/user.entity';
 
 loadEnv({ path: '../../.env' });
-loadEnv();
 
 export default new DataSource({
   type: 'mysql',

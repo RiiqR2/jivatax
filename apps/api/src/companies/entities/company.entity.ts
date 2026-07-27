@@ -2,6 +2,8 @@ import { BeforeInsert, BeforeUpdate, Column, Entity, Index, JoinColumn, ManyToOn
 import { AuditableEntity } from '../../common/entities/auditable.entity';
 import { OrganizationEntity } from '../../organizations/entities/organization.entity';
 import { CompanyStatus } from '../enums/company-status.enum';
+import { OneToMany } from 'typeorm';
+import { StoredFileEntity } from '../../files/entities/stored-file.entity';
 
 @Entity({ name: 'companies' })
 @Index('uq_companies_organization_id_rut', ['organizationId', 'rut'], { unique: true })
@@ -30,6 +32,12 @@ export class CompanyEntity extends AuditableEntity {
   })
   @JoinColumn({ name: 'organization_id', foreignKeyConstraintName: 'fk_companies_organization_id' })
   organization!: OrganizationEntity;
+  
+  @OneToMany(
+    () => StoredFileEntity,
+    (storedFile) => storedFile.company,
+  )
+  storedFiles!: StoredFileEntity[];
 
   @BeforeInsert()
   @BeforeUpdate()

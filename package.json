@@ -12,7 +12,12 @@
     "format": "prettier --write .",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",
-    "infra:reset": "docker compose down -v --remove-orphans && docker compose up -d"
+    "infra:reset": "docker compose down -v --remove-orphans && docker compose up -d",
+    "db:show": "pnpm --filter @jivatax/api migration:show",
+    "db:run": "pnpm --filter @jivatax/api migration:run",
+    "db:revert": "pnpm --filter @jivatax/api migration:revert",
+    "db:generate": "pnpm --filter @jivatax/api migration:generate",
+    "db:create": "pnpm --filter @jivatax/api migration:create"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
