@@ -7,12 +7,15 @@
     "build": "nest build",
     "start": "node dist/main.js",
     "lint": "eslint \"src/**/*.ts\"",
-    "typeorm": "typeorm-ts-node-commonjs -d src/database/data-source.ts",
-    "migration:generate": "pnpm typeorm migration:generate",
-    "migration:create": "pnpm typeorm migration:create",
-    "migration:run": "pnpm typeorm migration:run",
-    "migration:revert": "pnpm typeorm migration:revert",
-    "schema:drop": "pnpm typeorm schema:drop"
+
+    "typeorm": "typeorm-ts-node-commonjs",
+
+    "migration:show": "typeorm-ts-node-commonjs migration:show -d src/database/data-source.ts",
+    "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/database/data-source.ts",
+    "migration:create": "typeorm-ts-node-commonjs migration:create",
+    "migration:run": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
+    "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
+    "schema:drop": "typeorm-ts-node-commonjs schema:drop -d src/database/data-source.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.731.1",
@@ -25,7 +28,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "dotenv": "^17.4.2",
-    "mysql2": "^3.12.0",
+    "mysql2": "^3.23.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "typeorm": "^0.3.31"
@@ -39,7 +42,6 @@
     "eslint": "^9.17.0",
     "globals": "^17.8.0",
     "ts-node": "^10.9.2",
-    "typeorm-ts-node-commonjs": "^0.3.20",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.65.0"
   }
