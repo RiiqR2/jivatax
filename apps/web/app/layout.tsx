@@ -13,10 +13,7 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body>
-        <div className="shell">
-          <header className="topbar"><div className="brand"><span className="brand-mark">J</span> JivaTax</div></header>
-          {children}
-        </div>
+        {children}
       </body>
     </html>
   );
