@@ -150,3 +150,11 @@ No se elimina ninguno durante esta etapa. `tests/files.test.ts` también se cons
 ## Variables de entorno
 
 `src/lib/env.ts` valida `NEXT_PUBLIC_API_URL` y `NEXT_PUBLIC_MAX_FILE_SIZE_BYTES` con Zod. La URL es obligatoria; una compilación o ejecución sin configuración válida debe fallar temprano con un mensaje claro. Los secretos nunca deben usar el prefijo `NEXT_PUBLIC_`.
+
+## Autenticación por sesión
+
+La web usa exclusivamente la cookie opaca `HttpOnly` emitida por la API y Axios con `withCredentials`; nunca persiste tokens o credenciales en Web Storage. `AuthenticatedShell` consulta `/auth/session` antes de renderizar el panel y redirige un `401` a `/login`. La seguridad efectiva reside en los guards de NestJS.
+
+Cuando existe una membresía activa se selecciona automáticamente. Con varias membresías la API exige selección explícita y con ninguna permite el acceso autenticado sin contexto organizacional. `NEXT_PUBLIC_ORGANIZATION_ID`, si existe en despliegues antiguos, queda deprecada y no constituye una fuente de autorización.
+
+SameSite=Lax y la validación de Origin/Referer protegen las mutaciones autenticadas en la topología same-site actual. Si el producto adopta una topología cross-site, se deberá añadir un token CSRF antes de usar `SameSite=None`. El logout no envía `Clear-Site-Data`: limpiar todo el storage del origen podría afectar preferencias no sensibles de otras aplicaciones; sí destruye Redis, limpia la cookie e invalida React Query.
