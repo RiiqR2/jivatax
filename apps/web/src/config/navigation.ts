@@ -9,7 +9,7 @@ export interface NavigationItem {
 
 export const mainNavigation: NavigationItem[] = [
   { label: 'Resumen', href: '/', icon: LayoutDashboard },
-  { label: 'Empresas', href: '/companies', icon: Building2, disabled: true },
+  { label: 'Empresas', href: '/companies', icon: Building2 },
   { label: 'Usuarios', href: '/users', icon: Users, disabled: true },
   { label: 'Documentos', href: '#', icon: FileText, disabled: true },
 ];
