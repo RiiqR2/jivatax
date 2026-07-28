@@ -41,9 +41,16 @@ export default function CompanyPage({
         <p className="mt-1 text-sm text-slate-500">
           Continúa al módulo de documentos de esta empresa.
         </p>
-        <Button className="mt-5" asChild>
-          <Link href={`/companies/${companyId}/files`}>Documentos</Link>
-        </Button>
+        <div className="mt-5 flex justify-center gap-3">
+          <Button asChild>
+            <Link href={`/companies/${companyId}/files`}>Documentos</Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href={`/companies/${companyId}/account-plan`}>
+              Plan de cuentas
+            </Link>
+          </Button>
+        </div>
       </section>
     </main>
   );

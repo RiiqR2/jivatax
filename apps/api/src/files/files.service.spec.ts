@@ -74,6 +74,7 @@ function harness(
   const storage: ObjectStorageService = {
     createUploadUrl: async () => "https://storage/upload",
     objectExists: async () => options.objectExists ?? true,
+    getObject: async () => Buffer.from("test"),
     createDownloadUrl: async (call) => {
       downloadCalls.push(call as unknown as Record<string, unknown>);
       return "https://storage/download";
