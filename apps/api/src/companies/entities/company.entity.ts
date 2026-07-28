@@ -4,6 +4,7 @@ import { OrganizationEntity } from '../../organizations/entities/organization.en
 import { CompanyStatus } from '../enums/company-status.enum';
 import { OneToMany } from 'typeorm';
 import { StoredFileEntity } from '../../files/entities/stored-file.entity';
+import { normalizeChileanRut } from '../utils/chilean-rut';
 
 @Entity({ name: 'companies' })
 @Index('uq_companies_organization_id_rut', ['organizationId', 'rut'], { unique: true })
@@ -42,6 +43,6 @@ export class CompanyEntity extends AuditableEntity {
   @BeforeInsert()
   @BeforeUpdate()
   normalizeRut(): void {
-    this.rut = this.rut.replace(/[.\s]/g, '');
+    this.rut = normalizeChileanRut(this.rut);
   }
 }
