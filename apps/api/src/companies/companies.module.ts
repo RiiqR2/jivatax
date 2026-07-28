@@ -1,12 +1,14 @@
-import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { CompaniesService } from './companies.service';
-import { CompaniesController } from './companies.controller';
-import { CompanyEntity } from './entities/company.entity';
-import { OrganizationMemberEntity } from '../organizations/entities/organization-member.entity';
+import { Module } from "@nestjs/common";
+import { TypeOrmModule } from "@nestjs/typeorm";
+import { CompaniesService } from "./companies.service";
+import { CompaniesController } from "./companies.controller";
+import { CompanyEntity } from "./entities/company.entity";
+import { OrganizationMemberEntity } from "../organizations/entities/organization-member.entity";
 
 @Module({
-  imports: [TypeOrmModule.forFeature([CompanyEntity, OrganizationMemberEntity])],
+  imports: [
+    TypeOrmModule.forFeature([CompanyEntity, OrganizationMemberEntity]),
+  ],
   controllers: [CompaniesController],
   providers: [CompaniesService],
   exports: [CompaniesService],

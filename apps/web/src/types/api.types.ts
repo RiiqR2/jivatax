@@ -10,4 +10,5 @@ export interface ApiErrorResponse {
   errors?: ApiFieldError[];
 }
 
-export type ApiResult<T> = { data: T; error?: never } | { data?: never; error: ApiErrorResponse };
+export type ApiResult<T> =
+  { data: T; error?: never } | { data?: never; error: ApiErrorResponse };

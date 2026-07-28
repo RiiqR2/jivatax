@@ -1,7 +1,7 @@
-import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { UserEntity } from './entities/user.entity';
+import { Injectable } from "@nestjs/common";
+import { InjectRepository } from "@nestjs/typeorm";
+import { Repository } from "typeorm";
+import { UserEntity } from "./entities/user.entity";
 
 @Injectable()
 export class UsersService {
@@ -11,10 +11,11 @@ export class UsersService {
   ) {}
 
   findForAuthentication(email: string): Promise<UserEntity | null> {
-    return this.usersRepository.createQueryBuilder('user')
-      .addSelect('user.passwordHash')
-      .where('user.email = :email', { email: email.trim().toLowerCase() })
-      .andWhere('user.deletedAt IS NULL')
+    return this.usersRepository
+      .createQueryBuilder("user")
+      .addSelect("user.passwordHash")
+      .where("user.email = :email", { email: email.trim().toLowerCase() })
+      .andWhere("user.deletedAt IS NULL")
       .getOne();
   }
 }

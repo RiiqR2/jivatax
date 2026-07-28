@@ -1,11 +1,119 @@
-'use client';
-import Link from 'next/link';
-import { Building2, Pencil } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { EmptyState } from '@/components/shared/empty-state';
-import { CompanyStatusBadge } from './company-status-badge';
-import type { Company } from '@/types/company.types';
-export function CompanyList({ companies, canEdit }: { companies: Company[]; canEdit: boolean }) {
-  if (!companies.length) return <EmptyState icon={Building2} title="No hay empresas registradas" description="Crea la primera empresa para comenzar a gestionar sus documentos tributarios." action={canEdit ? <Button asChild><Link href="/companies/new">Crear empresa</Link></Button> : undefined} />;
-  return <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="hidden overflow-x-auto md:block"><table><thead><tr><th>Razón social</th><th>Nombre de fantasía</th><th>RUT</th><th>Estado</th><th>Última actualización</th><th><span className="sr-only">Acciones</span></th></tr></thead><tbody>{companies.map((company) => <tr key={company.id}><td className="font-medium text-slate-900">{company.legalName}</td><td>{company.tradeName || '—'}</td><td>{company.taxId}</td><td><CompanyStatusBadge status={company.status} /></td><td>{new Intl.DateTimeFormat('es-CL', { dateStyle: 'medium' }).format(new Date(company.updatedAt))}</td><td><div className="flex justify-end gap-2"><Button asChild variant="outline"><Link href={`/companies/${company.id}`}>Administrar</Link></Button>{canEdit && <Button asChild variant="ghost"><Link aria-label={`Editar ${company.legalName}`} href={`/companies/${company.id}/edit`}><Pencil className="size-4" /> Editar</Link></Button>}</div></td></tr>)}</tbody></table></div><div className="divide-y divide-slate-200 md:hidden">{companies.map((company) => <article className="p-4" key={company.id}><div className="flex items-start justify-between gap-3"><div><h2 className="font-semibold text-slate-950">{company.legalName}</h2><p className="mt-1 text-sm text-slate-500">{company.tradeName || 'Sin nombre de fantasía'} · {company.taxId}</p></div><CompanyStatusBadge status={company.status} /></div><div className="mt-4 flex gap-2"><Button asChild className="flex-1"><Link href={`/companies/${company.id}`}>Administrar</Link></Button>{canEdit && <Button asChild variant="outline"><Link aria-label={`Editar ${company.legalName}`} href={`/companies/${company.id}/edit`}><Pencil className="size-4" /></Link></Button>}</div></article>)}</div></div>;
+"use client";
+import Link from "next/link";
+import { Building2, Pencil } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/shared/empty-state";
+import { CompanyStatusBadge } from "./company-status-badge";
+import type { Company } from "@/types/company.types";
+export function CompanyList({
+  companies,
+  canEdit,
+}: {
+  companies: Company[];
+  canEdit: boolean;
+}) {
+  if (!companies.length)
+    return (
+      <EmptyState
+        icon={Building2}
+        title="No hay empresas registradas"
+        description="Crea la primera empresa para comenzar a gestionar sus documentos tributarios."
+        action={
+          canEdit ? (
+            <Button asChild>
+              <Link href="/companies/new">Crear empresa</Link>
+            </Button>
+          ) : undefined
+        }
+      />
+    );
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="hidden overflow-x-auto md:block">
+        <table>
+          <thead>
+            <tr>
+              <th>Razón social</th>
+              <th>Nombre de fantasía</th>
+              <th>RUT</th>
+              <th>Estado</th>
+              <th>Última actualización</th>
+              <th>
+                <span className="sr-only">Acciones</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {companies.map((company) => (
+              <tr key={company.id}>
+                <td className="font-medium text-slate-900">
+                  {company.legalName}
+                </td>
+                <td>{company.tradeName || "—"}</td>
+                <td>{company.taxId}</td>
+                <td>
+                  <CompanyStatusBadge status={company.status} />
+                </td>
+                <td>
+                  {new Intl.DateTimeFormat("es-CL", {
+                    dateStyle: "medium",
+                  }).format(new Date(company.updatedAt))}
+                </td>
+                <td>
+                  <div className="flex justify-end gap-2">
+                    <Button asChild variant="outline">
+                      <Link href={`/companies/${company.id}`}>Administrar</Link>
+                    </Button>
+                    {canEdit && (
+                      <Button asChild variant="ghost">
+                        <Link
+                          aria-label={`Editar ${company.legalName}`}
+                          href={`/companies/${company.id}/edit`}
+                        >
+                          <Pencil className="size-4" /> Editar
+                        </Link>
+                      </Button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="divide-y divide-slate-200 md:hidden">
+        {companies.map((company) => (
+          <article className="p-4" key={company.id}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-semibold text-slate-950">
+                  {company.legalName}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {company.tradeName || "Sin nombre de fantasía"} ·{" "}
+                  {company.taxId}
+                </p>
+              </div>
+              <CompanyStatusBadge status={company.status} />
+            </div>
+            <div className="mt-4 flex gap-2">
+              <Button asChild className="flex-1">
+                <Link href={`/companies/${company.id}`}>Administrar</Link>
+              </Button>
+              {canEdit && (
+                <Button asChild variant="outline">
+                  <Link
+                    aria-label={`Editar ${company.legalName}`}
+                    href={`/companies/${company.id}/edit`}
+                  >
+                    <Pencil className="size-4" />
+                  </Link>
+                </Button>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
 }

@@ -2,7 +2,7 @@ import {
   StoredFileCategory,
   StoredFileDirection,
   StoredFileStatus,
-} from '../entities/stored-file.entity';
+} from "../entities/stored-file.entity";
 
 export interface FileResponseDto {
   id: string;
