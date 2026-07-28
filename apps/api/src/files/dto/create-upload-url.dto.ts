@@ -1,3 +1,3 @@
-import { FileMetadataDto } from './file-metadata.dto';
+import { FileMetadataDto } from "./file-metadata.dto";
 
 export class CreateUploadUrlDto extends FileMetadataDto {}

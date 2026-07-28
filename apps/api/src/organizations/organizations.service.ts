@@ -1,8 +1,8 @@
-import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { OrganizationMemberEntity } from './entities/organization-member.entity';
-import { OrganizationEntity } from './entities/organization.entity';
+import { Injectable } from "@nestjs/common";
+import { InjectRepository } from "@nestjs/typeorm";
+import { Repository } from "typeorm";
+import { OrganizationMemberEntity } from "./entities/organization-member.entity";
+import { OrganizationEntity } from "./entities/organization.entity";
 
 @Injectable()
 export class OrganizationsService {

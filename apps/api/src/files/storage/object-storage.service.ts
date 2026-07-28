@@ -1,4 +1,4 @@
-export const OBJECT_STORAGE = Symbol('OBJECT_STORAGE');
+export const OBJECT_STORAGE = Symbol("OBJECT_STORAGE");
 
 export interface CreateUploadUrlOptions {
   bucket: string;

@@ -7,15 +7,15 @@ import {
   Length,
   Matches,
   MaxLength,
-} from 'class-validator';
-import { StoredFileCategory } from '../entities/stored-file.entity';
+} from "class-validator";
+import { StoredFileCategory } from "../entities/stored-file.entity";
 
 export class FileMetadataDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(255)
-  @NotContains('/')
-  @NotContains('\\')
+  @NotContains("/")
+  @NotContains("\\")
   originalName!: string;
 
   @IsString()
@@ -24,7 +24,9 @@ export class FileMetadataDto {
   contentType!: string;
 
   @IsString()
-  @Matches(/^\d+$/, { message: 'sizeBytes must be a non-negative integer string' })
+  @Matches(/^\d+$/, {
+    message: "sizeBytes must be a non-negative integer string",
+  })
   @Length(1, 20)
   sizeBytes!: string;
 

@@ -1,1 +1,5 @@
-export interface AccessTokenPayload { sub: string; type: 'access'; sessionId: string; }
+export interface AccessTokenPayload {
+  sub: string;
+  type: "access";
+  sessionId: string;
+}

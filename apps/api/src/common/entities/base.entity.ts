@@ -3,29 +3,29 @@ import {
   DeleteDateColumn,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
-} from 'typeorm';
+} from "typeorm";
 
 export abstract class BaseEntity {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryGeneratedColumn("uuid")
   id!: string;
 
   @CreateDateColumn({
-    name: 'created_at',
-    type: 'datetime',
+    name: "created_at",
+    type: "datetime",
     precision: 6,
   })
   createdAt!: Date;
 
   @UpdateDateColumn({
-    name: 'updated_at',
-    type: 'datetime',
+    name: "updated_at",
+    type: "datetime",
     precision: 6,
   })
   updatedAt!: Date;
 
   @DeleteDateColumn({
-    name: 'deleted_at',
-    type: 'datetime',
+    name: "deleted_at",
+    type: "datetime",
     precision: 6,
     nullable: true,
   })

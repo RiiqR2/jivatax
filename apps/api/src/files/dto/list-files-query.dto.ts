@@ -1,9 +1,9 @@
-import { IsEnum, IsOptional } from 'class-validator';
+import { IsEnum, IsOptional } from "class-validator";
 import {
   StoredFileCategory,
   StoredFileDirection,
   StoredFileStatus,
-} from '../entities/stored-file.entity';
+} from "../entities/stored-file.entity";
 
 export class ListFilesQueryDto {
   @IsOptional()

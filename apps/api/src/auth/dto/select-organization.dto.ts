@@ -1,2 +1,4 @@
-import { IsUUID } from 'class-validator';
-export class SelectOrganizationDto { @IsUUID() organizationId!: string; }
+import { IsUUID } from "class-validator";
+export class SelectOrganizationDto {
+  @IsUUID() organizationId!: string;
+}
