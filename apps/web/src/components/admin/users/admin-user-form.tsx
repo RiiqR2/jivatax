@@ -49,16 +49,20 @@ export function AdminUserForm({ user }: AdminUserFormProps) {
     }
 
     const input = user
-      ? {
-          firstName: values.firstName,
-          lastName: values.lastName,
-          platformRole: values.platformRole,
-          status: values.status,
-        }
-      : {
-          ...values,
-          memberships: [],
-        };
+    ? {
+        firstName: values.firstName,
+        lastName: values.lastName,
+        platformRole: values.platformRole,
+        status: values.status,
+      }
+    : {
+        email: values.email,
+        firstName: values.firstName,
+        lastName: values.lastName,
+        temporaryPassword: values.temporaryPassword,
+        platformRole: values.platformRole,
+        memberships: [],
+      };
     await mutation.mutateAsync(input);
     router.push("/administration/users");
   });
