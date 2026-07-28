@@ -5,6 +5,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
 import { IsNull, Repository } from 'typeorm';
+import type { Request, Response } from 'express';
 import { OrganizationMemberEntity } from '../organizations/entities/organization-member.entity';
 import { OrganizationStatus } from '../organizations/entities/organization.entity';
 import { OrganizationMemberStatus } from '../organizations/enums/organization-member-status.enum';
@@ -15,6 +16,7 @@ import { AuthSessionEntity } from './entities/auth-session.entity';
 import type { AccessTokenPayload } from './interfaces/access-token-payload.interface';
 import type { AuthenticatedUser } from './interfaces/authenticated-user.interface';
 import type { RefreshTokenPayload } from './interfaces/refresh-token-payload.interface';
+import { AuthCookieService } from './auth-cookie.service';
 
 type RequestMetadata = { ip: string | null; userAgent: string | null };
 type OrganizationSummary = { id: string; name: string; role: string };
@@ -30,6 +32,7 @@ export class AuthService {
     private readonly users: UsersService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly cookies: AuthCookieService,
     @InjectRepository(AuthSessionEntity) private readonly sessions: Repository<AuthSessionEntity>,
     @InjectRepository(OrganizationMemberEntity) private readonly members: Repository<OrganizationMemberEntity>,
   ) {
@@ -85,8 +88,38 @@ export class AuthService {
     await this.sessions.update(user.sessionId, { currentOrganizationId: organizationId });
     return { body: this.response(user, user.sessionId, organizationId, organizations), access: await this.signAccess(user.id, user.sessionId) };
   }
-  async logout(sessionId?: string): Promise<void> { if (sessionId) await this.sessions.update({ id: sessionId, revokedAt: IsNull() }, { revokedAt: new Date() }); }
-  async sessionIdFromAnyToken(access?: string, refresh?: string): Promise<string | undefined> { for (const [token, secret] of [[access, this.accessSecret], [refresh, this.refreshSecret]] as const) { if (!token) continue; try { return (await this.jwt.verifyAsync<{ sessionId: string }>(token, { secret })).sessionId; } catch { continue; } } return undefined; }
+  async logout(req: Request, res: Response): Promise<void> {
+    try {
+      const sessionId = await this.sessionIdFromAnyToken(
+        req.cookies?.[this.cookies.accessName] as string | undefined,
+        req.cookies?.[this.cookies.refreshName] as string | undefined,
+      );
+      if (sessionId) {
+        await this.sessions.update(
+          { id: sessionId, revokedAt: IsNull() },
+          { revokedAt: new Date() },
+        );
+      }
+    } finally {
+      this.cookies.clearAuthCookies(res);
+    }
+  }
+
+  private async sessionIdFromAnyToken(access?: string, refresh?: string): Promise<string | undefined> {
+    for (const [token, secret] of [[access, this.accessSecret], [refresh, this.refreshSecret]] as const) {
+      if (!token) continue;
+      try {
+        const payload = await this.jwt.verifyAsync<{ sessionId?: string }>(token, {
+          secret,
+          ignoreExpiration: true,
+        });
+        if (payload.sessionId) return payload.sessionId;
+      } catch {
+        continue;
+      }
+    }
+    return undefined;
+  }
   private async organizations(userId: string): Promise<OrganizationSummary[]> { const memberships = await this.members.find({ where: { userId, status: OrganizationMemberStatus.ACTIVE, organization: { status: OrganizationStatus.ACTIVE, deletedAt: IsNull() } }, relations: { organization: true }, order: { organization: { name: 'ASC' } } }); return memberships.map((item) => ({ id: item.organizationId, name: item.organization.name, role: item.role })); }
   private response(user: Pick<UserEntity, 'id'|'email'|'firstName'|'lastName'>, _sessionId: string, currentId: string | null, organizations: OrganizationSummary[]): SessionResponse { return { user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName }, organization: organizations.find((item) => item.id === currentId) ?? null, organizations, requiresOrganizationSelection: organizations.length > 1 && !currentId }; }
   private async issue(userId: string, sessionId: string): Promise<{ access: string; refresh: string }> { return { access: await this.signAccess(userId, sessionId), refresh: await this.jwt.signAsync<RefreshTokenPayload>({ sub: userId, type: REFRESH_TOKEN_TYPE, sessionId, jti: randomUUID() }, { secret: this.refreshSecret, expiresIn: this.refreshTtl }) }; }

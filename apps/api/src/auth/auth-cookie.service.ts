@@ -14,14 +14,42 @@ export class AuthCookieService {
     const domain = this.config.get<string>('COOKIE_DOMAIN')?.trim();
     return { httpOnly: true, secure, sameSite, path, maxAge, ...(domain ? { domain } : {}) };
   }
-  set(res: Response, access: string, refresh: string): void {
-    res.cookie(this.accessName, access, this.options('/', Number(this.config.get('JWT_ACCESS_TTL_SECONDS', DEFAULT_ACCESS_TTL_SECONDS)) * 1000));
-    res.cookie(this.refreshName, refresh, this.options('/api/auth', Number(this.config.get('JWT_REFRESH_TTL_SECONDS', DEFAULT_REFRESH_TTL_SECONDS)) * 1000));
+  setAccessCookie(res: Response, token: string): void {
+    res.cookie(this.accessName, token, this.accessOptions());
   }
-  setAccess(res: Response, access: string): void { res.cookie(this.accessName, access, this.options('/', Number(this.config.get('JWT_ACCESS_TTL_SECONDS', DEFAULT_ACCESS_TTL_SECONDS)) * 1000)); }
-  clear(res: Response): void {
-    const access = this.options('/', 0); const refresh = this.options('/api/auth', 0);
-    delete access.maxAge; delete refresh.maxAge;
-    res.clearCookie(this.accessName, access); res.clearCookie(this.refreshName, refresh);
+
+  setRefreshCookie(res: Response, token: string): void {
+    res.cookie(this.refreshName, token, this.refreshOptions());
+  }
+
+  setAuthCookies(res: Response, access: string, refresh: string): void {
+    this.setAccessCookie(res, access);
+    this.setRefreshCookie(res, refresh);
+  }
+
+  clearAccessCookie(res: Response): void {
+    res.clearCookie(this.accessName, this.withoutMaxAge(this.accessOptions()));
+  }
+
+  clearRefreshCookie(res: Response): void {
+    res.clearCookie(this.refreshName, this.withoutMaxAge(this.refreshOptions()));
+  }
+
+  clearAuthCookies(res: Response): void {
+    this.clearAccessCookie(res);
+    this.clearRefreshCookie(res);
+  }
+
+  private accessOptions(): CookieOptions {
+    return this.options('/', Number(this.config.get('JWT_ACCESS_TTL_SECONDS', DEFAULT_ACCESS_TTL_SECONDS)) * 1000);
+  }
+
+  private refreshOptions(): CookieOptions {
+    return this.options('/api/auth', Number(this.config.get('JWT_REFRESH_TTL_SECONDS', DEFAULT_REFRESH_TTL_SECONDS)) * 1000);
+  }
+
+  private withoutMaxAge(options: CookieOptions): CookieOptions {
+    const { maxAge: _maxAge, ...cookieIdentity } = options;
+    return cookieIdentity;
   }
 }
