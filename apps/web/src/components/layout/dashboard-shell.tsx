@@ -40,7 +40,7 @@ function ProtectedDashboard({
 
   if (
     pathname.startsWith("/administration") &&
-    session.data.user.platformRole !== "metauser"
+    session.data?.user.platformRole !== "metauser"
   ) {
     return (
       <main className="grid min-h-screen place-items-center bg-slate-50 p-6">

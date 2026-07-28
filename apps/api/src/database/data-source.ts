@@ -7,6 +7,8 @@ import { OrganizationMemberEntity } from "../organizations/entities/organization
 import { OrganizationEntity } from "../organizations/entities/organization.entity";
 import { UserEntity } from "../users/entities/user.entity";
 import { AuthSessionEntity } from "../auth/entities/auth-session.entity";
+import { SiiAccountEntity } from "../sii-account-plan/entities/sii-account.entity";
+import { SiiAccountPlanVersionEntity } from "../sii-account-plan/entities/sii-account-plan-version.entity";
 
 loadEnv({ path: "../../.env" });
 
@@ -24,6 +26,8 @@ export default new DataSource({
     CompanyEntity,
     StoredFileEntity,
     AuthSessionEntity,
+    SiiAccountPlanVersionEntity,
+    SiiAccountEntity,
   ],
   migrations: ["src/database/migrations/*.ts"],
   synchronize: false,
