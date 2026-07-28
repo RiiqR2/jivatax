@@ -7,6 +7,7 @@ import { StoredFileEntity } from './entities/stored-file.entity';
 import { FilesController } from './files.controller';
 import { FilesService } from './files.service';
 import { StorageModule } from './storage/storage.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { StorageModule } from './storage/storage.module';
     CompaniesModule,
     ConfigModule.forFeature(storageConfig),
     StorageModule,
+    AuthModule,
   ],
   controllers: [FilesController],
   providers: [FilesService],
