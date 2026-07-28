@@ -72,4 +72,19 @@ export class S3ObjectStorageService implements ObjectStorageService {
       throw error;
     }
   }
+
+  async getObject(bucket: string, objectKey: string): Promise<Buffer> {
+    const response = await this.client.send(
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: objectKey,
+      }),
+    );
+
+    if (!response.Body) {
+      throw new Error("Storage object has no body");
+    }
+
+    return Buffer.from(await response.Body.transformToByteArray());
+  }
 }

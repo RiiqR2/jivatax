@@ -14,6 +14,7 @@ export enum StoredFileCategory {
   XML = "xml",
   DECLARATION = "declaration",
   REPORT = "report",
+  COMPANY_ACCOUNT_PLAN = "company_account_plan",
   OTHER = "other",
 }
 

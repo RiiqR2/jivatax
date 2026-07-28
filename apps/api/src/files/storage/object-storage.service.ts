@@ -18,4 +18,5 @@ export interface ObjectStorageService {
   createUploadUrl(options: CreateUploadUrlOptions): Promise<string>;
   createDownloadUrl(options: CreateDownloadUrlOptions): Promise<string>;
   objectExists(bucket: string, objectKey: string): Promise<boolean>;
+  getObject(bucket: string, objectKey: string): Promise<Buffer>;
 }

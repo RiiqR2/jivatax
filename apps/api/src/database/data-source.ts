@@ -9,6 +9,9 @@ import { UserEntity } from "../users/entities/user.entity";
 import { AuthSessionEntity } from "../auth/entities/auth-session.entity";
 import { SiiAccountEntity } from "../sii-account-plan/entities/sii-account.entity";
 import { SiiAccountPlanVersionEntity } from "../sii-account-plan/entities/sii-account-plan-version.entity";
+import { CompanyAccountPlanVersionEntity } from "../company-account-plan/entities/company-account-plan-version.entity";
+import { CompanyAccountEntity } from "../company-account-plan/entities/company-account.entity";
+import { CompanyAccountMappingEntity } from "../company-account-plan/entities/company-account-mapping.entity";
 
 loadEnv({ path: "../../.env" });
 
@@ -28,6 +31,9 @@ export default new DataSource({
     AuthSessionEntity,
     SiiAccountPlanVersionEntity,
     SiiAccountEntity,
+    CompanyAccountPlanVersionEntity,
+    CompanyAccountEntity,
+    CompanyAccountMappingEntity,
   ],
   migrations: ["src/database/migrations/*.ts"],
   synchronize: false,
