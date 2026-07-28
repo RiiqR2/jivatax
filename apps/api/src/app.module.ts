@@ -8,6 +8,7 @@ import { FilesModule } from "./files/files.module";
 import { OrganizationsModule } from "./organizations/organizations.module";
 import { UsersModule } from "./users/users.module";
 import { AuthModule } from "./auth/auth.module";
+import { SiiAccountPlanModule } from "./sii-account-plan/sii-account-plan.module";
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { AuthModule } from "./auth/auth.module";
     OrganizationsModule,
     CompaniesModule,
     FilesModule,
+    SiiAccountPlanModule,
   ],
   controllers: [AppController],
 })
