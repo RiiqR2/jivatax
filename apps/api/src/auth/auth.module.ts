@@ -14,4 +14,42 @@ import { CompanyAccessGuard } from './guards/company-access.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { OriginGuard } from './origin.guard';
-@Module({ imports: [JwtModule.register({}), ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 100 }]), TypeOrmModule.forFeature([AuthSessionEntity, OrganizationMemberEntity, CompanyEntity]), UsersModule], controllers: [AuthController], providers: [AuthService, AuthCookieService, LocalAuthGuard, CompanyAccessGuard, { provide: APP_GUARD, useClass: OriginGuard }, { provide: APP_GUARD, useClass: JwtAuthGuard }], exports: [AuthService, CompanyAccessGuard] }) export class AuthModule {}
+
+@Module({
+  imports: [
+    JwtModule.register({}),
+    ThrottlerModule.forRoot([
+      {
+        name: 'default',
+        ttl: 60_000,
+        limit: 100,
+      },
+    ]),
+    TypeOrmModule.forFeature([
+      AuthSessionEntity,
+      OrganizationMemberEntity,
+      CompanyEntity,
+    ]),
+    UsersModule,
+  ],
+  controllers: [AuthController],
+  providers: [
+    AuthService,
+    AuthCookieService,
+    LocalAuthGuard,
+    CompanyAccessGuard,
+    {
+      provide: APP_GUARD,
+      useClass: OriginGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+  ],
+  exports: [
+    AuthService,
+    CompanyAccessGuard,
+  ],
+})
+export class AuthModule {}
