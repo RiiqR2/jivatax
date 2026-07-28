@@ -6,6 +6,7 @@ import { DatabaseModule } from './database/database.module';
 import { FilesModule } from './files/files.module';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { UsersModule } from './users/users.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { UsersModule } from './users/users.module';
       envFilePath: ['../../.env', '.env'],
     }),
     DatabaseModule,
+    AuthModule,
     UsersModule,
     OrganizationsModule,
     CompaniesModule,

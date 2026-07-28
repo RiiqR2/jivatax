@@ -6,6 +6,7 @@ import { StoredFileEntity } from '../files/entities/stored-file.entity';
 import { OrganizationMemberEntity } from '../organizations/entities/organization-member.entity';
 import { OrganizationEntity } from '../organizations/entities/organization.entity';
 import { UserEntity } from '../users/entities/user.entity';
+import { AuthSessionEntity } from '../auth/entities/auth-session.entity';
 
 loadEnv({ path: '../../.env' });
 
@@ -22,6 +23,7 @@ export default new DataSource({
     OrganizationMemberEntity,
     CompanyEntity,
     StoredFileEntity,
+    AuthSessionEntity,
   ],
   migrations: ['src/database/migrations/*.ts'],
   synchronize: false,

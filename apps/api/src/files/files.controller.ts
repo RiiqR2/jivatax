@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { CompanyAccessGuard } from '../auth/guards/company-access.guard';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
 import {
@@ -10,6 +11,7 @@ import { ListFilesQueryDto } from './dto/list-files-query.dto';
 import { FilesService } from './files.service';
 
 @Controller('companies/:companyId/files')
+@UseGuards(CompanyAccessGuard)
 export class FilesController {
   constructor(private readonly filesService: FilesService) {}
 

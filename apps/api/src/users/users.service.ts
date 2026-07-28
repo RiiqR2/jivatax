@@ -9,4 +9,12 @@ export class UsersService {
     @InjectRepository(UserEntity)
     readonly usersRepository: Repository<UserEntity>,
   ) {}
+
+  findForAuthentication(email: string): Promise<UserEntity | null> {
+    return this.usersRepository.createQueryBuilder('user')
+      .addSelect('user.passwordHash')
+      .where('user.email = :email', { email: email.trim().toLowerCase() })
+      .andWhere('user.deletedAt IS NULL')
+      .getOne();
+  }
 }

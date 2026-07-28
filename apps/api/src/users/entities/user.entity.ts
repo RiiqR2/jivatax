@@ -16,8 +16,8 @@ export class UserEntity extends AuditableEntity {
   email!: string;
 
   @Exclude()
-  @Column({ name: 'password_hash', type: 'varchar', length: 255 })
-  passwordHash!: string;
+  @Column({ name: 'password_hash', type: 'varchar', length: 255, nullable: true, select: false })
+  passwordHash!: string | null;
 
   @Column({ name: 'first_name', type: 'varchar', length: 100 })
   firstName!: string;
@@ -31,12 +31,21 @@ export class UserEntity extends AuditableEntity {
   @Column({ name: 'last_login_at', type: 'datetime', precision: 6, nullable: true })
   lastLoginAt!: Date | null;
 
+  @Column({ name: 'password_changed_at', type: 'datetime', precision: 6, nullable: true })
+  passwordChangedAt!: Date | null;
+
+  @Column({ name: 'failed_login_attempts', type: 'smallint', unsigned: true, default: 0 })
+  failedLoginAttempts!: number;
+
+  @Column({ name: 'locked_until', type: 'datetime', precision: 6, nullable: true })
+  lockedUntil!: Date | null;
+
   @OneToMany(() => OrganizationMemberEntity, (member) => member.user)
   organizationMembers!: OrganizationMemberEntity[];
 
   @BeforeInsert()
   @BeforeUpdate()
   normalizeEmail(): void {
-    this.email = this.email.toLowerCase();
+    this.email = this.email.trim().toLowerCase();
   }
 }
