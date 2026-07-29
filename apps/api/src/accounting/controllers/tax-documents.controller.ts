@@ -41,7 +41,7 @@ export class TaxDocumentsController {
     @Param("taxPeriodId") periodId: string,
     @Param("documentId") id: string,
   ) {
-    return this.service.get(companyId, periodId, id);
+    return this.service.detail(companyId, periodId, id);
   }
   @Post(":documentId/process") process(
     @Param("companyId") companyId: string,

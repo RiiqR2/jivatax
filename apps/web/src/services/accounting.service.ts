@@ -4,6 +4,7 @@ import type {
   TaxDocumentReport,
   TaxDocumentType,
   TaxPeriod,
+  AccountMappingsResponse,
 } from "@/types/accounting.types";
 
 export const accountingService = {
@@ -97,6 +98,58 @@ export const accountingService = {
       `/companies/${companyId}/tax-periods/${periodId}/documents/${documentId}/report`,
     );
     return response.data;
+  },
+  async getTaxDocumentReport(
+    companyId: string,
+    periodId: string,
+    documentId: string,
+  ): Promise<TaxDocumentReport> {
+    return this.report(companyId, periodId, documentId);
+  },
+  async accountMappings(
+    companyId: string,
+    periodId: string,
+    filters: {
+      status?: string;
+      search?: string;
+      newInPeriod?: boolean;
+      nameChanged?: boolean;
+      page?: number;
+      limit?: number;
+      documentId?: string;
+    },
+  ): Promise<AccountMappingsResponse> {
+    const response = await api.get<AccountMappingsResponse>(
+      `/companies/${companyId}/tax-periods/${periodId}/account-mappings`,
+      { params: filters },
+    );
+    return response.data;
+  },
+  async updateAccountMapping(
+    companyId: string,
+    companyAccountId: string,
+    action: "confirm" | "reject",
+    siiAccountId?: string,
+  ) {
+    const payload =
+      action === "confirm" ? { action, siiAccountId } : { action };
+    const response = await api.put(
+      `/companies/${companyId}/company-accounts/${companyAccountId}/mapping`,
+      payload,
+    );
+    return response.data;
+  },
+  async mappingHistory(companyId: string, companyAccountId: string) {
+    const response = await api.get<{ items: Array<Record<string, unknown>> }>(
+      `/companies/${companyId}/company-accounts/${companyAccountId}/mapping-history`,
+    );
+    return response.data;
+  },
+  async siiAccounts(search: string) {
+    const response = await api.get<{
+      items: Array<{ id: string; code: string; name: string }>;
+    }>("/sii/account-plan/accounts", { params: { search, pageSize: 25 } });
+    return response.data.items;
   },
   templateUrl(companyId: string, type: TaxDocumentType): string {
     const path = type === "general_ledger" ? "general-ledger" : type;

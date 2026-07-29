@@ -24,6 +24,10 @@ import type {
   TaxDocumentReport,
   TaxDocumentType,
 } from "@/types/accounting.types";
+import {
+  canReviewMappings,
+  statusPresentation,
+} from "@/lib/accounting-presentation";
 
 const contracts = {
   balance: {
@@ -294,7 +298,8 @@ export function AccountingDocumentsPage({
           </button>
         ))}
       </div>
-      
+
+
       <section className="mt-5 rounded-xl border border-slate-200 bg-white">
         <button
           type="button"
@@ -410,6 +415,26 @@ export function AccountingDocumentsPage({
           {fileError}
         </p>
       )}
+      {stage !== "idle" && (
+        <section
+          aria-live="polite"
+          role="status"
+          className="mt-4 rounded-xl border border-slate-200 bg-white p-4"
+        >
+          <div className="flex justify-between gap-4 text-sm">
+            <strong>{stageLabels[stage]}</strong>
+            <span>{stage === "uploading" ? `${progress}%` : ""}</span>
+          </div>
+          {stage === "uploading" && (
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+              <div
+                className="h-full bg-emerald-600 transition-all"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          )}
+        </section>
+      )}
 
       {file && (
         <section className="mt-4 flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center">
@@ -461,26 +486,6 @@ export function AccountingDocumentsPage({
         </section>
       )}
 
-      {stage !== "idle" && (
-        <section
-          aria-live="polite"
-          role="status"
-          className="mt-4 rounded-xl border border-slate-200 bg-white p-4"
-        >
-          <div className="flex justify-between gap-4 text-sm">
-            <strong>{stageLabels[stage]}</strong>
-            <span>{stage === "uploading" ? `${progress}%` : ""}</span>
-          </div>
-          {stage === "uploading" && (
-            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-              <div
-                className="h-full bg-emerald-600 transition-all"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-          )}
-        </section>
-      )}
       {result && (
         <ProcessingResult
           companyId={companyId}
@@ -498,7 +503,6 @@ export function AccountingDocumentsPage({
         loading={documents.isLoading}
         refresh={() => documents.refetch()}
       />
-
     </main>
   );
 }
@@ -515,9 +519,23 @@ function ProcessingResult({
   result: { document: TaxDocument; report: TaxDocumentReport };
 }) {
   const report = result.report;
+  const invalid =
+    result.document.status === "invalid" ||
+    ((report.errors?.length ?? 0) > 0 && (report.validRows ?? 0) === 0);
   return (
-    <section className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-5">
-      <h2 className="font-semibold">Resultado de procesamiento</h2>
+    <section
+      className={`mt-4 rounded-xl border p-5 ${invalid ? "border-red-300 bg-red-50" : "border-emerald-200 bg-emerald-50"}`}
+      role={invalid ? "alert" : undefined}
+    >
+      <h2 className="font-semibold">
+        {invalid ? "Importación rechazada" : "Resultado de procesamiento"}
+      </h2>
+      {invalid && (
+        <p className="mt-2 text-sm">
+          No se importó ninguna fila. El archivo contiene{" "}
+          {report.errors?.length ?? 0} errores de validación.
+        </p>
+      )}
       <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-4">
         <Metric label="Versión" value={`v${result.document.versionNumber}`} />
         <Metric label="Filas leídas" value={report.rowsRead ?? "—"} />
@@ -527,15 +545,15 @@ function ProcessingResult({
         <Metric label="Warnings" value={report.warnings?.length ?? 0} />
       </dl>
       <div className="mt-4 flex flex-wrap gap-2">
-        <a
-          href={`${accountingService.templateUrl(companyId, type).replace(/\/document-templates\/[^/]+$/, `/tax-periods/${taxPeriodId}/documents/${result.document.id}/report`)}`}
+        <Link
+          href={`/companies/${companyId}/periods/${taxPeriodId}/documents/${result.document.id}/report`}
           className="rounded-lg border border-emerald-700 px-3 py-2 text-sm font-medium"
         >
-          Ver reporte completo
-        </a>
-        {type === "balance" && (
+          {invalid ? "Ver reporte de errores" : "Ver reporte completo"}
+        </Link>
+        {canReviewMappings(type, result.document.status, report) && (
           <Link
-            href={`/companies/${companyId}/periods/${taxPeriodId}/account-mapping`}
+            href={`/companies/${companyId}/periods/${taxPeriodId}/account-mapping?documentId=${result.document.id}`}
             className="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white"
           >
             Revisar homologaciones
@@ -561,22 +579,11 @@ function History({
   loading: boolean;
   refresh: () => unknown;
 }) {
-  const openReport = async (documentId: string) => {
-    const report = await accountingService.report(
-      companyId,
-      taxPeriodId,
-      documentId,
-    );
-    window.alert(JSON.stringify(report, null, 2));
-  };
   const downloadOriginal = async (fileId: string) => {
     const response = await filesApi.downloadUrl(companyId, fileId);
     window.location.assign(response.downloadUrl);
   };
-  const reprocess = async (documentId: string) => {
-    await accountingService.processDocument(companyId, taxPeriodId, documentId);
-    await refresh();
-  };
+  void refresh;
   return (
     <section className="mt-5 overflow-hidden rounded-xl border border-slate-200 bg-white">
       <div className="border-b p-5">
@@ -600,6 +607,9 @@ function History({
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
+            <caption className="sr-only">
+              Versiones de {contracts[type].title}
+            </caption>
             <thead className="bg-slate-50">
               <tr>
                 {[
@@ -632,8 +642,19 @@ function History({
                   <td className="px-4 py-3">
                     {new Date(document.uploadedAt).toLocaleDateString("es-CL")}
                   </td>
-                  <td className="px-4 py-3">{document.uploadedByUserId}</td>
-                  <td className="px-4 py-3">{document.status}</td>
+                  <td className="px-4 py-3">
+                    <span className="block font-medium">
+                      {document.uploadedBy?.name ?? "Usuario no disponible"}
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      {document.uploadedBy?.email}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="rounded-full bg-slate-100 px-2 py-1">
+                      {statusPresentation(document.status).label}
+                    </span>
+                  </td>
                   <td className="px-4 py-3">
                     {document.metadata?.rowsRead ?? "—"}
                   </td>
@@ -644,34 +665,28 @@ function History({
                     {document.metadata?.warnings?.length ?? 0}
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void openReport(document.id)}
-                        className="underline"
+                    <div className="flex flex-wrap gap-2">
+                      <Link
+                        href={`/companies/${companyId}/periods/${taxPeriodId}/documents/${document.id}`}
+                        className="rounded border px-2 py-1"
+                      >
+                        Ver detalle
+                      </Link>
+                      <Link
+                        href={`/companies/${companyId}/periods/${taxPeriodId}/documents/${document.id}/report`}
+                        className="rounded border px-2 py-1"
                       >
                         Ver reporte
-                      </button>
+                      </Link>
                       <button
                         type="button"
                         onClick={() =>
                           void downloadOriginal(document.storedFile.id)
                         }
-                        className="underline"
+                        className="rounded border px-2 py-1"
                       >
-                        Original
+                        Descargar original
                       </button>
-                      {["invalid", "processing_error"].includes(
-                        document.status,
-                      ) && (
-                        <button
-                          type="button"
-                          onClick={() => void reprocess(document.id)}
-                          className="underline"
-                        >
-                          Reprocesar
-                        </button>
-                      )}
                     </div>
                   </td>
                 </tr>
