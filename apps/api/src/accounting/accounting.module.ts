@@ -12,10 +12,15 @@ import { TaxPeriodsController } from "./controllers/tax-periods.controller";
 import { PeriodAccountMappingsController } from "./controllers/period-account-mappings.controller";
 import { TaxDocumentEntity } from "./entities/tax-document.entity";
 import { TaxPeriodEntity } from "./entities/tax-period.entity";
+import { TaxPeriodCompanyAccountEntity } from "./entities/tax-period-company-account.entity";
+import { CompanyAccountSuggestionEntity } from "./entities/company-account-suggestion.entity";
+import { CompanyAccountMappingHistoryEntity } from "./entities/company-account-mapping-history.entity";
+import { CompanyAccountEntity } from "../company-account-plan/entities/company-account.entity";
 import { DocumentTemplateService } from "./services/document-template.service";
 import { TaxDocumentsService } from "./services/tax-documents.service";
 import { TaxPeriodsService } from "./services/tax-periods.service";
 import { PeriodAccountMappingsService } from "./services/period-account-mappings.service";
+import { SiiAccountMatchingModule } from "../sii-account-matching/sii-account-matching.module";
 
 @Module({
   imports: [
@@ -26,9 +31,14 @@ import { PeriodAccountMappingsService } from "./services/period-account-mappings
       CompanyEntity,
       OrganizationMemberEntity,
       UserEntity,
+      TaxPeriodCompanyAccountEntity,
+      CompanyAccountSuggestionEntity,
+      CompanyAccountMappingHistoryEntity,
+      CompanyAccountEntity,
     ]),
     AuthModule,
     StorageModule,
+    SiiAccountMatchingModule,
   ],
   controllers: [
     TaxPeriodsController,

@@ -139,6 +139,12 @@ export const accountingService = {
     );
     return response.data;
   },
+  async generateAccountSuggestions(companyId: string, periodId: string) {
+    const response = await api.post(
+      `/companies/${companyId}/tax-periods/${periodId}/account-mapping-suggestions`,
+    );
+    return response.data;
+  },
   async mappingHistory(companyId: string, companyAccountId: string) {
     const response = await api.get<{ items: Array<Record<string, unknown>> }>(
       `/companies/${companyId}/company-accounts/${companyAccountId}/mapping-history`,

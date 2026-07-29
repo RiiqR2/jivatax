@@ -28,6 +28,7 @@ export function AccountMappingPage({
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<AccountMappingItem | null>(null);
+  const [generating, setGenerating] = useState(false);
   const query = useQuery({
     queryKey: [
       "period-account-mappings",
@@ -69,15 +70,38 @@ export function AccountMappingPage({
       </header>
       <section
         aria-label="Resumen de homologación"
-        className="mt-6 grid gap-3 sm:grid-cols-3 lg:grid-cols-6"
+        className="mt-6 grid gap-3 sm:grid-cols-3 lg:grid-cols-5"
       >
         <Summary label="Total cuentas" value={summary?.total} />
         <Summary label="Confirmadas" value={summary?.confirmed} />
         <Summary label="Sugeridas" value={summary?.suggested} />
         <Summary label="Pendientes" value={summary?.pending} />
-        <Summary label="Nuevas del período" value={summary?.newInPeriod} />
-        <Summary label="Cambios de nombre" value={summary?.nameChanged} />
+        <Summary label="Sin sugerencia" value={summary?.withoutSuggestion} />
+        <Summary label="Confianza alta" value={summary?.highConfidence} />
+        <Summary label="Confianza media" value={summary?.mediumConfidence} />
+        <Summary label="Confianza baja" value={summary?.lowConfidence} />
       </section>
+      <button
+        type="button"
+        disabled={generating}
+        onClick={async () => {
+          setGenerating(true);
+          try {
+            await accountingService.generateAccountSuggestions(
+              companyId,
+              taxPeriodId,
+            );
+            await queryClient.invalidateQueries({
+              queryKey: ["period-account-mappings"],
+            });
+          } finally {
+            setGenerating(false);
+          }
+        }}
+        className="mt-4 rounded-lg bg-emerald-700 px-4 py-2 text-sm text-white disabled:opacity-50"
+      >
+        {generating ? "Generando sugerencias…" : "Generar sugerencias"}
+      </button>
       <section className="mt-5 rounded-xl border bg-white p-5">
         <div
           className="flex flex-wrap gap-2"
@@ -174,7 +198,9 @@ export function AccountMappingPage({
                     <td className="px-3 py-3">
                       {item.mapping.siiAccount
                         ? `${item.mapping.siiAccount.code} · ${item.mapping.siiAccount.name}`
-                        : "Sin asignar"}
+                        : item.suggestions[0]
+                          ? `${item.suggestions[0].siiAccount.code} · ${item.suggestions[0].siiAccount.name} (sugerida)`
+                          : "Sin sugerencias"}
                     </td>
                     <td className="px-3 py-3">
                       <span className="rounded-full bg-slate-100 px-2 py-1">
@@ -183,7 +209,9 @@ export function AccountMappingPage({
                     </td>
                     <td className="px-3 py-3">
                       {item.mapping.confidence === null
-                        ? "—"
+                        ? item.suggestions[0]
+                          ? `${Math.round(item.suggestions[0].confidence * 100)}%`
+                          : "—"
                         : `${Math.round(item.mapping.confidence * 100)}%`}
                     </td>
                     <td className="px-3 py-3">{item.lastSeenTaxYear ?? "—"}</td>
@@ -270,7 +298,7 @@ function MappingDialog({
   const ref = useRef<HTMLDialogElement>(null);
   const [search, setSearch] = useState("");
   const [selectedSii, setSelectedSii] = useState(
-    item.mapping.siiAccount?.id ?? "",
+    item.mapping.siiAccount?.id ?? item.suggestions[0]?.siiAccount.id ?? "",
   );
   const [confirmChange, setConfirmChange] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -320,6 +348,34 @@ function MappingDialog({
         <p className="mt-1 text-slate-600">
           {item.canonicalName} · La selección no se guarda automáticamente.
         </p>
+        {item.suggestions[0] ? (
+          <section className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm">
+            <h3 className="font-semibold">Sugerencia</h3>
+            <p>
+              {item.suggestions[0].siiAccount.code} ·{" "}
+              {item.suggestions[0].siiAccount.name}
+            </p>
+            <p>
+              Confianza: {Math.round(item.suggestions[0].confidence * 100)}% ·
+              Puntaje: {item.suggestions[0].score}
+            </p>
+            <details className="mt-2">
+              <summary className="cursor-pointer underline">
+                Ver explicación
+              </summary>
+              <ul className="mt-1 list-disc pl-5">
+                {item.suggestions[0].reasons.map((reason, index) => (
+                  <li key={`${reason.signal}-${index}`}>
+                    {reason.description} ({reason.points > 0 ? "+" : ""}
+                    {reason.points})
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </section>
+        ) : (
+          <p className="mt-4 text-sm text-slate-500">Sin sugerencias</p>
+        )}
         <label className="mt-5 block text-sm">
           Buscar cuenta SII
           <input
@@ -413,7 +469,9 @@ function MappingDialog({
             onClick={() => void confirm()}
             className="rounded-lg bg-emerald-700 px-4 py-2 text-white disabled:opacity-50"
           >
-            Confirmar homologación
+            {item.suggestions[0]?.siiAccount.id === selectedSii
+              ? "Aceptar sugerencia"
+              : "Confirmar homologación"}
           </button>
         </div>
       </div>

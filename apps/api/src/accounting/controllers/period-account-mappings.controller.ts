@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Put,
+  Post,
   Query,
   UseGuards,
 } from "@nestjs/common";
@@ -16,11 +17,24 @@ import {
   UpdatePeriodAccountMappingDto,
 } from "../dto/account-mappings.dto";
 import { PeriodAccountMappingsService } from "../services/period-account-mappings.service";
+import { AccountSuggestionService } from "../../sii-account-matching/services/account-suggestion.service";
 
 @Controller("companies/:companyId")
 @UseGuards(CompanyAccessGuard)
 export class PeriodAccountMappingsController {
-  constructor(private readonly mappings: PeriodAccountMappingsService) {}
+  constructor(
+    private readonly mappings: PeriodAccountMappingsService,
+    private readonly suggestions: AccountSuggestionService,
+  ) {}
+
+  @Post("tax-periods/:taxPeriodId/account-mapping-suggestions")
+  @UseGuards(CompanyWriteAccessGuard)
+  generateSuggestions(
+    @Param("companyId") companyId: string,
+    @Param("taxPeriodId") taxPeriodId: string,
+  ) {
+    return this.suggestions.generateForPeriod(companyId, taxPeriodId);
+  }
 
   @Get("tax-periods/:taxPeriodId/account-mappings")
   list(
