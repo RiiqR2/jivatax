@@ -65,29 +65,16 @@ export class AccountSuggestionService {
 
   async generateForPeriod(companyId: string, taxPeriodId: string) {
     const accounts = await this.loadCompanyAccounts(companyId, taxPeriodId);
-    const siiAccounts = await this.loadSiiAccounts();
     const loadedTerms = await this.loadTerms(companyId);
     const { positiveTermsByNormalizedTerm, negativeTermsByNormalizedTerm } =
       this.buildTermIndexes(loadedTerms);
-
-    this.logger.debug({
-      loadedTermsFirst: loadedTerms[0],
-      positiveTermKeys: Array.from(positiveTermsByNormalizedTerm.keys()).slice(
-        0,
-        20,
-      ),
-      cajaTerms: positiveTermsByNormalizedTerm.get("caja"),
-      clientesTerms: positiveTermsByNormalizedTerm.get("clientes"),
-      machineryTerms: positiveTermsByNormalizedTerm.get(
-        "maquinarias y equipos",
-      ),
-    });
-
-    if (!positiveTermsByNormalizedTerm.has("caja")) {
-      throw new Error(
-        'El índice de términos no contiene la clave normalizada "caja".',
-      );
-    }
+    const siiAccountIds = Array.from(
+      new Set(loadedTerms.map((term) => term.siiAccountId)),
+    );
+    const siiAccounts = await this.loadSiiAccounts(siiAccountIds);
+    const siiAccountsById = new Map(
+      siiAccounts.map((account) => [account.id, account]),
+    );
 
     const diagnostics = {
       processed: accounts.length,
@@ -129,29 +116,13 @@ export class AccountSuggestionService {
         const matchedNegativeTerms =
           negativeTermsByNormalizedTerm.get(normalizedName) ?? [];
         const ranked = this.rank(
-          siiAccounts,
+          siiAccountsById,
           matchedTerms,
           matchedNegativeTerms,
         );
         diagnostics.exactMatchesFound += ranked.exactMatches;
         diagnostics.candidatesGenerated += ranked.candidates.length;
         diagnostics.candidatesDiscardedByScore += ranked.discardedByScore;
-
-        if (normalizedName === "caja") {
-          this.logger.debug({
-            normalizedName,
-            terms: ranked.debugTerms,
-            candidates: ranked.candidates.map(
-              ({ account, score, confidence }) => ({
-                siiAccountId: account.id,
-                score,
-                confidence,
-              }),
-            ),
-            threshold: ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore,
-            decision: ranked.discardReason ?? "persist",
-          });
-        }
 
         if (ranked.discardReason) {
           this.discard(
@@ -215,7 +186,8 @@ export class AccountSuggestionService {
       .getMany();
   }
 
-  private loadSiiAccounts() {
+  private loadSiiAccounts(siiAccountIds: string[]) {
+    if (!siiAccountIds.length) return Promise.resolve([]);
     return this.dataSource
       .getRepository(SiiAccountEntity)
       .createQueryBuilder("account")
@@ -225,6 +197,7 @@ export class AccountSuggestionService {
       .andWhere("version.status = :status", {
         status: SiiAccountPlanVersionStatus.ACTIVE,
       })
+      .andWhere("account.id IN (:...siiAccountIds)", { siiAccountIds })
       .getMany();
   }
 
@@ -250,7 +223,7 @@ export class AccountSuggestionService {
   }
 
   private rank(
-    siiAccounts: SiiAccountEntity[],
+    siiAccountsById: Map<string, SiiAccountEntity>,
     positiveTerms: SiiAccountTermEntity[],
     negativeTerms: SiiAccountTermEntity[],
   ) {
@@ -269,10 +242,17 @@ export class AccountSuggestionService {
       matchedTermsByAccount.set(term.siiAccountId, accountTerms);
     }
 
-    for (const account of siiAccounts) {
+    for (const [siiAccountId, matchedTerms] of matchedTermsByAccount) {
+      const account = siiAccountsById.get(siiAccountId);
+      if (!account) {
+        this.logger.warn(
+          `Se omitieron ${matchedTerms.length} término(s): la cuenta SII ${siiAccountId} no está disponible`,
+        );
+        continue;
+      }
       const reasons: Candidate["reasons"] = [];
       let exact = false;
-      for (const term of matchedTermsByAccount.get(account.id) ?? []) {
+      for (const term of matchedTerms) {
         const weight = Number(term.weight);
         debugTerms.push({ type: term.type, weight, term: term.term });
         if (term.type === "negative_term") {

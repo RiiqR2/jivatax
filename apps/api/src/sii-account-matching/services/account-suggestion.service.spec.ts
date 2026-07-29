@@ -43,7 +43,7 @@ function rank(
   const internals = service as unknown as {
     buildTermIndexes: (items: SiiAccountTermEntity[]) => TermIndexes;
     rank: (
-      siiAccounts: SiiAccountEntity[],
+      siiAccountsById: Map<string, SiiAccountEntity>,
       positiveTerms: SiiAccountTermEntity[],
       negativeTerms: SiiAccountTermEntity[],
     ) => RankResult;
@@ -51,7 +51,7 @@ function rank(
   const indexes = internals.buildTermIndexes(terms);
   const normalizedName = normalizeAccountTerm(name);
   return internals.rank(
-    accounts,
+    new Map(accounts.map((account) => [account.id, account])),
     indexes.positiveTermsByNormalizedTerm.get(normalizedName) ?? [],
     indexes.negativeTermsByNormalizedTerm.get(normalizedName) ?? [],
   );
@@ -143,6 +143,24 @@ describe("AccountSuggestionService matching", () => {
       assert.equal(result.candidates[0]?.account.id, disponible.id);
       assert.ok(result.candidates[0].score >= 55);
     }
+  });
+
+  it("matches by siiAccountId without requiring the siiAccount relation", () => {
+    const caja = term(disponible.id, "caja", "alias", 60);
+    caja.siiAccount = undefined as unknown as SiiAccountEntity;
+
+    const result = rank("CAJA", [disponible], [caja]);
+    assert.equal(result.candidates[0]?.account.id, disponible.id);
+    assert.equal(result.candidates[0]?.score, 60);
+  });
+
+  it("converts a decimal string weight before scoring", () => {
+    const caja = term(disponible.id, "caja", "alias", 60);
+    caja.weight = "60.00" as unknown as number;
+
+    const result = rank("CAJA", [disponible], [caja]);
+    assert.equal(result.candidates[0]?.score, 60);
+    assert.equal(typeof result.candidates[0]?.score, "number");
   });
 
   it("uses erp_term for CLIENTES and accumulates exact machinery signals", () => {
