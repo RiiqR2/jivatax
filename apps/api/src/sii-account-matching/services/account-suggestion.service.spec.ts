@@ -40,28 +40,39 @@ function rank(
   terms: SiiAccountTermEntity[],
 ) {
   const service = new AccountSuggestionService({} as DataSource);
-  const grouped = new Map<string, SiiAccountTermEntity[]>();
-  for (const item of terms)
-    grouped.set(item.siiAccountId, [
-      ...(grouped.get(item.siiAccountId) ?? []),
-      item,
-    ]);
+  const internals = service as unknown as {
+    buildTermIndexes: (items: SiiAccountTermEntity[]) => TermIndexes;
+    rank: (
+      normalized: string,
+      siiAccounts: SiiAccountEntity[],
+      termIndexes: TermIndexes,
+    ) => RankResult;
+  };
+  const indexes = internals.buildTermIndexes(terms);
+  return internals.rank(normalizeAccountTerm(name), accounts, indexes);
+}
+
+type TermIndexes = {
+  positiveTermsByNormalizedTerm: Map<string, SiiAccountTermEntity[]>;
+  negativeTermsByNormalizedTerm: Map<string, SiiAccountTermEntity[]>;
+};
+
+type RankResult = {
+  candidates: Array<{
+    account: SiiAccountEntity;
+    score: number;
+    confidence: number;
+  }>;
+  discardReason?: string;
+};
+
+function buildTermIndexes(terms: SiiAccountTermEntity[]) {
+  const service = new AccountSuggestionService({} as DataSource);
   return (
     service as unknown as {
-      rank: (
-        normalized: string,
-        siiAccounts: SiiAccountEntity[],
-        termsByAccount: Map<string, SiiAccountTermEntity[]>,
-      ) => {
-        candidates: Array<{
-          account: SiiAccountEntity;
-          score: number;
-          confidence: number;
-        }>;
-        discardReason?: string;
-      };
+      buildTermIndexes: (items: SiiAccountTermEntity[]) => TermIndexes;
     }
-  ).rank(normalizeAccountTerm(name), accounts, grouped);
+  ).buildTermIndexes(terms);
 }
 
 describe("AccountSuggestionService matching", () => {
@@ -76,6 +87,44 @@ describe("AccountSuggestionService matching", () => {
     assert.equal(
       normalizeAccountTerm("MAQUINARIAS Y EQUIPOS"),
       "maquinarias y equipos",
+    );
+  });
+
+  it("indexes hydrated entities by normalizedTerm, not normalized_term", () => {
+    const caja = term(disponible.id, "caja", "alias", 60);
+    Object.assign(caja as object, { normalized_term: "wrong-key" });
+    const indexes = buildTermIndexes([caja]);
+
+    assert.equal(indexes.positiveTermsByNormalizedTerm.has("caja"), true);
+    assert.equal(indexes.positiveTermsByNormalizedTerm.has("wrong-key"), false);
+    assert.equal(
+      indexes.positiveTermsByNormalizedTerm.get("caja")?.[0].siiAccountId,
+      disponible.id,
+    );
+    assert.equal(
+      indexes.positiveTermsByNormalizedTerm.get("caja")?.[0].type,
+      "alias",
+    );
+    assert.equal(
+      Number(indexes.positiveTermsByNormalizedTerm.get("caja")?.[0].weight),
+      60,
+    );
+  });
+
+  it("keeps negative terms in a separate normalized-term index", () => {
+    const indexes = buildTermIndexes([
+      term(disponible.id, "caja", "alias", 60),
+      term(disponible.id, "caja", "negative_term", 10),
+    ]);
+    assert.equal(indexes.positiveTermsByNormalizedTerm.get("caja")?.length, 1);
+    assert.equal(indexes.negativeTermsByNormalizedTerm.get("caja")?.length, 1);
+    assert.equal(
+      indexes.positiveTermsByNormalizedTerm.get("caja")?.[0].type,
+      "alias",
+    );
+    assert.equal(
+      indexes.negativeTermsByNormalizedTerm.get("caja")?.[0].type,
+      "negative_term",
     );
   });
 
@@ -110,6 +159,16 @@ describe("AccountSuggestionService matching", () => {
     );
     assert.equal(machineryResult.candidates[0]?.score, 105);
     assert.equal(machineryResult.candidates[0]?.confidence, 1);
+    const machineryIndexes = buildTermIndexes([
+      term(maquinaria.id, "maquinarias y equipos", "erp_term", 60),
+      term(maquinaria.id, "maquinarias y equipos", "official_name", 45),
+    ]);
+    assert.equal(
+      machineryIndexes.positiveTermsByNormalizedTerm.get(
+        "maquinarias y equipos",
+      )?.length,
+      2,
+    );
   });
 
   it("does not let negative_term create a candidate", () => {

@@ -44,6 +44,11 @@ type Candidate = {
   reasons: Array<{ signal: string; description: string; points: number }>;
 };
 
+type TermIndexes = {
+  positiveTermsByNormalizedTerm: Map<string, SiiAccountTermEntity[]>;
+  negativeTermsByNormalizedTerm: Map<string, SiiAccountTermEntity[]>;
+};
+
 type DiscardReason =
   | "below_minimum_score"
   | "ambiguous_candidates"
@@ -62,12 +67,7 @@ export class AccountSuggestionService {
     const accounts = await this.loadCompanyAccounts(companyId, taxPeriodId);
     const siiAccounts = await this.loadSiiAccounts();
     const terms = await this.loadTerms(companyId);
-    const termsByAccount = new Map<string, SiiAccountTermEntity[]>();
-    for (const term of terms) {
-      const existing = termsByAccount.get(term.siiAccountId) ?? [];
-      existing.push(term);
-      termsByAccount.set(term.siiAccountId, existing);
-    }
+    const termIndexes = this.buildTermIndexes(terms);
 
     const diagnostics = {
       processed: accounts.length,
@@ -103,7 +103,7 @@ export class AccountSuggestionService {
         }
 
         const normalizedName = normalizeAccountTerm(companyAccount.name);
-        const ranked = this.rank(normalizedName, siiAccounts, termsByAccount);
+        const ranked = this.rank(normalizedName, siiAccounts, termIndexes);
         diagnostics.exactMatchesFound += ranked.exactMatches;
         diagnostics.candidatesGenerated += ranked.candidates.length;
         diagnostics.candidatesDiscardedByScore += ranked.discardedByScore;
@@ -223,7 +223,7 @@ export class AccountSuggestionService {
   private rank(
     normalizedName: string,
     siiAccounts: SiiAccountEntity[],
-    termsByAccount: Map<string, SiiAccountTermEntity[]>,
+    termIndexes: TermIndexes,
   ) {
     let exactMatches = 0;
     let discardedByScore = 0;
@@ -233,15 +233,22 @@ export class AccountSuggestionService {
       [];
     const candidates: Candidate[] = [];
 
+    const positiveTerms =
+      termIndexes.positiveTermsByNormalizedTerm.get(normalizedName) ?? [];
+    const negativeTerms =
+      termIndexes.negativeTermsByNormalizedTerm.get(normalizedName) ?? [];
+    const matchedTermsByAccount = new Map<string, SiiAccountTermEntity[]>();
+    for (const term of [...positiveTerms, ...negativeTerms]) {
+      const accountTerms = matchedTermsByAccount.get(term.siiAccountId) ?? [];
+      accountTerms.push(term);
+      matchedTermsByAccount.set(term.siiAccountId, accountTerms);
+    }
+
     for (const account of siiAccounts) {
       const reasons: Candidate["reasons"] = [];
       let exact = false;
-      for (const term of termsByAccount.get(account.id) ?? []) {
+      for (const term of matchedTermsByAccount.get(account.id) ?? []) {
         const weight = Number(term.weight);
-        const termNormalized =
-          term.normalizedTerm || normalizeAccountTerm(term.term);
-        const matches = termNormalized === normalizedName;
-        if (!matches) continue;
         debugTerms.push({ type: term.type, weight, term: term.term });
         if (term.type === "negative_term") {
           reasons.push({
@@ -303,6 +310,30 @@ export class AccountSuggestionService {
       debugTerms,
       discardReason,
     };
+  }
+
+  private buildTermIndexes(terms: SiiAccountTermEntity[]): TermIndexes {
+    const indexes: TermIndexes = {
+      positiveTermsByNormalizedTerm: new Map(),
+      negativeTermsByNormalizedTerm: new Map(),
+    };
+    for (const term of terms) {
+      const index =
+        term.type === "negative_term"
+          ? indexes.negativeTermsByNormalizedTerm
+          : POSITIVE_TERM_TYPES.has(term.type)
+            ? indexes.positiveTermsByNormalizedTerm
+            : undefined;
+      if (!index) continue;
+
+      // loadTerms() returns hydrated entities: use the TypeScript property,
+      // never the physical normalized_term column name from a raw result.
+      const normalizedTerm = term.normalizedTerm;
+      const indexedTerms = index.get(normalizedTerm) ?? [];
+      indexedTerms.push(term);
+      index.set(normalizedTerm, indexedTerms);
+    }
+    return indexes;
   }
 
   private discard(
