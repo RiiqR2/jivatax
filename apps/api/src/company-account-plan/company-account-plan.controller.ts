@@ -11,7 +11,10 @@ import {
   Post,
   Query,
   UseGuards,
+  Res,
 } from "@nestjs/common";
+import type { Response } from "express";
+import { ACCOUNT_PLAN_FILE_CONTRACT } from "./company-account-plan.contract";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { CompanyAccessGuard } from "../auth/guards/company-access.guard";
 import type { AuthenticatedUser } from "../auth/interfaces/authenticated-user.interface";
@@ -27,6 +30,28 @@ import { CompanyAccountPlanService } from "./services/company-account-plan.servi
 @UseGuards(CompanyAccessGuard)
 export class CompanyAccountPlanController {
   constructor(private readonly accountPlan: CompanyAccountPlanService) {}
+
+  @Get("template")
+  async downloadTemplate(
+    @Param("companyId", ParseUUIDPipe) companyId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() response: Response,
+  ): Promise<void> {
+    const buffer = await this.accountPlan.getTemplate(
+      companyId,
+      this.organizationId(user),
+      user.id,
+    );
+    response.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${ACCOUNT_PLAN_FILE_CONTRACT.fileName}"`,
+    );
+    response.send(buffer);
+  }
 
   @Get("versions")
   listVersions(

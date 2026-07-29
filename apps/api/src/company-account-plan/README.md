@@ -43,3 +43,32 @@ Owner, admin, accountant y auditor pueden consultar. Owner, admin y accountant
 pueden importar y revisar correspondencias. Viewer no tiene acceso al módulo.
 Todas las operaciones validan membresía activa, organización seleccionada y
 pertenencia de la empresa al tenant.
+
+## Contrato de importación
+
+La plantilla oficial se descarga autenticadamente desde
+`GET /api/companies/:companyId/account-plan/template` y usa la hoja **Plan de
+cuentas** con estos encabezados canónicos, en este orden:
+
+1. `Código` (obligatorio, texto, máximo 100 caracteres y único en el archivo).
+2. `Nombre` (obligatorio, texto, máximo 255 caracteres).
+3. `Descripción` (opcional, texto).
+4. `Nivel` (opcional, entero positivo).
+5. `Código padre` (opcional, texto y referencia a otro código del archivo).
+6. `Estado` (opcional: `active`, `inactive`, `activo` o `inactivo`; el valor por
+   defecto es `active`).
+
+Los códigos deben mantenerse como texto para preservar ceros iniciales, puntos y
+guiones. Se admiten archivos XLSX, XLS y CSV de hasta 10 MB y 20.000 cuentas. No
+se deben incluir totales, encabezados repetidos, fórmulas ni celdas combinadas.
+Cada fila debe representar una cuenta.
+
+Los alias históricos se conservan en el contrato del parser. `Cuenta` no se usa
+como alias porque es ambiguo. Cuando se detectan encabezados duplicados o
+ambiguos, la importación se aborta y recomienda usar la plantilla oficial.
+
+## Próximo PR: previsualización
+
+El endpoint de previsualización queda fuera de este cambio para no ampliar el
+flujo de importación ni duplicar su lógica. Una implementación futura debe
+reutilizar el mismo parser y no persistir versiones ni generar mappings.

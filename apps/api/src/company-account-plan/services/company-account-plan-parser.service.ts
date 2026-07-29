@@ -1,6 +1,12 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import * as XLSX from "xlsx";
+import {
+  ACCOUNT_PLAN_ERROR_LIMIT,
+  ACCOUNT_PLAN_FILE_CONTRACT,
+  type AccountPlanColumnKey,
+} from "../company-account-plan.contract";
 import type {
+  AccountPlanValidationError,
   CompanyAccountPlanImportReport,
   DetectedAccountPlanColumns,
   NormalizedCompanyAccountRow,
@@ -8,29 +14,22 @@ import type {
   ValidatedCompanyAccountRow,
 } from "../interfaces/company-account-import.interface";
 
-const HEADER_ALIASES = {
-  code: ["codigo", "cod cuenta", "cuenta", "codigo cuenta", "account code"],
-  name: [
-    "nombre",
-    "descripcion",
-    "nombre cuenta",
-    "cuenta contable",
-    "glosa",
-    "account name",
-  ],
-  description: ["detalle", "descripcion cuenta", "description"],
-  level: ["nivel", "level"],
-  parentCode: ["codigo padre", "cuenta padre", "parent code"],
-  status: ["estado", "status"],
-} as const;
-
 @Injectable()
 export class CompanyAccountPlanParserService {
   inspectFile(buffer: Buffer, extension: string): XLSX.WorkBook {
-    if (!["xlsx", "xls", "csv"].includes(extension)) {
-      throw new BadRequestException(
-        "Formato no soportado. Usa XLSX, XLS o CSV.",
-      );
+    if (
+      !ACCOUNT_PLAN_FILE_CONTRACT.allowedExtensions.includes(
+        extension as "xlsx" | "xls" | "csv",
+      )
+    ) {
+      this.throwValidation([
+        {
+          row: 0,
+          column: "Archivo",
+          code: "UNSUPPORTED_FILE_TYPE",
+          message: "Formato no soportado. Usa XLSX, XLS o CSV.",
+        },
+      ]);
     }
     try {
       return XLSX.read(buffer, {
@@ -39,14 +38,22 @@ export class CompanyAccountPlanParserService {
         cellText: true,
       });
     } catch {
-      throw new BadRequestException("No fue posible leer el archivo.");
+      throw new BadRequestException({
+        status: "failed",
+        message: "No fue posible leer el archivo.",
+        errors: [],
+      });
     }
   }
 
   detectSheet(workbook: XLSX.WorkBook): XLSX.WorkSheet {
     const name = workbook.SheetNames.find((sheetName) => {
       const range = workbook.Sheets[sheetName]?.["!ref"];
-      return Boolean(range && range !== "A1:A1");
+      return Boolean(
+        range &&
+        range !== "A1:A1" &&
+        sheetName !== ACCOUNT_PLAN_FILE_CONTRACT.instructionsSheetName,
+      );
     });
     if (!name) {
       throw new BadRequestException("El archivo no contiene una hoja válida.");
@@ -60,41 +67,86 @@ export class CompanyAccountPlanParserService {
       const normalized = rows[index].map((value) =>
         this.normalizeHeader(value),
       );
-      const hasCode = normalized.some((value) =>
-        HEADER_ALIASES.code.includes(value as never),
-      );
-      const hasName = normalized.some((value) =>
-        HEADER_ALIASES.name.includes(value as never),
-      );
-      if (hasCode && hasName) {
+      if (
+        this.matchesColumn(normalized, "code") &&
+        this.matchesColumn(normalized, "name")
+      ) {
         return index;
       }
     }
-    throw new BadRequestException(
-      "No se detectó una fila de encabezados con código y nombre.",
-    );
+    this.throwValidation([
+      {
+        row: 1,
+        column: "Código, Nombre",
+        code: "MISSING_REQUIRED_COLUMN",
+        message:
+          "No se detectaron las columnas obligatorias Código y Nombre. Usa la plantilla oficial.",
+      },
+    ]);
   }
 
   detectColumns(headers: unknown[]): DetectedAccountPlanColumns {
     const normalized = headers.map((value) => this.normalizeHeader(value));
-    const find = (aliases: readonly string[]): number | null => {
-      const index = normalized.findIndex((value) => aliases.includes(value));
-      return index < 0 ? null : index;
-    };
-    const code = find(HEADER_ALIASES.code);
-    const name = find(HEADER_ALIASES.name);
-    if (code === null || name === null || code === name) {
-      throw new BadRequestException(
-        "No fue posible detectar columnas distintas para código y nombre.",
+    const detected = new Map<AccountPlanColumnKey, number>();
+    const errors: AccountPlanValidationError[] = [];
+
+    for (const column of ACCOUNT_PLAN_FILE_CONTRACT.columns) {
+      const canonicalHeader = this.normalizeHeader(column.header);
+      const canonicalMatches = normalized
+        .map((header, index) => (header === canonicalHeader ? index : -1))
+        .filter((index) => index >= 0);
+      const aliases = column.aliases.map((alias) =>
+        this.normalizeHeader(alias),
       );
+      const matches = normalized
+        .map((header, index) => (aliases.includes(header) ? index : -1))
+        .filter((index) => index >= 0);
+      const selectedMatches = canonicalMatches.length
+        ? canonicalMatches
+        : matches;
+
+      if (selectedMatches.length > 1) {
+        errors.push({
+          row: 1,
+          column: column.header,
+          code: "AMBIGUOUS_COLUMN",
+          message: `Se detectaron varias columnas para ${column.header}: ${selectedMatches
+            .map((index) => String(headers[index]))
+            .join(", ")}. Usa la plantilla oficial.`,
+        });
+      } else if (selectedMatches.length === 1) {
+        detected.set(column.key, selectedMatches[0]);
+      } else if (column.required) {
+        errors.push({
+          row: 1,
+          column: column.header,
+          code: "MISSING_REQUIRED_COLUMN",
+          message: `Falta la columna obligatoria ${column.header}.`,
+        });
+      }
     }
+
+    const code = detected.get("code");
+    const name = detected.get("name");
+    if (code !== undefined && name !== undefined && code === name) {
+      errors.push({
+        row: 1,
+        column: "Código, Nombre",
+        code: "AMBIGUOUS_COLUMN",
+        message: "Código y Nombre no pueden corresponder a la misma columna.",
+      });
+    }
+    if (errors.length) {
+      this.throwValidation(errors);
+    }
+
     return {
-      code,
-      name,
-      description: find(HEADER_ALIASES.description),
-      level: find(HEADER_ALIASES.level),
-      parentCode: find(HEADER_ALIASES.parentCode),
-      status: find(HEADER_ALIASES.status),
+      code: code as number,
+      name: name as number,
+      description: detected.get("description") ?? null,
+      level: detected.get("level") ?? null,
+      parentCode: detected.get("parentCode") ?? null,
+      status: detected.get("status") ?? null,
     };
   }
 
@@ -123,57 +175,88 @@ export class CompanyAccountPlanParserService {
   ): NormalizedCompanyAccountRow[] {
     return rows
       .filter((row) => !this.isIgnoredRow(row, columns))
-      .map((row) => ({
-        internalCode: String(row.values[columns.code] ?? "").trim(),
-        name: String(row.values[columns.name] ?? "")
-          .trim()
-          .replace(/\s+/g, " "),
-        description: this.optionalString(row.values[columns.description ?? -1]),
-        level: this.optionalLevel(row.values[columns.level ?? -1]),
-        parentCode: this.optionalString(row.values[columns.parentCode ?? -1]),
-        sourceRowNumber: row.sourceRowNumber,
-        rawData: row.rawData,
-      }));
+      .map((row) => {
+        const level = this.normalizeLevel(row.values[columns.level ?? -1]);
+        const status = this.normalizeStatus(row.values[columns.status ?? -1]);
+        return {
+          internalCode: String(row.values[columns.code] ?? "").trim(),
+          name: String(row.values[columns.name] ?? "")
+            .trim()
+            .replace(/\s+/g, " "),
+          description: this.optionalString(
+            row.values[columns.description ?? -1],
+          ),
+          level: level.value,
+          levelIsValid: level.valid,
+          parentCode: this.optionalString(row.values[columns.parentCode ?? -1]),
+          status: status.value,
+          statusIsValid: status.valid,
+          sourceRowNumber: row.sourceRowNumber,
+          rawData: row.rawData,
+        };
+      });
   }
 
   validateRows(rows: NormalizedCompanyAccountRow[]): {
     rows: ValidatedCompanyAccountRow[];
     report: CompanyAccountPlanImportReport;
   } {
-    if (rows.length > 20_000) {
-      throw new BadRequestException(
-        "El archivo supera el máximo de 20.000 cuentas.",
-      );
-    }
-    const errors: string[] = [];
+    const errors: AccountPlanValidationError[] = [];
     const codes = new Set<string>();
-    rows.forEach((row) => {
-      if (!row.internalCode || row.internalCode.length > 100) {
-        errors.push(
-          `Fila ${row.sourceRowNumber}: código requerido o demasiado largo.`,
-        );
-      }
-      if (!row.name || row.name.length > 255) {
-        errors.push(
-          `Fila ${row.sourceRowNumber}: nombre requerido o demasiado largo.`,
-        );
-      }
-      if (codes.has(row.internalCode)) {
-        errors.push(
-          `Fila ${row.sourceRowNumber}: código duplicado ${row.internalCode}.`,
-        );
-      }
-      codes.add(row.internalCode);
-    });
-    if (!rows.length) {
-      errors.push("El archivo no contiene cuentas.");
-    }
-    if (errors.length) {
-      throw new BadRequestException({
-        message: "El plan de cuentas contiene errores críticos.",
-        errors,
+    const invalidRowNumbers = new Set<number>();
+
+    if (rows.length > ACCOUNT_PLAN_FILE_CONTRACT.maximumRows) {
+      errors.push({
+        row: 0,
+        column: "Archivo",
+        code: "TOO_MANY_ROWS",
+        message: `El archivo supera el máximo de ${ACCOUNT_PLAN_FILE_CONTRACT.maximumRows.toLocaleString("es-CL")} cuentas.`,
       });
     }
+
+    for (const row of rows) {
+      const rowErrors = this.validateRow(row, codes);
+      if (rowErrors.length) {
+        invalidRowNumbers.add(row.sourceRowNumber);
+        errors.push(...rowErrors);
+      }
+      if (row.internalCode) {
+        codes.add(row.internalCode);
+      }
+    }
+
+    for (const row of rows) {
+      if (row.parentCode && row.parentCode === row.internalCode) {
+        invalidRowNumbers.add(row.sourceRowNumber);
+        errors.push({
+          row: row.sourceRowNumber,
+          column: "Código padre",
+          code: "SELF_PARENT",
+          message: "Una cuenta no puede ser su propio padre.",
+        });
+      } else if (row.parentCode && !codes.has(row.parentCode)) {
+        invalidRowNumbers.add(row.sourceRowNumber);
+        errors.push({
+          row: row.sourceRowNumber,
+          column: "Código padre",
+          code: "PARENT_NOT_FOUND",
+          message: `El código padre ${row.parentCode} no existe en el archivo.`,
+        });
+      }
+    }
+
+    if (!rows.length) {
+      errors.push({
+        row: 0,
+        column: "Archivo",
+        code: "EMPTY_CODE",
+        message: "El archivo no contiene cuentas.",
+      });
+    }
+    if (errors.length) {
+      this.throwValidation(errors, rows.length, invalidRowNumbers.size);
+    }
+
     return {
       rows: rows.map((row, index) => ({
         internalCode: row.internalCode,
@@ -181,6 +264,9 @@ export class CompanyAccountPlanParserService {
         description: row.description,
         level: row.level,
         parentCode: row.parentCode,
+        status: row.status ?? "active",
+        levelIsValid: row.levelIsValid,
+        statusIsValid: row.statusIsValid,
         sourceRowNumber: row.sourceRowNumber,
         rawData: row.rawData,
         sortOrder: index,
@@ -202,6 +288,92 @@ export class CompanyAccountPlanParserService {
     return rows;
   }
 
+  private validateRow(
+    row: NormalizedCompanyAccountRow,
+    codes: Set<string>,
+  ): AccountPlanValidationError[] {
+    const errors: AccountPlanValidationError[] = [];
+    if (!row.internalCode) {
+      errors.push({
+        row: row.sourceRowNumber,
+        column: "Código",
+        code: "EMPTY_CODE",
+        message: "El código es obligatorio.",
+      });
+    } else if (row.internalCode.length > 100) {
+      errors.push({
+        row: row.sourceRowNumber,
+        column: "Código",
+        code: "EMPTY_CODE",
+        message: "El código no puede superar 100 caracteres.",
+      });
+    } else if (codes.has(row.internalCode)) {
+      errors.push({
+        row: row.sourceRowNumber,
+        column: "Código",
+        code: "DUPLICATE_CODE",
+        message: `El código ${row.internalCode} está repetido.`,
+      });
+    }
+    if (!row.name || row.name.length > 255) {
+      errors.push({
+        row: row.sourceRowNumber,
+        column: "Nombre",
+        code: "EMPTY_NAME",
+        message: !row.name
+          ? "El nombre es obligatorio."
+          : "El nombre no puede superar 255 caracteres.",
+      });
+    }
+    if (!row.levelIsValid) {
+      errors.push({
+        row: row.sourceRowNumber,
+        column: "Nivel",
+        code: "INVALID_LEVEL",
+        message: "El nivel debe ser un entero positivo.",
+      });
+    }
+    if (!row.statusIsValid) {
+      errors.push({
+        row: row.sourceRowNumber,
+        column: "Estado",
+        code: "INVALID_STATUS",
+        message: "El estado debe ser active, inactive, activo o inactivo.",
+      });
+    }
+    return errors;
+  }
+
+  private throwValidation(
+    errors: AccountPlanValidationError[],
+    totalRows = 0,
+    invalidRows = 0,
+  ): never {
+    throw new BadRequestException({
+      status: "failed",
+      summary: {
+        totalRows,
+        validRows: Math.max(totalRows - invalidRows, 0),
+        invalidRows,
+      },
+      errors: errors.slice(0, ACCOUNT_PLAN_ERROR_LIMIT),
+      truncated: errors.length > ACCOUNT_PLAN_ERROR_LIMIT,
+    });
+  }
+
+  private matchesColumn(headers: string[], key: AccountPlanColumnKey): boolean {
+    const column = ACCOUNT_PLAN_FILE_CONTRACT.columns.find(
+      (candidate) => candidate.key === key,
+    );
+    if (!column) {
+      return false;
+    }
+    const aliases = [column.header, ...column.aliases].map((alias) =>
+      this.normalizeHeader(alias),
+    );
+    return headers.some((header) => aliases.includes(header));
+  }
+
   private normalizeHeader(value: unknown): string {
     return String(value ?? "")
       .normalize("NFD")
@@ -216,31 +388,64 @@ export class CompanyAccountPlanParserService {
     return normalized || null;
   }
 
-  private optionalLevel(value: unknown): number | null {
+  private normalizeLevel(value: unknown): {
+    value: number | null;
+    valid: boolean;
+  } {
     const normalized = String(value ?? "").trim();
+    if (!normalized) {
+      return {
+        value: null,
+        valid: true,
+      };
+    }
     if (!/^\d+$/.test(normalized)) {
-      return null;
+      return {
+        value: null,
+        valid: false,
+      };
     }
     const level = Number(normalized);
-    return level <= 65_535 ? level : null;
+    return {
+      value: level,
+      valid: level > 0 && level <= 65_535,
+    };
+  }
+
+  private normalizeStatus(value: unknown): {
+    value: "active" | "inactive" | null;
+    valid: boolean;
+  } {
+    const normalized = this.normalizeHeader(value);
+    if (!normalized) {
+      return {
+        value: null,
+        valid: true,
+      };
+    }
+    if (normalized === "active" || normalized === "activo") {
+      return {
+        value: "active",
+        valid: true,
+      };
+    }
+    if (normalized === "inactive" || normalized === "inactivo") {
+      return {
+        value: "inactive",
+        valid: true,
+      };
+    }
+    return {
+      value: null,
+      valid: false,
+    };
   }
 
   private isIgnoredRow(
     row: RawCompanyAccountRow,
-    columns: DetectedAccountPlanColumns,
+    _columns: DetectedAccountPlanColumns,
   ): boolean {
     const values = row.values.map((value) => String(value ?? "").trim());
-    if (values.every((value) => !value)) {
-      return true;
-    }
-    const code = this.normalizeHeader(row.values[columns.code]);
-    const name = this.normalizeHeader(row.values[columns.name]);
-    if (
-      HEADER_ALIASES.code.includes(code as never) &&
-      HEADER_ALIASES.name.includes(name as never)
-    ) {
-      return true;
-    }
-    return ["total", "totales", "nota", "notas"].includes(code);
+    return values.every((value) => !value);
   }
 }

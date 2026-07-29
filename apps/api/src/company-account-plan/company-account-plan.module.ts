@@ -14,6 +14,7 @@ import { CompanyAccountEntity } from "./entities/company-account.entity";
 import { CompanyAccountMatchingService } from "./services/company-account-matching.service";
 import { CompanyAccountPlanParserService } from "./services/company-account-plan-parser.service";
 import { CompanyAccountPlanService } from "./services/company-account-plan.service";
+import { CompanyAccountPlanTemplateService } from "./services/company-account-plan-template.service";
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { CompanyAccountPlanService } from "./services/company-account-plan.servi
   providers: [
     CompanyAccountPlanService,
     CompanyAccountPlanParserService,
+    CompanyAccountPlanTemplateService,
     CompanyAccountMatchingService,
   ],
 })
