@@ -294,6 +294,63 @@ export function AccountingDocumentsPage({
           </button>
         ))}
       </div>
+      
+      <section className="mt-5 rounded-xl border border-slate-200 bg-white">
+        <button
+          type="button"
+          aria-expanded={formatOpen}
+          aria-controls="document-format-details"
+          onClick={() => setFormatOpen((open) => !open)}
+          className="flex w-full items-center justify-between gap-4 p-5 text-left focus-visible:outline-2 focus-visible:outline-emerald-600"
+        >
+          <span>
+            <strong>Formato esperado: {contract.title}</strong>
+            <span className="mt-1 block text-sm text-slate-500">
+              {contract.required.length} requeridas · {contract.optional.length}{" "}
+              opcionales · XLS, XLSX o CSV
+            </span>
+          </span>
+          <span className="inline-flex items-center gap-2 text-sm font-medium text-emerald-700">
+            {formatOpen ? "Ocultar detalles" : "Ver detalles"}
+            <ChevronDown
+              className={`size-4 transition ${formatOpen ? "rotate-180" : ""}`}
+            />
+          </span>
+        </button>
+        {formatOpen && (
+          <div id="document-format-details" className="border-t p-5">
+            <div className="grid gap-6 lg:grid-cols-2">
+              <ColumnList
+                title="Columnas requeridas"
+                values={contract.required}
+                required
+              />
+              <ColumnList
+                title="Columnas opcionales"
+                values={contract.optional}
+              />
+            </div>
+            <div className="mt-5 space-y-3 text-sm text-slate-700">
+              <p>
+                <strong>Alias aceptados:</strong> {contract.aliases}
+              </p>
+              <p>
+                <strong>Reglas:</strong> preserve códigos como texto, use fechas
+                válidas y montos sin símbolos.
+              </p>
+              <p>
+                <strong>Validaciones:</strong> campos obligatorios, montos no
+                negativos, fechas del período y conciliación contable.
+              </p>
+              <p>
+                <strong>Errores frecuentes:</strong> encabezados ambiguos,
+                códigos convertidos a número, movimientos con Debe y Haber
+                simultáneos.
+              </p>
+            </div>
+          </div>
+        )}
+      </section>
 
       <label
         htmlFor="accounting-document-file"
@@ -442,62 +499,6 @@ export function AccountingDocumentsPage({
         refresh={() => documents.refetch()}
       />
 
-      <section className="mt-5 rounded-xl border border-slate-200 bg-white">
-        <button
-          type="button"
-          aria-expanded={formatOpen}
-          aria-controls="document-format-details"
-          onClick={() => setFormatOpen((open) => !open)}
-          className="flex w-full items-center justify-between gap-4 p-5 text-left focus-visible:outline-2 focus-visible:outline-emerald-600"
-        >
-          <span>
-            <strong>Formato esperado: {contract.title}</strong>
-            <span className="mt-1 block text-sm text-slate-500">
-              {contract.required.length} requeridas · {contract.optional.length}{" "}
-              opcionales · XLS, XLSX o CSV
-            </span>
-          </span>
-          <span className="inline-flex items-center gap-2 text-sm font-medium text-emerald-700">
-            {formatOpen ? "Ocultar detalles" : "Ver detalles"}
-            <ChevronDown
-              className={`size-4 transition ${formatOpen ? "rotate-180" : ""}`}
-            />
-          </span>
-        </button>
-        {formatOpen && (
-          <div id="document-format-details" className="border-t p-5">
-            <div className="grid gap-6 lg:grid-cols-2">
-              <ColumnList
-                title="Columnas requeridas"
-                values={contract.required}
-                required
-              />
-              <ColumnList
-                title="Columnas opcionales"
-                values={contract.optional}
-              />
-            </div>
-            <div className="mt-5 space-y-3 text-sm text-slate-700">
-              <p>
-                <strong>Alias aceptados:</strong> {contract.aliases}
-              </p>
-              <p>
-                <strong>Reglas:</strong> preserve códigos como texto, use fechas
-                válidas y montos sin símbolos.
-              </p>
-              <p>
-                <strong>Validaciones:</strong> campos obligatorios, montos no
-                negativos, fechas del período y conciliación contable.
-              </p>
-              <p>
-                <strong>Errores frecuentes:</strong> encabezados ambiguos,
-                códigos convertidos a número, movimientos con Debe y Haber
-                simultáneos.
-              </p>
-            </div>
-          </div>
-        )}
-      </section>
     </main>
   );
 }
