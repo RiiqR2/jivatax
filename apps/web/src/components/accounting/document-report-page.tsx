@@ -130,6 +130,71 @@ export function DocumentReportPage({
           <Metric label="Fila de encabezado" value={report.headerRowNumber} />
         </dl>
       </section>
+      {(report.systemTotals || report.reportedTotals) && (
+        <div className="mt-5 grid gap-5 lg:grid-cols-2">
+          <TotalsSection
+            title="Información entregada"
+            description="Valores declarados por la contabilidad; los vacíos permanecen vacíos."
+            totals={report.reportedTotals ?? {}}
+          />
+          <TotalsSection
+            title="Cálculos de JivaTax"
+            description="Valores interpretados y sumados exclusivamente desde filas de cuentas."
+            totals={report.systemTotals ?? {}}
+          />
+        </div>
+      )}
+      {(report.comparisons?.length ?? 0) > 0 && (
+        <section className="mt-5 rounded-xl border bg-white p-5">
+          <h2 className="font-semibold">
+            Comparación informado versus calculado
+          </h2>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  {[
+                    "Concepto",
+                    "Informado",
+                    "Calculado",
+                    "Diferencia",
+                    "Estado",
+                  ].map((label) => (
+                    <th key={label} className="px-3 py-2" scope="col">
+                      {label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {report.comparisons?.map((comparison) => (
+                  <tr key={comparison.field} className="border-t">
+                    <td className="px-3 py-2">
+                      {fieldLabel(comparison.field)}
+                    </td>
+                    <td className="px-3 py-2">
+                      {comparison.reported === null
+                        ? "Vacío en archivo"
+                        : comparison.reported}
+                    </td>
+                    <td className="px-3 py-2">{comparison.calculated}</td>
+                    <td className="px-3 py-2">
+                      {comparison.difference ?? "No comparable"}
+                    </td>
+                    <td className="px-3 py-2">
+                      {comparison.status === "matched"
+                        ? "Consistente"
+                        : comparison.status === "mismatched"
+                          ? "Con diferencia"
+                          : "No informado"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
       {(report.totals ||
         Object.keys(report.reconciliation ?? {}).length > 0) && (
         <section className="mt-5 rounded-xl border bg-white p-5">
@@ -340,6 +405,32 @@ function Metric({ label, value }: { label: string; value: unknown }) {
         {value === null || value === undefined ? "—" : String(value)}
       </dd>
     </div>
+  );
+}
+
+function TotalsSection({
+  title,
+  description,
+  totals,
+}: {
+  title: string;
+  description: string;
+  totals: Record<string, number | null>;
+}) {
+  return (
+    <section className="rounded-xl border bg-white p-5">
+      <h2 className="font-semibold">{title}</h2>
+      <p className="mt-1 text-sm text-slate-600">{description}</p>
+      <dl className="mt-4 grid grid-cols-2 gap-4">
+        {Object.entries(totals).map(([field, value]) => (
+          <Metric
+            key={field}
+            label={fieldLabel(field)}
+            value={value === null ? "Vacío en archivo" : value}
+          />
+        ))}
+      </dl>
+    </section>
   );
 }
 function Filter({
