@@ -9,6 +9,9 @@ import { InjectRepository } from "@nestjs/typeorm";
 import * as argon2 from "argon2";
 import { randomUUID } from "node:crypto";
 import { IsNull, Repository } from "typeorm";
+import { CompanyEntity } from "../companies/entities/company.entity";
+import { CompanyStatus } from "../companies/enums/company-status.enum";
+import { UserPlatformRole } from "../users/entities/user.entity";
 import type { Request, Response } from "express";
 import { OrganizationMemberEntity } from "../organizations/entities/organization-member.entity";
 import { OrganizationStatus } from "../organizations/entities/organization.entity";
@@ -55,6 +58,8 @@ export class AuthService {
     private readonly sessions: Repository<AuthSessionEntity>,
     @InjectRepository(OrganizationMemberEntity)
     private readonly members: Repository<OrganizationMemberEntity>,
+    @InjectRepository(CompanyEntity)
+    private readonly companiesRepository: Repository<CompanyEntity>,
   ) {
     this.accessSecret = this.requiredSecret("JWT_ACCESS_SECRET");
     this.refreshSecret = this.requiredSecret("JWT_REFRESH_SECRET");
@@ -183,6 +188,42 @@ export class AuthService {
       ? user.currentOrganizationId
       : null;
     return this.response(user, user.sessionId, current, organizations);
+  }
+  async companies(user: AuthenticatedUser) {
+    const query = this.companiesRepository
+      .createQueryBuilder("company")
+      .leftJoin(
+        OrganizationMemberEntity,
+        "membership",
+        "membership.organizationId = company.organizationId AND membership.userId = :userId AND membership.status = :memberStatus AND membership.deletedAt IS NULL",
+        {
+          userId: user.id,
+          memberStatus: OrganizationMemberStatus.ACTIVE,
+        },
+      )
+      .where("company.deletedAt IS NULL")
+      .andWhere("company.status = :companyStatus", {
+        companyStatus: CompanyStatus.ACTIVE,
+      });
+
+    if (user.platformRole !== UserPlatformRole.MetaUser) {
+      query.andWhere("membership.id IS NOT NULL");
+    }
+
+    const companies = await query
+      .addSelect("membership.role", "membershipRole")
+      .orderBy("company.legalName", "ASC")
+      .getRawAndEntities();
+
+    return companies.entities.map((company, index) => ({
+      id: company.id,
+      legalName: company.legalName,
+      fantasyName: company.tradeName,
+      rut: company.rut,
+      role:
+        companies.raw[index]?.membershipRole ??
+        (user.platformRole === UserPlatformRole.MetaUser ? "metauser" : null),
+    }));
   }
   async refresh(
     token: string,

@@ -44,6 +44,9 @@ export class AuthController {
   @Get("me") me(@CurrentUser() user: AuthenticatedUser) {
     return this.auth.me(user);
   }
+  @Get("me/companies") companies(@CurrentUser() user: AuthenticatedUser) {
+    return this.auth.companies(user);
+  }
   @Public() @Post("refresh") async refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
