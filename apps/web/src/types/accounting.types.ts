@@ -17,11 +17,17 @@ export type TaxDocument = {
   status: string;
   versionNumber: number;
   uploadedAt: string;
+  uploadedByUserId: string;
   storedFile: { id: string; originalName: string; sizeBytes: string };
-  metadata: {
-    rowsRead?: number;
-    validRows?: number;
-    errors?: unknown[];
-    warnings?: unknown[];
-  } | null;
+  metadata: TaxDocumentReport | null;
+};
+
+export type TaxDocumentReport = {
+  rowsRead?: number;
+  validRows?: number;
+  ignoredRows?: number;
+  errors?: unknown[];
+  warnings?: unknown[];
+  totals?: Record<string, unknown>;
+  reconciliation?: Record<string, unknown>;
 };

@@ -10,7 +10,7 @@ export interface DashboardDemoData {
 
 const months = ["Feb", "Mar", "Abr", "May", "Jun", "Jul"];
 
-// DATOS SOLO PARA LA DEMO: reemplazar por endpoints reales del dashboard.
+// Estos datos son únicamente para demostración y deben ser reemplazados por endpoints reales.
 export function getDemoDashboardData(companyId: string): DashboardDemoData {
   const seed = [...companyId].reduce(
     (value, character) => (value * 31 + character.charCodeAt(0)) % 10_007,

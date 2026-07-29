@@ -57,7 +57,7 @@ export function AppSidebar() {
       : [];
 
   return (
-    <aside className="hidden w-64 shrink-0 border-r border-slate-800 bg-slate-950 text-slate-200 lg:flex lg:flex-col">
+    <aside className="sticky top-0 hidden h-screen w-64 shrink-0 border-r border-slate-800 bg-slate-950 text-slate-200 lg:flex lg:flex-col">
       <div className="flex h-16 items-center gap-3 border-b border-slate-800 px-5">
         <span className="grid size-9 place-items-center rounded-xl bg-emerald-600 text-white">
           <Leaf className="size-5" />
@@ -68,7 +68,7 @@ export function AppSidebar() {
         </div>
       </div>
       <nav
-        className="flex flex-1 flex-col justify-between p-3"
+        className="flex-1 overflow-y-auto p-3"
         aria-label="Navegación principal"
       >
         <div className="space-y-1">
@@ -107,6 +107,8 @@ export function AppSidebar() {
             </Link>
           )}
         </div>
+      </nav>
+      <footer className="shrink-0 border-t border-slate-800 p-3">
         <Button
           type="button"
           variant="ghost"
@@ -121,7 +123,7 @@ export function AppSidebar() {
           )}
           {logout.isPending ? "Cerrando sesión…" : "Cerrar sesión"}
         </Button>
-      </nav>
+      </footer>
     </aside>
   );
 }

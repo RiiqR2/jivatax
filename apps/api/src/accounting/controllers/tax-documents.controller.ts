@@ -1,9 +1,18 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { CurrentUser } from "../../auth/decorators/current-user.decorator";
 import { CompanyAccessGuard } from "../../auth/guards/company-access.guard";
 import type { AuthenticatedUser } from "../../auth/interfaces/authenticated-user.interface";
 import {
   CreateTaxDocumentDto,
+  ListTaxDocumentsQueryDto,
   ProcessTaxDocumentDto,
 } from "../dto/accounting.dto";
 import { TaxDocumentsService } from "../services/tax-documents.service";
@@ -15,8 +24,9 @@ export class TaxDocumentsController {
   @Get() list(
     @Param("companyId") companyId: string,
     @Param("taxPeriodId") periodId: string,
+    @Query() query: ListTaxDocumentsQueryDto,
   ) {
-    return this.service.list(companyId, periodId);
+    return this.service.list(companyId, periodId, query.documentType);
   }
   @Post() create(
     @Param("companyId") companyId: string,

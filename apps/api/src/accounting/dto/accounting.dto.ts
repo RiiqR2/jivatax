@@ -35,3 +35,9 @@ export class CreateTaxDocumentDto {
 export class ProcessTaxDocumentDto {
   @IsOptional() @IsString() sheetName?: string;
 }
+
+export class ListTaxDocumentsQueryDto {
+  @IsOptional()
+  @IsEnum(TaxDocumentType)
+  documentType?: TaxDocumentType;
+}

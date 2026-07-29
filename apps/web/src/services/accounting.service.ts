@@ -1,6 +1,7 @@
 import { api } from "@/lib/api";
 import type {
   TaxDocument,
+  TaxDocumentReport,
   TaxDocumentType,
   TaxPeriod,
 } from "@/types/accounting.types";
@@ -33,9 +34,67 @@ export const accountingService = {
     );
     return response.data;
   },
-  async documents(companyId: string, periodId: string): Promise<TaxDocument[]> {
+  async documents(
+    companyId: string,
+    periodId: string,
+    documentType?: TaxDocumentType,
+  ): Promise<TaxDocument[]> {
     const response = await api.get<TaxDocument[]>(
       `/companies/${companyId}/tax-periods/${periodId}/documents`,
+      {
+        params: documentType
+          ? {
+              documentType,
+            }
+          : undefined,
+      },
+    );
+    return response.data;
+  },
+  async createDocument(
+    companyId: string,
+    periodId: string,
+    documentType: TaxDocumentType,
+    storedFileId: string,
+  ): Promise<TaxDocument> {
+    const payload = {
+      documentType,
+      storedFileId,
+    };
+    const response = await api.post<TaxDocument>(
+      `/companies/${companyId}/tax-periods/${periodId}/documents`,
+      payload,
+    );
+    return response.data;
+  },
+  async processDocument(
+    companyId: string,
+    periodId: string,
+    documentId: string,
+  ): Promise<TaxDocumentReport> {
+    const response = await api.post<TaxDocumentReport>(
+      `/companies/${companyId}/tax-periods/${periodId}/documents/${documentId}/process`,
+      {},
+    );
+    return response.data;
+  },
+  async document(
+    companyId: string,
+    periodId: string,
+    documentId: string,
+  ): Promise<TaxDocument> {
+    const response = await api.get<TaxDocument>(
+      `/companies/${companyId}/tax-periods/${periodId}/documents/${documentId}`,
+    );
+    return response.data;
+  },
+  async report(
+    companyId: string,
+    periodId: string,
+    documentId: string,
+  ): Promise<TaxDocumentReport> {
+    const response = await api.get<TaxDocumentReport>(
+      `/companies/${companyId}/tax-periods/${periodId}/documents/${documentId}/report`,
     );
     return response.data;
   },

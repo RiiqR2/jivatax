@@ -8,7 +8,7 @@ import {
 } from "@nestjs/common";
 import { InjectDataSource, InjectRepository } from "@nestjs/typeorm";
 import * as XLSX from "xlsx";
-import { DataSource, EntityManager, Repository } from "typeorm";
+import { DataSource, EntityManager, LessThan, Repository } from "typeorm";
 import { StoredFileEntity } from "../../files/entities/stored-file.entity";
 import {
   OBJECT_STORAGE,
@@ -61,10 +61,11 @@ export class TaxDocumentsService {
   async list(
     companyId: string,
     periodId: string,
+    documentType?: TaxDocumentType,
   ): Promise<TaxDocumentEntity[]> {
     await this.periods.get(companyId, periodId);
     return this.documents.find({
-      where: { companyId, taxPeriodId: periodId },
+      where: { companyId, taxPeriodId: periodId, documentType },
       relations: { storedFile: true },
       order: { uploadedAt: "DESC" },
     });
@@ -390,6 +391,7 @@ export class TaxDocumentsService {
           taxPeriodId: document.taxPeriodId,
           documentType: document.documentType,
           status: TaxDocumentStatus.PROCESSED,
+          versionNumber: LessThan(document.versionNumber),
         },
         order: { versionNumber: "DESC" },
       });
