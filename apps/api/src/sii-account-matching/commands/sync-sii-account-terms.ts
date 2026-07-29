@@ -14,10 +14,12 @@ async function main() {
     console.log(`- Aliases created: ${result.aliasesCreated}`);
     console.log(`- Negative terms created: ${result.negativeTermsCreated}`);
     console.log(`- Existing terms skipped: ${result.existingTermsSkipped}`);
-    console.log(`- Terms omitted: ${result.termsOmitted}`);
+    console.log(`- Inactive terms skipped: ${result.inactiveTermsSkipped}`);
     console.log(
       `- Missing referenced accounts: ${result.missingReferencedAccounts.length}`,
     );
+    for (const code of result.missingReferencedAccounts)
+      console.log(`  - ${code}`);
     console.log(`- Errors: ${result.errors}`);
     if (result.errors) process.exitCode = 1;
   } finally {
