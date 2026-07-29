@@ -41,6 +41,8 @@ import {
 } from "../enums/company-account-plan.enums";
 import { CompanyAccountMatchingService } from "./company-account-matching.service";
 import { CompanyAccountPlanParserService } from "./company-account-plan-parser.service";
+import { CompanyAccountPlanTemplateService } from "./company-account-plan-template.service";
+import { ACCOUNT_PLAN_FILE_CONTRACT } from "../company-account-plan.contract";
 
 const READ_ROLES = [
   OrganizationRole.OWNER,
@@ -78,9 +80,19 @@ export class CompanyAccountPlanService {
     private readonly dataSource: DataSource,
     private readonly parser: CompanyAccountPlanParserService,
     private readonly matching: CompanyAccountMatchingService,
+    private readonly template: CompanyAccountPlanTemplateService,
     @Inject(OBJECT_STORAGE)
     private readonly storage: ObjectStorageService,
   ) {}
+
+  async getTemplate(
+    companyId: string,
+    organizationId: string,
+    userId: string,
+  ): Promise<Buffer> {
+    await this.assertAccess(companyId, organizationId, userId, READ_ROLES);
+    return this.template.generate();
+  }
 
   async listVersions(
     companyId: string,
@@ -175,10 +187,26 @@ export class CompanyAccountPlanService {
               sortOrder: row.sortOrder,
               sourceRowNumber: row.sourceRowNumber,
               rawData: row.rawData,
-              status: CompanyAccountStatus.ACTIVE,
+              status:
+                row.status === "inactive"
+                  ? CompanyAccountStatus.INACTIVE
+                  : CompanyAccountStatus.ACTIVE,
             }),
           ),
         );
+        const accountsByCode = new Map(
+          companyAccounts.map((account) => [account.internalCode, account]),
+        );
+        for (const account of companyAccounts) {
+          const sourceRow = resolvedRows.find(
+            (row) => row.internalCode === account.internalCode,
+          );
+          if (sourceRow?.parentCode) {
+            account.parentId =
+              accountsByCode.get(sourceRow.parentCode)?.id ?? null;
+          }
+        }
+        await manager.save(CompanyAccountEntity, companyAccounts);
         ambiguousMappings = await this.matching.generateMappingSuggestions(
           manager,
           companyAccounts,
@@ -454,14 +482,19 @@ export class CompanyAccountPlanService {
 
   private validateFile(file: StoredFileEntity): void {
     if (
-      !["xlsx", "xls", "csv"].includes(file.extension) ||
+      !ACCOUNT_PLAN_FILE_CONTRACT.allowedExtensions.includes(
+        file.extension as "xlsx" | "xls" | "csv",
+      ) ||
       !ALLOWED_CONTENT_TYPES.includes(file.contentType)
     ) {
       throw new BadRequestException(
         "El tipo real registrado del archivo no está permitido.",
       );
     }
-    if (BigInt(file.sizeBytes) > 10_000_000n) {
+    if (
+      BigInt(file.sizeBytes) >
+      BigInt(ACCOUNT_PLAN_FILE_CONTRACT.maximumFileSizeBytes)
+    ) {
       throw new BadRequestException(
         "El plan de cuentas supera el máximo de 10 MB.",
       );
