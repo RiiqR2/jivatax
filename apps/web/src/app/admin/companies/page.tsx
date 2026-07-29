@@ -1,5 +1,5 @@
-import { CompaniesPage } from "@/components/companies/companies-page";
+import { AdminCompaniesPage } from "@/components/admin/companies/admin-companies-page";
 
-export default function AdminCompaniesPage() {
-  return <CompaniesPage />;
+export default function CompaniesPage() {
+  return <AdminCompaniesPage />;
 }

@@ -8,9 +8,11 @@ import type { Company } from "@/types/company.types";
 export function CompanyList({
   companies,
   canEdit,
+  admin = false,
 }: {
   companies: Company[];
   canEdit: boolean;
+  admin?: boolean;
 }) {
   if (!companies.length)
     return (
@@ -21,7 +23,9 @@ export function CompanyList({
         action={
           canEdit ? (
             <Button asChild>
-              <Link href="/companies/new">Crear empresa</Link>
+              <Link href={admin ? "/admin/companies/new" : "/companies/new"}>
+                Crear empresa
+              </Link>
             </Button>
           ) : undefined
         }
@@ -61,14 +65,22 @@ export function CompanyList({
                 </td>
                 <td>
                   <div className="flex justify-end gap-2">
-                    <Button asChild variant="outline">
-                      <Link href={`/companies/${company.id}`}>Administrar</Link>
-                    </Button>
+                    {!admin && (
+                      <Button asChild variant="outline">
+                        <Link href={`/companies/${company.id}`}>
+                          Administrar
+                        </Link>
+                      </Button>
+                    )}
                     {canEdit && (
                       <Button asChild variant="ghost">
                         <Link
                           aria-label={`Editar ${company.legalName}`}
-                          href={`/companies/${company.id}/edit`}
+                          href={
+                            admin
+                              ? `/admin/companies/${company.id}/edit`
+                              : `/companies/${company.id}/edit`
+                          }
                         >
                           <Pencil className="size-4" /> Editar
                         </Link>
@@ -97,14 +109,20 @@ export function CompanyList({
               <CompanyStatusBadge status={company.status} />
             </div>
             <div className="mt-4 flex gap-2">
-              <Button asChild className="flex-1">
-                <Link href={`/companies/${company.id}`}>Administrar</Link>
-              </Button>
+              {!admin && (
+                <Button asChild className="flex-1">
+                  <Link href={`/companies/${company.id}`}>Administrar</Link>
+                </Button>
+              )}
               {canEdit && (
                 <Button asChild variant="outline">
                   <Link
                     aria-label={`Editar ${company.legalName}`}
-                    href={`/companies/${company.id}/edit`}
+                    href={
+                      admin
+                        ? `/admin/companies/${company.id}/edit`
+                        : `/companies/${company.id}/edit`
+                    }
                   >
                     <Pencil className="size-4" />
                   </Link>

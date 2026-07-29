@@ -24,30 +24,32 @@ export function AppSidebar() {
   const logout = useLogout();
   const { activeCompany } = useActiveCompany();
   const companyId = activeCompany?.id;
-  const navigation = companyId
-    ? [
-        {
-          label: "Resumen",
-          href: `/companies/${companyId}/dashboard`,
-          icon: LayoutDashboard,
-        },
-        {
-          label: "Documentos",
-          href: `/companies/${companyId}/documents`,
-          icon: FileText,
-        },
-        {
-          label: "Plan de cuentas",
-          href: `/companies/${companyId}/account-plan`,
-          icon: ListTree,
-        },
-        {
-          label: "Usuarios",
-          href: `/companies/${companyId}/users`,
-          icon: Users,
-        },
-      ]
-    : [];
+  const isAdmin = pathname.startsWith("/admin");
+  const navigation =
+    !isAdmin && companyId
+      ? [
+          {
+            label: "Resumen",
+            href: `/companies/${companyId}/dashboard`,
+            icon: LayoutDashboard,
+          },
+          {
+            label: "Documentos",
+            href: `/companies/${companyId}/documents`,
+            icon: FileText,
+          },
+          {
+            label: "Plan de cuentas",
+            href: `/companies/${companyId}/account-plan`,
+            icon: ListTree,
+          },
+          {
+            label: "Usuarios",
+            href: `/companies/${companyId}/users`,
+            icon: Users,
+          },
+        ]
+      : [];
 
   return (
     <aside className="hidden w-64 shrink-0 border-r border-slate-800 bg-slate-950 text-slate-200 lg:flex lg:flex-col">

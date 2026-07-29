@@ -11,6 +11,10 @@ import { AdminOrganizationsController } from "./organizations/admin-organization
 import { AdminOrganizationsService } from "./organizations/admin-organizations.service";
 import { AdminUsersController } from "./users/admin-users.controller";
 import { AdminUsersService } from "./users/admin-users.service";
+import { SiiAccountEntity } from "../sii-account-plan/entities/sii-account.entity";
+import { SiiAccountPlanVersionEntity } from "../sii-account-plan/entities/sii-account-plan-version.entity";
+import { AdminSiiAccountPlanController } from "./sii-account-plan/admin-sii-account-plan.controller";
+import { AdminSiiAccountPlanService } from "./sii-account-plan/admin-sii-account-plan.service";
 
 @Module({
   imports: [
@@ -18,6 +22,8 @@ import { AdminUsersService } from "./users/admin-users.service";
       UserEntity,
       OrganizationEntity,
       OrganizationMemberEntity,
+      SiiAccountPlanVersionEntity,
+      SiiAccountEntity,
     ]),
     CompaniesModule,
   ],
@@ -25,12 +31,14 @@ import { AdminUsersService } from "./users/admin-users.service";
     AdminUsersController,
     AdminOrganizationsController,
     AdminCompaniesController,
+    AdminSiiAccountPlanController,
   ],
   providers: [
     MetaUserGuard,
     AdminUsersService,
     AdminOrganizationsService,
     AdminCompaniesService,
+    AdminSiiAccountPlanService,
   ],
 })
 export class AdminModule {}

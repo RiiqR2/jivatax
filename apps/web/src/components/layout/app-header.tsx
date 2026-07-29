@@ -9,7 +9,7 @@ import {
   Menu,
   ShieldCheck,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useLogout } from "@/hooks/use-logout";
 import { useSession } from "@/hooks/use-session";
@@ -19,6 +19,8 @@ export function AppHeader() {
   const [open, setOpen] = useState(false);
   const menu = useRef<HTMLDivElement>(null);
   const router = useRouter();
+  const pathname = usePathname();
+  const isAdmin = pathname.startsWith("/admin");
   const logout = useLogout();
   const session = useSession();
   const { activeCompany, availableCompanies, selectCompany, loading } =
@@ -49,34 +51,41 @@ export function AppHeader() {
         <Menu className="size-5" />
       </button>
       <div className="ml-auto flex items-center" ref={menu}>
-        <button
-          type="button"
-          onClick={() => setOpen((value) => !value)}
-          aria-expanded={open}
-          className="flex min-w-0 items-center gap-3 rounded-xl border border-slate-200 px-3 py-2 text-left hover:bg-slate-50"
-        >
-          <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-emerald-50 text-emerald-700">
-            {loading ? (
-              <LoaderCircle className="size-4 animate-spin" />
-            ) : (
-              <Building2 className="size-4" />
-            )}
-          </span>
-          <span className="hidden min-w-0 sm:block">
-            <span className="block max-w-56 truncate text-sm font-semibold text-slate-900">
-              {activeCompany?.fantasyName ||
-                activeCompany?.legalName ||
-                "Seleccionar empresa"}
+        {isAdmin ? (
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+            <ShieldCheck className="size-5 text-emerald-700" />
+            Administración global
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setOpen((value) => !value)}
+            aria-expanded={open}
+            className="flex min-w-0 items-center gap-3 rounded-xl border border-slate-200 px-3 py-2 text-left hover:bg-slate-50"
+          >
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-emerald-50 text-emerald-700">
+              {loading ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : (
+                <Building2 className="size-4" />
+              )}
             </span>
-            <span className="block text-xs text-slate-500">
-              {activeCompany
-                ? `RUT ${activeCompany.rut}`
-                : "Sin empresa activa"}
+            <span className="hidden min-w-0 sm:block">
+              <span className="block max-w-56 truncate text-sm font-semibold text-slate-900">
+                {activeCompany?.fantasyName ||
+                  activeCompany?.legalName ||
+                  "Seleccionar empresa"}
+              </span>
+              <span className="block text-xs text-slate-500">
+                {activeCompany
+                  ? `RUT ${activeCompany.rut}`
+                  : "Sin empresa activa"}
+              </span>
             </span>
-          </span>
-          <ChevronDown className="size-4 shrink-0 text-slate-400" />
-        </button>
-        {open && (
+            <ChevronDown className="size-4 shrink-0 text-slate-400" />
+          </button>
+        )}
+        {!isAdmin && open && (
           <div className="absolute right-4 top-14 z-50 w-80 overflow-hidden rounded-xl border border-slate-200 bg-white py-2 shadow-xl sm:right-6">
             <p className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
               Empresas disponibles

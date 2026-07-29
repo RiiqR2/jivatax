@@ -24,11 +24,13 @@ export function ActiveCompanyProvider({
 }: Readonly<{ children: ReactNode }>) {
   const pathname = usePathname();
   const router = useRouter();
+  const isAdmin = pathname.startsWith("/admin");
   const companyId = pathname.match(/^\/companies\/([^/]+)/)?.[1] ?? null;
   const companies = useQuery({
     queryKey: ["auth", "me", "companies"],
     queryFn: activeCompaniesService.list,
     retry: false,
+    enabled: !isAdmin,
   });
   const availableCompanies = companies.data ?? [];
   const activeCompany =
@@ -46,8 +48,8 @@ export function ActiveCompanyProvider({
         activeCompany,
         availableCompanies,
         selectCompany,
-        loading: companies.isPending,
-        error: companies.isError,
+        loading: companies.isLoading,
+        error: !isAdmin && companies.isError,
         requestedCompanyId: companyId,
       }}
     >

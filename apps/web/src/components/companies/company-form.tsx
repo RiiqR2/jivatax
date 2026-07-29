@@ -29,10 +29,12 @@ export function CompanyForm({
   company,
   isPending,
   onSubmit,
+  cancelHref = "/companies",
 }: {
   company?: Company;
   isPending: boolean;
   onSubmit: (values: CompanyInput) => Promise<void>;
+  cancelHref?: string;
 }) {
   const form = useForm<CompanyFormValues>({
     resolver: zodResolver(companySchema),
@@ -141,7 +143,7 @@ export function CompanyForm({
       )}
       <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:justify-end">
         <Button asChild variant="outline">
-          <Link href="/companies">Cancelar</Link>
+          <Link href={cancelHref}>Cancelar</Link>
         </Button>
         <Button type="submit" disabled={isPending}>
           {isPending && (
