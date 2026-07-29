@@ -26,23 +26,15 @@ export const SII_ACCOUNT_ALIASES: readonly CuratedSiiAccountKnowledge[] = [
     ],
   },
   {
-    siiAccountCode: "1.01.04.00",
+    siiAccountCode: "1.01.05.00",
     terms: [{ term: "clientes", type: "erp_term", weight: 60 }],
   },
   {
-    siiAccountCode: "1.01.08.00",
-    terms: [
-      { term: "iva crédito fiscal", type: "alias", weight: 60 },
-      { term: "iva cf", type: "abbreviation", weight: 55 },
-      { term: "ppm", type: "abbreviation", weight: 55 },
-    ],
-  },
-  {
-    siiAccountCode: "1.02.06.00",
+    siiAccountCode: "1.02.03.00",
     terms: [{ term: "maquinarias y equipos", type: "erp_term", weight: 60 }],
   },
   {
-    siiAccountCode: "1.02.07.00",
+    siiAccountCode: "1.02.06.00",
     terms: [
       {
         term: "dep acum maquinarias y equipos",

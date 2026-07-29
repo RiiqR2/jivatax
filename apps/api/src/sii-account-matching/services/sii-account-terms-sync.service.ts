@@ -2,6 +2,8 @@ import { Injectable, Logger } from "@nestjs/common";
 import { InjectDataSource } from "@nestjs/typeorm";
 import { DataSource, IsNull, Repository } from "typeorm";
 import { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
+import { SiiAccountPlanVersionEntity } from "../../sii-account-plan/entities/sii-account-plan-version.entity";
+import { SiiAccountPlanVersionStatus } from "../../sii-account-plan/enums/sii-account-plan-version-status.enum";
 import {
   SII_ACCOUNT_ALIASES,
   type CuratedSiiAccountKnowledge,
@@ -13,6 +15,10 @@ import {
 import { normalizeAccountTerm } from "../normalization/account-term-normalizer";
 
 export type TermsSyncSummary = {
+  totalSiiAccountsInDatabase: number;
+  versionsFound: number;
+  selectedVersionId: string;
+  selectedVersionLabel: string;
   siiAccountsRead: number;
   officialTermsCreated: number;
   aliasesCreated: number;
@@ -41,15 +47,37 @@ export class SiiAccountTermsSyncService {
     knowledge: readonly CuratedSiiAccountKnowledge[] = SII_ACCOUNT_ALIASES,
   ): Promise<TermsSyncSummary> {
     const accountsRepository = this.dataSource.getRepository(SiiAccountEntity);
+    const versionsRepository = this.dataSource.getRepository(
+      SiiAccountPlanVersionEntity,
+    );
     const termsRepository = this.dataSource.getRepository(SiiAccountTermEntity);
-    const accounts = await accountsRepository
-      .createQueryBuilder("account")
-      .innerJoin("account.version", "version", "version.status = :status", {
-        status: "active",
-      })
-      .where("account.deletedAt IS NULL")
-      .getMany();
+    const [totalSiiAccountsInDatabase, versions] = await Promise.all([
+      accountsRepository.count(),
+      versionsRepository.find({ order: { importedAt: "DESC" } }),
+    ]);
+    const selectedVersion =
+      versions.find(
+        (version) => version.status === SiiAccountPlanVersionStatus.ACTIVE,
+      ) ?? versions[0];
+    if (!selectedVersion) {
+      throw new Error(
+        `No se encontró una versión del catálogo SII (${totalSiiAccountsInDatabase} cuentas en sii_accounts).`,
+      );
+    }
+    const accounts = await accountsRepository.find({
+      where: { versionId: selectedVersion.id },
+      order: { sortOrder: "ASC" },
+    });
+    if (totalSiiAccountsInDatabase > 0 && accounts.length === 0) {
+      throw new Error(
+        `La versión SII seleccionada ${selectedVersion.id} (${selectedVersion.code} · ${selectedVersion.name}) no contiene cuentas, pero sii_accounts contiene ${totalSiiAccountsInDatabase} registros.`,
+      );
+    }
     const summary: TermsSyncSummary = {
+      totalSiiAccountsInDatabase,
+      versionsFound: versions.length,
+      selectedVersionId: selectedVersion.id,
+      selectedVersionLabel: `${selectedVersion.code} · ${selectedVersion.name}`,
       siiAccountsRead: accounts.length,
       officialTermsCreated: 0,
       aliasesCreated: 0,

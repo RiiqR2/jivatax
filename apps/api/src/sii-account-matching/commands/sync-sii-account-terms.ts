@@ -9,6 +9,12 @@ async function main() {
   try {
     const result = await context.get(SiiAccountTermsSyncService).synchronize();
     console.log("SII account terms synchronization completed");
+    console.log(
+      `- Total SII accounts in database: ${result.totalSiiAccountsInDatabase}`,
+    );
+    console.log(`- Versions found: ${result.versionsFound}`);
+    console.log(`- Selected version ID: ${result.selectedVersionId}`);
+    console.log(`- Selected version: ${result.selectedVersionLabel}`);
     console.log(`- SII accounts read: ${result.siiAccountsRead}`);
     console.log(`- Official terms created: ${result.officialTermsCreated}`);
     console.log(`- Aliases created: ${result.aliasesCreated}`);

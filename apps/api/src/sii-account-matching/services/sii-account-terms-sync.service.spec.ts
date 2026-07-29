@@ -3,28 +3,46 @@ import test from "node:test";
 import { DataSource, Repository } from "typeorm";
 import { CompanyAccountMappingEntity } from "../../company-account-plan/entities/company-account-mapping.entity";
 import { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
+import { SiiAccountPlanVersionEntity } from "../../sii-account-plan/entities/sii-account-plan-version.entity";
+import { SiiAccountPlanVersionStatus } from "../../sii-account-plan/enums/sii-account-plan-version-status.enum";
 import { SiiAccountTermEntity } from "../entities/sii-account-term.entity";
 import { SiiAccountTermsSyncService } from "./sii-account-terms-sync.service";
 
 const accounts = [
-  { id: "account-1", code: "1101", name: "Disponible" },
-  { id: "account-2", code: "1102", name: "IVA Créditos" },
+  { id: "account-1", versionId: "version-1", code: "1101", name: "Disponible" },
+  {
+    id: "account-2",
+    versionId: "version-1",
+    code: "1102",
+    name: "IVA Créditos",
+  },
 ] as SiiAccountEntity[];
 
-function fixture(initial: Partial<SiiAccountTermEntity>[] = []) {
+const version = {
+  id: "version-1",
+  code: "catalog-2026",
+  name: "Catálogo 2026",
+  status: SiiAccountPlanVersionStatus.DRAFT,
+  importedAt: new Date("2026-01-01"),
+} as SiiAccountPlanVersionEntity;
+
+function fixture(
+  initial: Partial<SiiAccountTermEntity>[] = [],
+  availableAccounts = accounts,
+  versions: SiiAccountPlanVersionEntity[] = [version],
+) {
   const terms = initial.map((term) => ({ ...term })) as SiiAccountTermEntity[];
   let mappingRepositoryRequested = false;
   const accountRepository = {
-    createQueryBuilder: () => ({
-      innerJoin() {
-        return this;
-      },
-      where() {
-        return this;
-      },
-      getMany: async () => accounts,
-    }),
+    count: async () => availableAccounts.length,
+    find: async ({ where }: { where: { versionId: string } }) =>
+      availableAccounts.filter(
+        (account) => account.versionId === where.versionId,
+      ),
   } as unknown as Repository<SiiAccountEntity>;
+  const versionRepository = {
+    find: async () => versions,
+  } as unknown as Repository<SiiAccountPlanVersionEntity>;
   const termRepository = {
     findOne: async ({ where }: { where: Record<string, unknown> }) =>
       terms.find(
@@ -45,6 +63,7 @@ function fixture(initial: Partial<SiiAccountTermEntity>[] = []) {
   const dataSource = {
     getRepository: (entity: unknown) => {
       if (entity === SiiAccountEntity) return accountRepository;
+      if (entity === SiiAccountPlanVersionEntity) return versionRepository;
       if (entity === SiiAccountTermEntity) return termRepository;
       if (entity === CompanyAccountMappingEntity)
         mappingRepositoryRequested = true;
@@ -78,15 +97,53 @@ test("crea nombres oficiales y conocimiento curado sin crear cuentas ni mappings
   assert.deepEqual(
     {
       accounts: result.siiAccountsRead,
+      totalAccounts: result.totalSiiAccountsInDatabase,
+      versions: result.versionsFound,
+      selectedVersion: result.selectedVersionId,
       official: result.officialTermsCreated,
       aliases: result.aliasesCreated,
       negative: result.negativeTermsCreated,
     },
-    { accounts: 2, official: 2, aliases: 1, negative: 1 },
+    {
+      accounts: 2,
+      totalAccounts: 2,
+      versions: 1,
+      selectedVersion: "version-1",
+      official: 2,
+      aliases: 1,
+      negative: 1,
+    },
   );
   assert.equal(state.terms.length, 4);
   assert.equal(state.mappingRepositoryRequested(), false);
   assert.equal(accounts.length, 2);
+});
+
+test("prefiere la versión active real sobre la versión importada más reciente", async () => {
+  const activeVersion = {
+    ...version,
+    id: "version-1",
+    status: SiiAccountPlanVersionStatus.ACTIVE,
+  } as SiiAccountPlanVersionEntity;
+  const newerDraft = {
+    ...version,
+    id: "version-2",
+    status: SiiAccountPlanVersionStatus.DRAFT,
+    importedAt: new Date("2026-02-01"),
+  } as SiiAccountPlanVersionEntity;
+  const state = fixture([], accounts, [newerDraft, activeVersion]);
+  const result = await state.service.synchronize([]);
+  assert.equal(result.selectedVersionId, "version-1");
+  assert.equal(result.siiAccountsRead, 2);
+});
+
+test("falla si hay cuentas pero la versión seleccionada no contiene ninguna", async () => {
+  const state = fixture([], accounts, [{ ...version, id: "other" }]);
+  await assert.rejects(
+    state.service.synchronize([]),
+    /no contiene cuentas, pero sii_accounts contiene 2 registros/,
+  );
+  assert.equal(state.terms.length, 0);
 });
 
 test("es idempotente y no duplica términos en una segunda ejecución", async () => {
