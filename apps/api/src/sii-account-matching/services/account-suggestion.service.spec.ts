@@ -43,13 +43,18 @@ function rank(
   const internals = service as unknown as {
     buildTermIndexes: (items: SiiAccountTermEntity[]) => TermIndexes;
     rank: (
-      normalized: string,
       siiAccounts: SiiAccountEntity[],
-      termIndexes: TermIndexes,
+      positiveTerms: SiiAccountTermEntity[],
+      negativeTerms: SiiAccountTermEntity[],
     ) => RankResult;
   };
   const indexes = internals.buildTermIndexes(terms);
-  return internals.rank(normalizeAccountTerm(name), accounts, indexes);
+  const normalizedName = normalizeAccountTerm(name);
+  return internals.rank(
+    accounts,
+    indexes.positiveTermsByNormalizedTerm.get(normalizedName) ?? [],
+    indexes.negativeTermsByNormalizedTerm.get(normalizedName) ?? [],
+  );
 }
 
 type TermIndexes = {
@@ -280,7 +285,7 @@ describe("AccountSuggestionService persistence", () => {
         },
       ],
       loadSiiAccounts: async () => [],
-      loadTerms: async () => [],
+      loadTerms: async () => [term("available", "caja", "alias", 60)],
     });
     const result = await service.generateForPeriod(companyId, "period-1");
     assert.equal(result.withoutSuggestionReasons.confirmed_mapping, 1);

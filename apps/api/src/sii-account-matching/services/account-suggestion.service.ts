@@ -66,14 +66,35 @@ export class AccountSuggestionService {
   async generateForPeriod(companyId: string, taxPeriodId: string) {
     const accounts = await this.loadCompanyAccounts(companyId, taxPeriodId);
     const siiAccounts = await this.loadSiiAccounts();
-    const terms = await this.loadTerms(companyId);
-    const termIndexes = this.buildTermIndexes(terms);
+    const loadedTerms = await this.loadTerms(companyId);
+    const { positiveTermsByNormalizedTerm, negativeTermsByNormalizedTerm } =
+      this.buildTermIndexes(loadedTerms);
+
+    this.logger.debug({
+      loadedTermsFirst: loadedTerms[0],
+      positiveTermKeys: Array.from(positiveTermsByNormalizedTerm.keys()).slice(
+        0,
+        20,
+      ),
+      cajaTerms: positiveTermsByNormalizedTerm.get("caja"),
+      clientesTerms: positiveTermsByNormalizedTerm.get("clientes"),
+      machineryTerms: positiveTermsByNormalizedTerm.get(
+        "maquinarias y equipos",
+      ),
+    });
+
+    if (!positiveTermsByNormalizedTerm.has("caja")) {
+      throw new Error(
+        'El índice de términos no contiene la clave normalizada "caja".',
+      );
+    }
 
     const diagnostics = {
       processed: accounts.length,
-      termsLoaded: terms.length,
-      globalTermsLoaded: terms.filter((term) => term.scope === "global").length,
-      companyTermsLoaded: terms.filter((term) => term.scope === "company")
+      termsLoaded: loadedTerms.length,
+      globalTermsLoaded: loadedTerms.filter((term) => term.scope === "global")
+        .length,
+      companyTermsLoaded: loadedTerms.filter((term) => term.scope === "company")
         .length,
       exactMatchesFound: 0,
       candidatesGenerated: 0,
@@ -103,7 +124,15 @@ export class AccountSuggestionService {
         }
 
         const normalizedName = normalizeAccountTerm(companyAccount.name);
-        const ranked = this.rank(normalizedName, siiAccounts, termIndexes);
+        const matchedTerms =
+          positiveTermsByNormalizedTerm.get(normalizedName) ?? [];
+        const matchedNegativeTerms =
+          negativeTermsByNormalizedTerm.get(normalizedName) ?? [];
+        const ranked = this.rank(
+          siiAccounts,
+          matchedTerms,
+          matchedNegativeTerms,
+        );
         diagnostics.exactMatchesFound += ranked.exactMatches;
         diagnostics.candidatesGenerated += ranked.candidates.length;
         diagnostics.candidatesDiscardedByScore += ranked.discardedByScore;
@@ -221,9 +250,9 @@ export class AccountSuggestionService {
   }
 
   private rank(
-    normalizedName: string,
     siiAccounts: SiiAccountEntity[],
-    termIndexes: TermIndexes,
+    positiveTerms: SiiAccountTermEntity[],
+    negativeTerms: SiiAccountTermEntity[],
   ) {
     let exactMatches = 0;
     let discardedByScore = 0;
@@ -233,10 +262,6 @@ export class AccountSuggestionService {
       [];
     const candidates: Candidate[] = [];
 
-    const positiveTerms =
-      termIndexes.positiveTermsByNormalizedTerm.get(normalizedName) ?? [];
-    const negativeTerms =
-      termIndexes.negativeTermsByNormalizedTerm.get(normalizedName) ?? [];
     const matchedTermsByAccount = new Map<string, SiiAccountTermEntity[]>();
     for (const term of [...positiveTerms, ...negativeTerms]) {
       const accountTerms = matchedTermsByAccount.get(term.siiAccountId) ?? [];
@@ -313,27 +338,29 @@ export class AccountSuggestionService {
   }
 
   private buildTermIndexes(terms: SiiAccountTermEntity[]): TermIndexes {
-    const indexes: TermIndexes = {
-      positiveTermsByNormalizedTerm: new Map(),
-      negativeTermsByNormalizedTerm: new Map(),
-    };
-    for (const term of terms) {
-      const index =
-        term.type === "negative_term"
-          ? indexes.negativeTermsByNormalizedTerm
-          : POSITIVE_TERM_TYPES.has(term.type)
-            ? indexes.positiveTermsByNormalizedTerm
-            : undefined;
-      if (!index) continue;
+    const positiveTermsByNormalizedTerm = new Map<
+      string,
+      SiiAccountTermEntity[]
+    >();
+    const negativeTermsByNormalizedTerm = new Map<
+      string,
+      SiiAccountTermEntity[]
+    >();
 
-      // loadTerms() returns hydrated entities: use the TypeScript property,
-      // never the physical normalized_term column name from a raw result.
-      const normalizedTerm = term.normalizedTerm;
-      const indexedTerms = index.get(normalizedTerm) ?? [];
-      indexedTerms.push(term);
-      index.set(normalizedTerm, indexedTerms);
+    for (const term of terms) {
+      const key = term.normalizedTerm;
+      if (!key) continue;
+
+      const targetMap =
+        term.type === "negative_term"
+          ? negativeTermsByNormalizedTerm
+          : positiveTermsByNormalizedTerm;
+      const existingTerms = targetMap.get(key) ?? [];
+      existingTerms.push(term);
+      targetMap.set(key, existingTerms);
     }
-    return indexes;
+
+    return { positiveTermsByNormalizedTerm, negativeTermsByNormalizedTerm };
   }
 
   private discard(
