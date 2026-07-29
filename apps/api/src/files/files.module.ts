@@ -9,10 +9,11 @@ import { StoredFileEntity } from "./entities/stored-file.entity";
 import { FilesController } from "./files.controller";
 import { FilesService } from "./files.service";
 import { StorageModule } from "./storage/storage.module";
+import { OrganizationMemberEntity } from "../organizations/entities/organization-member.entity";
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([StoredFileEntity, CompanyEntity]),
+    TypeOrmModule.forFeature([StoredFileEntity, CompanyEntity, OrganizationMemberEntity]),
     CompaniesModule,
     ConfigModule.forFeature(storageConfig),
     StorageModule,
