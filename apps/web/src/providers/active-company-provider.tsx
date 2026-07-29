@@ -12,11 +12,13 @@ import {
 } from "react";
 import { activeCompaniesService } from "@/services/active-companies.service";
 import type { AvailableCompany } from "@/types/active-company.types";
+import { accountingService } from "@/services/accounting.service";
+import { companyEntryPath } from "@/lib/accounting-navigation";
 
 interface ActiveCompanyContextValue {
   activeCompany: AvailableCompany | null;
   availableCompanies: AvailableCompany[];
-  selectCompany: (companyId: string) => void;
+  selectCompany: (companyId: string) => Promise<void>;
   loading: boolean;
   error: boolean;
   requestedCompanyId: string | null;
@@ -55,8 +57,22 @@ export function ActiveCompanyProvider({
     availableCompanies.find((company) => company.id === resolvedCompanyId) ??
     null;
   const selectCompany = useCallback(
-    (selectedCompanyId: string) => {
-      router.push(`/companies/${selectedCompanyId}/dashboard`);
+    async (selectedCompanyId: string) => {
+      const periods = await accountingService.periods(selectedCompanyId);
+      window.localStorage.setItem("jivatax.lastCompanyId", selectedCompanyId);
+      const destination = companyEntryPath(selectedCompanyId, periods);
+      const selectedPeriodId = destination.match(/\/periods\/([^/]+)/)?.[1];
+
+      if (selectedPeriodId && selectedPeriodId !== "setup") {
+        window.localStorage.setItem(
+          "jivatax.lastTaxPeriodId",
+          selectedPeriodId,
+        );
+      } else {
+        window.localStorage.removeItem("jivatax.lastTaxPeriodId");
+      }
+
+      router.push(destination);
     },
     [router],
   );

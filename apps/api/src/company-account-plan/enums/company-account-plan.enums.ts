@@ -12,6 +12,7 @@ export enum CompanyAccountStatus {
 }
 
 export enum CompanyAccountMappingStatus {
+  PENDING = "pending",
   SUGGESTED = "suggested",
   CONFIRMED = "confirmed",
   REJECTED = "rejected",

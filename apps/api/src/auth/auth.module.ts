@@ -11,6 +11,7 @@ import { AuthCookieService } from "./auth-cookie.service";
 import { AuthService } from "./auth.service";
 import { AuthSessionEntity } from "./entities/auth-session.entity";
 import { CompanyAccessGuard } from "./guards/company-access.guard";
+import { CompanyWriteAccessGuard } from "./guards/company-write-access.guard";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { OriginGuard } from "./origin.guard";
@@ -38,6 +39,7 @@ import { OriginGuard } from "./origin.guard";
     AuthCookieService,
     LocalAuthGuard,
     CompanyAccessGuard,
+    CompanyWriteAccessGuard,
     {
       provide: APP_GUARD,
       useClass: OriginGuard,
@@ -47,6 +49,6 @@ import { OriginGuard } from "./origin.guard";
       useClass: JwtAuthGuard,
     },
   ],
-  exports: [AuthService, CompanyAccessGuard],
+  exports: [AuthService, CompanyAccessGuard, CompanyWriteAccessGuard],
 })
 export class AuthModule {}

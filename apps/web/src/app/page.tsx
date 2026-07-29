@@ -3,16 +3,27 @@
 import { Building2, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { companyEntryPath } from "@/lib/accounting-navigation";
 import { useActiveCompany } from "@/providers/active-company-provider";
+import { accountingService } from "@/services/accounting.service";
 
 export default function HomePage() {
   const router = useRouter();
   const { availableCompanies, loading } = useActiveCompany();
 
   useEffect(() => {
-    if (!loading && availableCompanies[0]) {
-      router.replace(`/companies/${availableCompanies[0].id}/dashboard`);
+    if (loading || availableCompanies.length === 0) {
+      return;
     }
+
+    const rememberedId = window.localStorage.getItem("jivatax.lastCompanyId");
+    const company =
+      availableCompanies.find((item) => item.id === rememberedId) ??
+      availableCompanies[0];
+
+    void accountingService.periods(company.id).then((periods) => {
+      router.replace(companyEntryPath(company.id, periods));
+    });
   }, [availableCompanies, loading, router]);
 
   if (loading || availableCompanies.length > 0) {
@@ -20,7 +31,7 @@ export default function HomePage() {
       <main className="grid min-h-[calc(100vh-4rem)] place-items-center">
         <div className="flex items-center gap-3 text-sm text-slate-600">
           <LoaderCircle className="size-5 animate-spin text-emerald-700" />
-          Preparando tu empresa…
+          Preparando tu contexto operativo…
         </div>
       </main>
     );

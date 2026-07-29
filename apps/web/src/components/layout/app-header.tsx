@@ -15,6 +15,9 @@ import { useEffect, useRef, useState } from "react";
 import { useLogout } from "@/hooks/use-logout";
 import { useSession } from "@/hooks/use-session";
 import { useActiveCompany } from "@/providers/active-company-provider";
+import { TaxPeriodSelector } from "@/components/accounting/tax-period-selector";
+import { accountingService } from "@/services/accounting.service";
+import { companyEntryPath } from "@/lib/accounting-navigation";
 
 export function AppHeader() {
   const [open, setOpen] = useState(false);
@@ -37,9 +40,24 @@ export function AppHeader() {
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
-  const chooseCompany = (companyId: string) => {
-    selectCompany(companyId);
+  const chooseCompany = async (companyId: string) => {
+    await selectCompany(companyId);
     setOpen(false);
+  };
+
+  const returnToOperation = async () => {
+    const rememberedCompanyId = window.localStorage.getItem(
+      "jivatax.lastCompanyId",
+    );
+    const companyId = activeCompany?.id ?? rememberedCompanyId;
+
+    if (!companyId) {
+      router.push("/");
+      return;
+    }
+
+    const periods = await accountingService.periods(companyId);
+    router.push(companyEntryPath(companyId, periods));
   };
 
   return (
@@ -52,17 +70,14 @@ export function AppHeader() {
         <Menu className="size-5" />
       </button>
       <div className="ml-auto flex items-center gap-4" ref={menu}>
+        {!isAdmin && activeCompany && (
+          <TaxPeriodSelector companyId={activeCompany.id} />
+        )}
         {isAdmin ? (
           <>
             <button
               type="button"
-              onClick={() =>
-                router.push(
-                  activeCompany
-                    ? `/companies/${activeCompany.id}/dashboard`
-                    : "/companies",
-                )
-              }
+              onClick={() => void returnToOperation()}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
             >
               <ArrowLeft className="size-4" />
@@ -112,7 +127,7 @@ export function AppHeader() {
                 <button
                   key={company.id}
                   type="button"
-                  onClick={() => chooseCompany(company.id)}
+                  onClick={() => void chooseCompany(company.id)}
                   className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-slate-50"
                 >
                   <Building2 className="size-4 shrink-0 text-slate-500" />

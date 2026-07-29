@@ -4,7 +4,6 @@ import {
   FileText,
   LayoutDashboard,
   Leaf,
-  ListTree,
   LoaderCircle,
   LogOut,
   ShieldCheck,
@@ -24,24 +23,30 @@ export function AppSidebar() {
   const logout = useLogout();
   const { activeCompany } = useActiveCompany();
   const companyId = activeCompany?.id;
+  const taxPeriodId = pathname.match(/\/periods\/([^/]+)/)?.[1];
+  const operationalBase =
+    companyId && taxPeriodId
+      ? `/companies/${companyId}/periods/${taxPeriodId}`
+      : null;
+  const setupPath = companyId
+    ? `/companies/${companyId}/periods/setup`
+    : "/companies";
   const isAdmin = pathname.startsWith("/admin");
   const navigation =
     !isAdmin && companyId
       ? [
           {
             label: "Resumen",
-            href: `/companies/${companyId}/dashboard`,
+            href: operationalBase ? `${operationalBase}/dashboard` : setupPath,
             icon: LayoutDashboard,
           },
           {
             label: "Documentos",
-            href: `/companies/${companyId}/documents`,
+            href: operationalBase ? `${operationalBase}/documents` : setupPath,
             icon: FileText,
-          },
-          {
-            label: "Plan de cuentas",
-            href: `/companies/${companyId}/account-plan`,
-            icon: ListTree,
+            title: operationalBase
+              ? undefined
+              : "Crea un período tributario para cargar documentos",
           },
           {
             label: "Usuarios",
@@ -52,7 +57,7 @@ export function AppSidebar() {
       : [];
 
   return (
-    <aside className="hidden w-64 shrink-0 border-r border-slate-800 bg-slate-950 text-slate-200 lg:flex lg:flex-col">
+    <aside className="sticky top-0 hidden h-screen w-64 shrink-0 border-r border-slate-800 bg-slate-950 text-slate-200 lg:flex lg:flex-col">
       <div className="flex h-16 items-center gap-3 border-b border-slate-800 px-5">
         <span className="grid size-9 place-items-center rounded-xl bg-emerald-600 text-white">
           <Leaf className="size-5" />
@@ -63,7 +68,7 @@ export function AppSidebar() {
         </div>
       </div>
       <nav
-        className="flex flex-1 flex-col justify-between p-3"
+        className="flex-1 overflow-y-auto p-3"
         aria-label="Navegación principal"
       >
         <div className="space-y-1">
@@ -73,6 +78,7 @@ export function AppSidebar() {
               <Link
                 key={item.label}
                 href={item.href}
+                title={item.title}
                 aria-current={active ? "page" : undefined}
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition",
@@ -101,6 +107,8 @@ export function AppSidebar() {
             </Link>
           )}
         </div>
+      </nav>
+      <footer className="shrink-0 border-t border-slate-800 p-3">
         <Button
           type="button"
           variant="ghost"
@@ -115,7 +123,7 @@ export function AppSidebar() {
           )}
           {logout.isPending ? "Cerrando sesión…" : "Cerrar sesión"}
         </Button>
-      </nav>
+      </footer>
     </aside>
   );
 }

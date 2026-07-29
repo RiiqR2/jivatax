@@ -25,9 +25,17 @@ import { CompanyAccountPlanVersionEntity } from "./company-account-plan-version.
 @Index("idx_company_accounts_parent_id", ["parentId"])
 @Index("idx_company_accounts_name", ["name"])
 @Index("idx_company_accounts_internal_code", ["internalCode"])
+@Index("uq_company_accounts_company_code", ["companyId", "internalCode"], {
+  unique: true,
+})
 export class CompanyAccountEntity extends BaseEntity {
-  @Column({ name: "company_account_plan_version_id", type: "char", length: 36 })
-  companyAccountPlanVersionId!: string;
+  @Column({
+    name: "company_account_plan_version_id",
+    type: "char",
+    length: 36,
+    nullable: true,
+  })
+  companyAccountPlanVersionId!: string | null;
 
   @Column({ name: "company_id", type: "char", length: 36 })
   companyId!: string;
@@ -62,6 +70,38 @@ export class CompanyAccountEntity extends BaseEntity {
     default: CompanyAccountStatus.ACTIVE,
   })
   status!: CompanyAccountStatus;
+
+  @Column({
+    name: "first_seen_tax_period_id",
+    type: "char",
+    length: 36,
+    nullable: true,
+  })
+  firstSeenTaxPeriodId!: string | null;
+
+  @Column({
+    name: "last_seen_tax_period_id",
+    type: "char",
+    length: 36,
+    nullable: true,
+  })
+  lastSeenTaxPeriodId!: string | null;
+
+  @Column({
+    name: "first_seen_at",
+    type: "datetime",
+    precision: 6,
+    nullable: true,
+  })
+  firstSeenAt!: Date | null;
+
+  @Column({
+    name: "last_seen_at",
+    type: "datetime",
+    precision: 6,
+    nullable: true,
+  })
+  lastSeenAt!: Date | null;
 
   @ManyToOne(
     () => CompanyAccountPlanVersionEntity,
