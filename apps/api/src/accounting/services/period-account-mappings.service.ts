@@ -59,11 +59,17 @@ export class PeriodAccountMappingsService {
         account.last_seen_at AS lastSeenAt, mapping.id AS mappingId,
         mapping.status AS mappingStatus, mapping.mapping_method AS matchMethod,
         mapping.confidence, sii.id AS siiAccountId, sii.code AS siiCode,
-        sii.name AS siiName
+        sii.name AS siiName, suggestion.id AS suggestionId,
+        suggested_sii.id AS suggestedSiiAccountId, suggested_sii.code AS suggestedSiiCode,
+        suggested_sii.name AS suggestedSiiName, suggestion.score AS suggestionScore,
+        suggestion.confidence AS suggestionConfidence, suggestion.reasons AS suggestionReasons,
+        suggestion.algorithm_version AS suggestionAlgorithmVersion
        FROM tax_period_company_accounts tpca
        INNER JOIN company_accounts account ON account.id = tpca.company_account_id
        INNER JOIN company_account_mappings mapping ON mapping.company_account_id = account.id
        LEFT JOIN sii_accounts sii ON sii.id = mapping.sii_account_id
+       LEFT JOIN company_account_suggestions suggestion ON suggestion.company_account_id=account.id AND suggestion.status='active' AND suggestion.rank=1
+       LEFT JOIN sii_accounts suggested_sii ON suggested_sii.id=suggestion.sii_account_id
        WHERE ${where}
        ORDER BY account.internal_code ASC LIMIT ? OFFSET ?`,
       [...parameters, limit, (page - 1) * limit],
@@ -88,8 +94,13 @@ export class PeriodAccountMappingsService {
     const extras = await this.dataSource.query(
       `SELECT COUNT(*) AS total,
        SUM(account.first_seen_tax_period_id = tpca.tax_period_id) AS newInPeriod,
-       SUM(account.name <> tpca.account_name_snapshot) AS nameChanged
+       SUM(account.name <> tpca.account_name_snapshot) AS nameChanged,
+       SUM(suggestion.id IS NOT NULL) AS suggestedCount,
+       SUM(suggestion.confidence >= 0.8) AS highConfidence,
+       SUM(suggestion.confidence >= 0.55 AND suggestion.confidence < 0.8) AS mediumConfidence,
+       SUM(suggestion.confidence < 0.55) AS lowConfidence
        FROM tax_period_company_accounts tpca INNER JOIN company_accounts account ON account.id = tpca.company_account_id
+       LEFT JOIN company_account_suggestions suggestion ON suggestion.company_account_id=account.id AND suggestion.status='active' AND suggestion.rank=1
        WHERE tpca.company_id = ? AND tpca.tax_period_id = ?`,
       [companyId, taxPeriodId],
     );
@@ -116,7 +127,25 @@ export class PeriodAccountMappingsService {
             ? { id: row.siiAccountId, code: row.siiCode, name: row.siiName }
             : null,
         },
-        suggestions: [],
+        suggestions: row.suggestionId
+          ? [
+              {
+                id: row.suggestionId,
+                siiAccount: {
+                  id: row.suggestedSiiAccountId,
+                  code: row.suggestedSiiCode,
+                  name: row.suggestedSiiName,
+                },
+                score: Number(row.suggestionScore),
+                confidence: Number(row.suggestionConfidence),
+                algorithmVersion: row.suggestionAlgorithmVersion,
+                reasons:
+                  typeof row.suggestionReasons === "string"
+                    ? JSON.parse(row.suggestionReasons)
+                    : row.suggestionReasons,
+              },
+            ]
+          : [],
       })),
       total: Number(totalRows[0]?.total ?? 0),
       page,
@@ -124,11 +153,17 @@ export class PeriodAccountMappingsService {
       summary: {
         total: Number(extras[0]?.total ?? 0),
         pending: summary.pending ?? 0,
-        suggested: summary.suggested ?? 0,
+        suggested: Number(extras[0]?.suggestedCount ?? 0),
         confirmed: summary.confirmed ?? 0,
         rejected: summary.rejected ?? 0,
         newInPeriod: Number(extras[0]?.newInPeriod ?? 0),
         nameChanged: Number(extras[0]?.nameChanged ?? 0),
+        withoutSuggestion:
+          Number(extras[0]?.total ?? 0) -
+          Number(extras[0]?.suggestedCount ?? 0),
+        highConfidence: Number(extras[0]?.highConfidence ?? 0),
+        mediumConfidence: Number(extras[0]?.mediumConfidence ?? 0),
+        lowConfidence: Number(extras[0]?.lowConfidence ?? 0),
       },
     };
   }
@@ -161,6 +196,12 @@ export class PeriodAccountMappingsService {
       const nextStatus = dto.action === "confirm" ? "confirmed" : "rejected";
       const nextSiiAccountId =
         dto.action === "confirm" ? dto.siiAccountId : current.siiAccountId;
+      const activeSuggestion = (
+        await manager.query(
+          "SELECT id,sii_account_id AS siiAccountId,score,algorithm_version AS algorithmVersion FROM company_account_suggestions WHERE company_account_id=? AND status='active' AND rank=1 LIMIT 1",
+          [accountId],
+        )
+      )[0];
       await manager.query(
         `INSERT INTO company_account_mapping_history
          (id, company_account_id, previous_sii_account_id, new_sii_account_id, previous_status, new_status, changed_by_user_id, reason, created_at)
@@ -183,6 +224,38 @@ export class PeriodAccountMappingsService {
          reviewed_by_user_id = ?, reviewed_at = NOW(6), updated_at = NOW(6) WHERE id = ?`,
         [nextSiiAccountId, nextStatus, userId, current.id],
       );
+      if (activeSuggestion) {
+        const accepted =
+          dto.action === "confirm" &&
+          dto.siiAccountId === activeSuggestion.siiAccountId;
+        await manager.query(
+          "UPDATE company_account_suggestions SET status=?,reviewed_by_user_id=?,reviewed_at=NOW(6),updated_at=NOW(6) WHERE id=?",
+          [accepted ? "accepted" : "rejected", userId, activeSuggestion.id],
+        );
+      }
+      if (dto.action === "confirm") {
+        const account = (
+          await manager.query(
+            "SELECT name FROM company_accounts WHERE id=? LIMIT 1",
+            [accountId],
+          )
+        )[0];
+        const { normalizeAccountTerm } =
+          await import("../../sii-account-matching/normalization/account-term-normalizer");
+        const normalized = normalizeAccountTerm(String(account.name));
+        if (normalized)
+          await manager.query(
+            `INSERT IGNORE INTO sii_account_terms (id,sii_account_id,company_id,scope,term,normalized_term,type,weight,source,active,created_at,updated_at)
+           VALUES (?,?,?,'company',?,?,'alias',60,'company_confirmation',1,NOW(6),NOW(6))`,
+            [
+              randomUUID(),
+              dto.siiAccountId,
+              companyId,
+              account.name,
+              normalized,
+            ],
+          );
+      }
       return {
         id: current.id,
         status: nextStatus,

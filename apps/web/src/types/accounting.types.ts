@@ -82,6 +82,14 @@ export type AccountMappingItem = {
     confidence: number | null;
     siiAccount: { id: string; code: string; name: string } | null;
   };
+  suggestions: Array<{
+    id: string;
+    siiAccount: { id: string; code: string; name: string };
+    score: number;
+    confidence: number;
+    algorithmVersion: string;
+    reasons: Array<{ signal: string; description: string; points: number }>;
+  }>;
 };
 
 export type AccountMappingsResponse = {
@@ -97,5 +105,9 @@ export type AccountMappingsResponse = {
     rejected: number;
     newInPeriod: number;
     nameChanged: number;
+    withoutSuggestion: number;
+    highConfidence: number;
+    mediumConfidence: number;
+    lowConfidence: number;
   };
 };

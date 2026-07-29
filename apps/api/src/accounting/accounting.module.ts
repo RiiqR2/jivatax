@@ -16,6 +16,7 @@ import { DocumentTemplateService } from "./services/document-template.service";
 import { TaxDocumentsService } from "./services/tax-documents.service";
 import { TaxPeriodsService } from "./services/tax-periods.service";
 import { PeriodAccountMappingsService } from "./services/period-account-mappings.service";
+import { SiiAccountMatchingModule } from "../sii-account-matching/sii-account-matching.module";
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { PeriodAccountMappingsService } from "./services/period-account-mappings
     ]),
     AuthModule,
     StorageModule,
+    SiiAccountMatchingModule,
   ],
   controllers: [
     TaxPeriodsController,
