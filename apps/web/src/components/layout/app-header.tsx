@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLogout } from "@/hooks/use-logout";
 import { useSession } from "@/hooks/use-session";
 import { useActiveCompany } from "@/providers/active-company-provider";
+import { TaxPeriodSelector } from "@/components/accounting/tax-period-selector";
 
 export function AppHeader() {
   const [open, setOpen] = useState(false);
@@ -52,6 +53,9 @@ export function AppHeader() {
         <Menu className="size-5" />
       </button>
       <div className="ml-auto flex items-center gap-4" ref={menu}>
+        {!isAdmin && activeCompany && (
+          <TaxPeriodSelector companyId={activeCompany.id} />
+        )}
         {isAdmin ? (
           <>
             <button

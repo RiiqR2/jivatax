@@ -4,7 +4,6 @@ import {
   FileText,
   LayoutDashboard,
   Leaf,
-  ListTree,
   LoaderCircle,
   LogOut,
   ShieldCheck,
@@ -24,28 +23,28 @@ export function AppSidebar() {
   const logout = useLogout();
   const { activeCompany } = useActiveCompany();
   const companyId = activeCompany?.id;
+  const taxPeriodId = pathname.match(/\/periods\/([^/]+)/)?.[1];
+  const operationalBase =
+    companyId && taxPeriodId
+      ? `/companies/${companyId}/periods/${taxPeriodId}`
+      : null;
   const isAdmin = pathname.startsWith("/admin");
   const navigation =
-    !isAdmin && companyId
+    !isAdmin && operationalBase
       ? [
           {
             label: "Resumen",
-            href: `/companies/${companyId}/dashboard`,
+            href: `${operationalBase}/dashboard`,
             icon: LayoutDashboard,
           },
           {
             label: "Documentos",
-            href: `/companies/${companyId}/documents`,
+            href: `${operationalBase}/documents`,
             icon: FileText,
           },
           {
-            label: "Plan de cuentas",
-            href: `/companies/${companyId}/account-plan`,
-            icon: ListTree,
-          },
-          {
             label: "Usuarios",
-            href: `/companies/${companyId}/users`,
+            href: `${operationalBase}/users`,
             icon: Users,
           },
         ]

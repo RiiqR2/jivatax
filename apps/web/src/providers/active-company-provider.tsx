@@ -56,7 +56,7 @@ export function ActiveCompanyProvider({
     null;
   const selectCompany = useCallback(
     (selectedCompanyId: string) => {
-      router.push(`/companies/${selectedCompanyId}/dashboard`);
+      router.push(`/companies/${selectedCompanyId}`);
     },
     [router],
   );
