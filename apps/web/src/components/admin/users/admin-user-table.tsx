@@ -61,7 +61,7 @@ export function AdminUserTable({ users }: AdminUserTableProps) {
               <td>
                 <Link
                   className="font-medium text-emerald-700 hover:underline"
-                  href={`/administration/users/${user.id}/edit`}
+                  href={`/admin/users/${user.id}/edit`}
                 >
                   Ver y editar
                 </Link>

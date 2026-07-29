@@ -58,11 +58,13 @@ function ProtectedDashboard({
     );
   }
 
-  if (companies.loading) {
+  const isAdmin = pathname.startsWith("/admin");
+
+  if (!isAdmin && companies.loading) {
     return <LoadingDashboard label="Cargando empresas…" />;
   }
 
-  if (companies.error) {
+  if (!isAdmin && companies.error) {
     return (
       <main className="grid min-h-screen place-items-center bg-slate-50 p-6">
         <div className="max-w-xl rounded-xl border border-red-200 bg-red-50 p-8">

@@ -61,7 +61,7 @@ export function AdminUsersPage() {
         description="Gestiona accesos globales y membresías organizacionales."
         actions={
           <Button asChild>
-            <Link href="/administration/users/new">
+            <Link href="/admin/users/new">
               <Plus className="mr-2 size-4" />
               Nuevo usuario
             </Link>
