@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowLeft,
   Building2,
   Check,
   ChevronDown,
@@ -50,12 +51,28 @@ export function AppHeader() {
       >
         <Menu className="size-5" />
       </button>
-      <div className="ml-auto flex items-center" ref={menu}>
+      <div className="ml-auto flex items-center gap-4" ref={menu}>
         {isAdmin ? (
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-            <ShieldCheck className="size-5 text-emerald-700" />
-            Administración global
-          </div>
+          <>
+            <button
+              type="button"
+              onClick={() =>
+                router.push(
+                  activeCompany
+                    ? `/companies/${activeCompany.id}/dashboard`
+                    : "/companies",
+                )
+              }
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              <ArrowLeft className="size-4" />
+              Volver a la empresa
+            </button>
+            <div className="hidden items-center gap-2 text-sm font-semibold text-slate-800 sm:flex">
+              <ShieldCheck className="size-5 text-emerald-700" />
+              Administración global
+            </div>
+          </>
         ) : (
           <button
             type="button"
