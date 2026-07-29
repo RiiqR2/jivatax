@@ -37,6 +37,24 @@ export type TaxDocumentReport = {
   reconciliation?: Record<string, unknown>;
   detectedSheet?: string;
   headerRowNumber?: number;
+  sourceRowsRead?: number;
+  accountRows?: number;
+  summaryRows?: number;
+  emptyRows?: number;
+  unknownRows?: number;
+  validAccountRows?: number;
+  invalidAccountRows?: number;
+  reportedTotals?: Record<string, number | null> | null;
+  systemTotals?: Record<string, number>;
+  comparisons?: BalanceComparison[];
+};
+
+export type BalanceComparison = {
+  field: string;
+  reported: number | null;
+  calculated: number;
+  difference: number | null;
+  status: "matched" | "mismatched" | "not_reported";
 };
 
 export type ValidationIssue = {

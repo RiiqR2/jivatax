@@ -21,6 +21,12 @@ import {
 import { CreateTaxDocumentDto } from "../dto/accounting.dto";
 import { TaxDocumentEntity } from "../entities/tax-document.entity";
 import { TaxDocumentStatus, TaxDocumentType } from "../enums/accounting.enums";
+import {
+  BALANCE_MONETARY_FIELDS,
+  BalanceParsedRow,
+  BalanceRowType,
+  parseBalanceRows,
+} from "../balance/balance-parser";
 import { TaxPeriodsService } from "./tax-periods.service";
 
 type Issue = {
@@ -43,6 +49,17 @@ type ImportReport = {
   headerRowNumber: number;
   duplicateKeys: unknown[];
   detectedColumns: Record<string, number>;
+  sourceRowsRead?: number;
+  accountRows?: number;
+  summaryRows?: number;
+  emptyRows?: number;
+  unknownRows?: number;
+  validAccountRows?: number;
+  invalidAccountRows?: number;
+  reportedTotals?: Record<string, number | null> | null;
+  systemTotals?: Record<string, number>;
+  comparisons?: unknown[];
+  parserVersion?: string;
 };
 
 @Injectable()
@@ -286,6 +303,67 @@ export class TaxDocumentsService {
           : "UNSUPPORTED_HEADER: faltan columnas requeridas.",
       );
     const candidate = candidates[0];
+    if (type === TaxDocumentType.BALANCE) {
+      const parsed = parseBalanceRows(
+        candidate.matrix,
+        candidate.row,
+        candidate.map,
+        candidate.sheet,
+      );
+      const accountRows = parsed.rows.filter(
+        (row) => row.rowType === BalanceRowType.ACCOUNT,
+      );
+      const invalidAccountRows = new Set(
+        parsed.errors
+          .filter((issue) => issue.sourceRowNumber > 0)
+          .map((issue) => issue.sourceRowNumber),
+      ).size;
+      const summaryRows = parsed.rows.filter((row) =>
+        [
+          BalanceRowType.SUBTOTAL,
+          BalanceRowType.RESULT,
+          BalanceRowType.TOTAL,
+        ].includes(row.rowType),
+      ).length;
+      return {
+        rows: parsed.rows as unknown as Record<string, unknown>[],
+        report: {
+          rowsRead: parsed.rows.length,
+          validRows: accountRows.length - invalidAccountRows,
+          ignoredRows: parsed.rows.filter(
+            (row) => row.rowType === BalanceRowType.EMPTY,
+          ).length,
+          sourceRowsRead: parsed.rows.length,
+          accountRows: accountRows.length,
+          summaryRows,
+          emptyRows: parsed.rows.filter(
+            (row) => row.rowType === BalanceRowType.EMPTY,
+          ).length,
+          unknownRows: parsed.rows.filter(
+            (row) => row.rowType === BalanceRowType.UNKNOWN,
+          ).length,
+          validAccountRows: accountRows.length - invalidAccountRows,
+          invalidAccountRows,
+          errors: parsed.errors,
+          warnings: parsed.warnings,
+          totals: {
+            debit: parsed.systemTotals.debits,
+            credit: parsed.systemTotals.credits,
+          },
+          systemTotals: parsed.systemTotals,
+          reportedTotals: parsed.reportedTotals,
+          comparisons: parsed.comparisons,
+          reconciliation: parsed.reconciliation,
+          parserVersion: "balance-v2-source-preserving",
+          detectedSheet: candidate.sheet,
+          headerRowNumber: candidate.row + 1,
+          duplicateKeys: [...parsed.errors, ...parsed.warnings]
+            .filter((issue) => issue.code.startsWith("DUPLICATE_ACCOUNT"))
+            .map((issue) => issue.rawValue),
+          detectedColumns: candidate.map,
+        },
+      };
+    }
     const errors: Issue[] = [];
     const warnings: Issue[] = [];
     const rows: Record<string, unknown>[] = [];
@@ -368,17 +446,6 @@ export class TaxDocumentsService {
       }),
       { debit: 0, credit: 0 },
     );
-    if (
-      type === TaxDocumentType.BALANCE &&
-      Math.abs(totals.debit - totals.credit) > 1
-    )
-      warnings.push({
-        sourceRowNumber: 0,
-        field: "totals",
-        code: "BALANCE_NOT_RECONCILED",
-        message: "La suma de débitos y créditos no cuadra.",
-        rawValue: totals,
-      });
     return {
       rows,
       report: {
@@ -429,8 +496,33 @@ export class TaxDocumentsService {
           JSON.stringify(report),
         ],
       );
-      if (document.documentType === TaxDocumentType.BALANCE)
+      if (document.documentType === TaxDocumentType.BALANCE) {
+        const totals = report.systemTotals ?? {};
+        await manager.query(
+          "UPDATE balance_imports SET sheet_name = ?, header_row_number = ?, total_debit_balance = ?, total_credit_balance = ?, total_assets = ?, total_liabilities = ?, total_losses = ?, total_gains = ?, is_debit_credit_balanced = ?, is_equity_balanced = ?, validation_report = ? WHERE id = ?",
+          [
+            report.detectedSheet,
+            report.headerRowNumber,
+            totals.debitBalance ?? 0,
+            totals.creditBalance ?? 0,
+            totals.assets ?? 0,
+            totals.liabilities ?? 0,
+            totals.losses ?? 0,
+            totals.gains ?? 0,
+            Boolean(
+              (report.reconciliation.movements as { isBalanced?: boolean })
+                ?.isBalanced,
+            ),
+            Boolean(
+              (report.reconciliation.equity as { isBalanced?: boolean })
+                ?.isBalanced,
+            ),
+            JSON.stringify(report),
+            importId,
+          ],
+        );
         await this.persistBalance(manager, document, importId, rows, report);
+      }
       document.status = TaxDocumentStatus.PROCESSED;
       document.validatedAt = new Date();
       document.processedAt = new Date();
@@ -462,25 +554,74 @@ export class TaxDocumentsService {
     rows: Record<string, unknown>[],
     report: ImportReport,
   ): Promise<void> {
-    for (const row of rows) {
+    const balanceRows = rows as unknown as BalanceParsedRow[];
+    for (const row of balanceRows) {
+      const sourceRowId = randomUUID();
+      await manager.query(
+        "INSERT INTO balance_source_rows (id, balance_import_id, company_id, tax_period_id, source_row_number, sheet_name, row_type, account_code_raw, account_name_raw, debits_raw, credits_raw, debit_balance_raw, credit_balance_raw, assets_raw, liabilities_raw, losses_raw, gains_raw, raw_data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6))",
+        [
+          sourceRowId,
+          importId,
+          document.companyId,
+          document.taxPeriodId,
+          row.sourceRowNumber,
+          row.sheetName,
+          row.rowType,
+          JSON.stringify(row.rawData[report.detectedColumns.accountCode]),
+          JSON.stringify(row.rawData[report.detectedColumns.accountName]),
+          ...BALANCE_MONETARY_FIELDS.map((field) =>
+            JSON.stringify(row.rawData[report.detectedColumns[field]]),
+          ),
+          JSON.stringify(row.rawData),
+        ],
+      );
+      if (
+        [
+          BalanceRowType.SUBTOTAL,
+          BalanceRowType.RESULT,
+          BalanceRowType.TOTAL,
+        ].includes(row.rowType)
+      ) {
+        await manager.query(
+          "INSERT INTO balance_reported_summaries (id, balance_import_id, source_row_id, summary_type, label, reported_debits, reported_credits, reported_debit_balance, reported_credit_balance, reported_assets, reported_liabilities, reported_losses, reported_gains, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6))",
+          [
+            randomUUID(),
+            importId,
+            sourceRowId,
+            row.rowType,
+            row.accountName ?? "",
+            ...BALANCE_MONETARY_FIELDS.map(
+              (field) => row.money[field].reportedValue,
+            ),
+          ],
+        );
+      }
+      if (
+        row.rowType !== BalanceRowType.ACCOUNT ||
+        !row.accountCode ||
+        !row.accountName
+      )
+        continue;
       const entryId = randomUUID();
       await manager.query(
-        "INSERT INTO balance_entries (id, balance_import_id, company_id, tax_period_id, account_code, account_name, debits, credits, debit_balance, credit_balance, assets, liabilities, losses, gains, source_row_number, raw_data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6))",
+        "INSERT INTO balance_entries (id, balance_import_id, company_id, tax_period_id, source_row_id, account_code, account_name, reported_debits, reported_credits, reported_debit_balance, reported_credit_balance, reported_assets, reported_liabilities, reported_losses, reported_gains, effective_debits, effective_credits, effective_debit_balance, effective_credit_balance, effective_assets, effective_liabilities, effective_losses, effective_gains, calculated_debit_balance, calculated_credit_balance, debits_was_blank, credits_was_blank, debit_balance_was_blank, credit_balance_was_blank, assets_was_blank, liabilities_was_blank, losses_was_blank, gains_was_blank, source_row_number, raw_data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6))",
         [
           entryId,
           importId,
           document.companyId,
           document.taxPeriodId,
+          sourceRowId,
           row.accountCode,
-          String(row.accountName).trim().replace(/\s+/g, " "),
-          row.debits,
-          row.credits,
-          row.debitBalance,
-          row.creditBalance,
-          row.assets,
-          row.liabilities,
-          row.losses,
-          row.gains,
+          row.accountName,
+          ...BALANCE_MONETARY_FIELDS.map(
+            (field) => row.money[field].reportedValue,
+          ),
+          ...BALANCE_MONETARY_FIELDS.map(
+            (field) => row.money[field].effectiveValue,
+          ),
+          row.calculatedDebitBalance,
+          row.calculatedCreditBalance,
+          ...BALANCE_MONETARY_FIELDS.map((field) => row.money[field].wasBlank),
           row.sourceRowNumber,
           JSON.stringify(row.rawData),
         ],
@@ -542,14 +683,9 @@ export class TaxDocumentsService {
           entryId,
           row.accountCode,
           row.accountName,
-          row.debits,
-          row.credits,
-          row.debitBalance,
-          row.creditBalance,
-          row.assets,
-          row.liabilities,
-          row.losses,
-          row.gains,
+          ...BALANCE_MONETARY_FIELDS.map(
+            (field) => row.money[field].reportedValue,
+          ),
         ],
       );
     }
