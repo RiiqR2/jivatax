@@ -299,14 +299,6 @@ export function AccountingDocumentsPage({
         ))}
       </div>
 
-      <History
-        companyId={companyId}
-        taxPeriodId={taxPeriodId}
-        type={type}
-        documents={history}
-        loading={documents.isLoading}
-        refresh={() => documents.refetch()}
-      />
 
       <section className="mt-5 rounded-xl border border-slate-200 bg-white">
         <button
@@ -423,6 +415,26 @@ export function AccountingDocumentsPage({
           {fileError}
         </p>
       )}
+      {stage !== "idle" && (
+        <section
+          aria-live="polite"
+          role="status"
+          className="mt-4 rounded-xl border border-slate-200 bg-white p-4"
+        >
+          <div className="flex justify-between gap-4 text-sm">
+            <strong>{stageLabels[stage]}</strong>
+            <span>{stage === "uploading" ? `${progress}%` : ""}</span>
+          </div>
+          {stage === "uploading" && (
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+              <div
+                className="h-full bg-emerald-600 transition-all"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          )}
+        </section>
+      )}
 
       {file && (
         <section className="mt-4 flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center">
@@ -474,26 +486,6 @@ export function AccountingDocumentsPage({
         </section>
       )}
 
-      {stage !== "idle" && (
-        <section
-          aria-live="polite"
-          role="status"
-          className="mt-4 rounded-xl border border-slate-200 bg-white p-4"
-        >
-          <div className="flex justify-between gap-4 text-sm">
-            <strong>{stageLabels[stage]}</strong>
-            <span>{stage === "uploading" ? `${progress}%` : ""}</span>
-          </div>
-          {stage === "uploading" && (
-            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-              <div
-                className="h-full bg-emerald-600 transition-all"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-          )}
-        </section>
-      )}
       {result && (
         <ProcessingResult
           companyId={companyId}
@@ -502,6 +494,15 @@ export function AccountingDocumentsPage({
           result={result}
         />
       )}
+
+      <History
+        companyId={companyId}
+        taxPeriodId={taxPeriodId}
+        type={type}
+        documents={history}
+        loading={documents.isLoading}
+        refresh={() => documents.refetch()}
+      />
     </main>
   );
 }
