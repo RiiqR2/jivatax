@@ -60,7 +60,7 @@ export class AccountSuggestionService {
           const match = ranked[index];
           await manager.query(
             `INSERT INTO company_account_suggestions
-            (id,company_account_id,sii_account_id,rank,score,confidence,algorithm_version,reasons,status,generated_at,created_at,updated_at)
+            (id,company_account_id,sii_account_id,suggestion_rank,score,confidence,algorithm_version,reasons,status,generated_at,created_at,updated_at)
             VALUES (?,?,?,?,?,?,?,?,'active',NOW(6),NOW(6),NOW(6))`,
             [
               randomUUID(),

@@ -15,6 +15,9 @@ import { CompanyAccountMappingEntity } from "../company-account-plan/entities/co
 import { TaxDocumentEntity } from "../accounting/entities/tax-document.entity";
 import { TaxPeriodEntity } from "../accounting/entities/tax-period.entity";
 import { SiiAccountTermEntity } from "../sii-account-matching/entities/sii-account-term.entity";
+import { TaxPeriodCompanyAccountEntity } from "../accounting/entities/tax-period-company-account.entity";
+import { CompanyAccountSuggestionEntity } from "../accounting/entities/company-account-suggestion.entity";
+import { CompanyAccountMappingHistoryEntity } from "../accounting/entities/company-account-mapping-history.entity";
 
 loadEnv({ path: "../../.env" });
 
@@ -40,6 +43,9 @@ export default new DataSource({
     TaxPeriodEntity,
     TaxDocumentEntity,
     SiiAccountTermEntity,
+    TaxPeriodCompanyAccountEntity,
+    CompanyAccountSuggestionEntity,
+    CompanyAccountMappingHistoryEntity,
   ],
   migrations: ["src/database/migrations/*.ts"],
   synchronize: false,
