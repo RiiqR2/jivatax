@@ -8,6 +8,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { CompanyAccessGuard } from "../../auth/guards/company-access.guard";
+import { CompanyWriteAccessGuard } from "../../auth/guards/company-write-access.guard";
 import { CreateTaxPeriodDto, UpdateTaxPeriodDto } from "../dto/accounting.dto";
 import { TaxPeriodsService } from "../services/tax-periods.service";
 
@@ -18,7 +19,9 @@ export class TaxPeriodsController {
   @Get() list(@Param("companyId") companyId: string) {
     return this.service.list(companyId);
   }
-  @Post() create(
+  @Post()
+  @UseGuards(CompanyWriteAccessGuard)
+  create(
     @Param("companyId") companyId: string,
     @Body() dto: CreateTaxPeriodDto,
   ) {
@@ -30,7 +33,9 @@ export class TaxPeriodsController {
   ) {
     return this.service.get(companyId, id);
   }
-  @Patch(":taxPeriodId") update(
+  @Patch(":taxPeriodId")
+  @UseGuards(CompanyWriteAccessGuard)
+  update(
     @Param("companyId") companyId: string,
     @Param("taxPeriodId") id: string,
     @Body() dto: UpdateTaxPeriodDto,

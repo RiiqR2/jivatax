@@ -1,10 +1,11 @@
-import CompanyUsersPage from "../../../users/page";
+import { redirect } from "next/navigation";
 
-export default async function PeriodUsersPage({
+export default async function LegacyPeriodUsersPage({
   params,
 }: {
   params: Promise<{ companyId: string; taxPeriodId: string }>;
 }) {
   const { companyId } = await params;
-  return <CompanyUsersPage params={Promise.resolve({ companyId })} />;
+
+  redirect(`/companies/${companyId}/users`);
 }

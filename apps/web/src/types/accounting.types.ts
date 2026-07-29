@@ -6,6 +6,7 @@ export type TaxPeriod = {
   status: "open" | "processing" | "reviewed" | "closed";
   startDate: string;
   endDate: string;
+  isActive: boolean;
 };
 
 export type TaxDocumentType = "balance" | "general_ledger" | "journal";

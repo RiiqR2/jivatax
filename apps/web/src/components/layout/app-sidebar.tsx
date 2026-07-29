@@ -28,23 +28,29 @@ export function AppSidebar() {
     companyId && taxPeriodId
       ? `/companies/${companyId}/periods/${taxPeriodId}`
       : null;
+  const setupPath = companyId
+    ? `/companies/${companyId}/periods/setup`
+    : "/companies";
   const isAdmin = pathname.startsWith("/admin");
   const navigation =
-    !isAdmin && operationalBase
+    !isAdmin && companyId
       ? [
           {
             label: "Resumen",
-            href: `${operationalBase}/dashboard`,
+            href: operationalBase ? `${operationalBase}/dashboard` : setupPath,
             icon: LayoutDashboard,
           },
           {
             label: "Documentos",
-            href: `${operationalBase}/documents`,
+            href: operationalBase ? `${operationalBase}/documents` : setupPath,
             icon: FileText,
+            title: operationalBase
+              ? undefined
+              : "Crea un período tributario para cargar documentos",
           },
           {
             label: "Usuarios",
-            href: `${operationalBase}/users`,
+            href: `/companies/${companyId}/users`,
             icon: Users,
           },
         ]
@@ -72,6 +78,7 @@ export function AppSidebar() {
               <Link
                 key={item.label}
                 href={item.href}
+                title={item.title}
                 aria-current={active ? "page" : undefined}
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition",

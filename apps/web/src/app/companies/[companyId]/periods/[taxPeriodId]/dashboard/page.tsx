@@ -1,16 +1,11 @@
-import CompanyDashboardPage from "../../../dashboard/page";
+import { PeriodDashboard } from "@/components/accounting/period-dashboard";
 
 export default async function PeriodDashboardPage({
   params,
 }: {
   params: Promise<{ companyId: string; taxPeriodId: string }>;
 }) {
-  const values = await params;
-  return (
-    <CompanyDashboardPage
-      params={Promise.resolve({
-        companyId: `${values.companyId}:${values.taxPeriodId}`,
-      })}
-    />
-  );
+  const { companyId, taxPeriodId } = await params;
+
+  return <PeriodDashboard companyId={companyId} taxPeriodId={taxPeriodId} />;
 }
