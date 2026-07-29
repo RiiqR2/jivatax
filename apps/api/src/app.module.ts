@@ -10,6 +10,7 @@ import { UsersModule } from "./users/users.module";
 import { AuthModule } from "./auth/auth.module";
 import { SiiAccountPlanModule } from "./sii-account-plan/sii-account-plan.module";
 import { CompanyAccountPlanModule } from "./company-account-plan/company-account-plan.module";
+import { CompanyUsersModule } from "./company-users/company-users.module";
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { CompanyAccountPlanModule } from "./company-account-plan/company-account
     FilesModule,
     SiiAccountPlanModule,
     CompanyAccountPlanModule,
+    CompanyUsersModule,
   ],
   controllers: [AppController],
 })

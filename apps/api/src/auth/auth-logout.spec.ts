@@ -9,6 +9,7 @@ import { AuthService } from "./auth.service";
 import type { AuthSessionEntity } from "./entities/auth-session.entity";
 import type { OrganizationMemberEntity } from "../organizations/entities/organization-member.entity";
 import type { UsersService } from "../users/users.service";
+import type { CompanyEntity } from "../companies/entities/company.entity";
 
 const accessSecret = "access-secret-with-at-least-thirty-two-bytes";
 const refreshSecret = "refresh-secret-with-at-least-thirty-two-bytes";
@@ -49,6 +50,7 @@ function harness(cookies: Record<string, string>) {
     cookieService,
     sessions,
     {} as Repository<OrganizationMemberEntity>,
+    {} as Repository<CompanyEntity>,
   );
   const request = { cookies } as Request;
   const response = {

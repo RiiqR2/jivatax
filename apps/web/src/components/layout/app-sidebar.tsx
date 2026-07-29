@@ -1,18 +1,53 @@
 "use client";
 
+import {
+  FileText,
+  LayoutDashboard,
+  Leaf,
+  ListTree,
+  LoaderCircle,
+  LogOut,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Leaf, LoaderCircle, LogOut, ShieldCheck } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { mainNavigation, secondaryNavigation } from "@/config/navigation";
-import { useLogout } from "@/hooks/use-logout";
 import { useSession } from "@/hooks/use-session";
+import { useLogout } from "@/hooks/use-logout";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useActiveCompany } from "@/providers/active-company-provider";
 
 export function AppSidebar() {
-  const logout = useLogout();
-  const session = useSession();
   const pathname = usePathname();
+  const session = useSession();
+  const logout = useLogout();
+  const { activeCompany } = useActiveCompany();
+  const companyId = activeCompany?.id;
+  const navigation = companyId
+    ? [
+        {
+          label: "Resumen",
+          href: `/companies/${companyId}/dashboard`,
+          icon: LayoutDashboard,
+        },
+        {
+          label: "Documentos",
+          href: `/companies/${companyId}/documents`,
+          icon: FileText,
+        },
+        {
+          label: "Plan de cuentas",
+          href: `/companies/${companyId}/account-plan`,
+          icon: ListTree,
+        },
+        {
+          label: "Usuarios",
+          href: `/companies/${companyId}/users`,
+          icon: Users,
+        },
+      ]
+    : [];
 
   return (
     <aside className="hidden w-64 shrink-0 border-r border-slate-800 bg-slate-950 text-slate-200 lg:flex lg:flex-col">
@@ -30,23 +65,18 @@ export function AppSidebar() {
         aria-label="Navegación principal"
       >
         <div className="space-y-1">
-          {mainNavigation.map((item) => {
-            const active =
-              item.href === "/"
-                ? pathname === "/"
-                : pathname.startsWith(item.href);
+          {navigation.map((item) => {
+            const active = pathname.startsWith(item.href);
             return (
               <Link
                 key={item.label}
                 href={item.href}
                 aria-current={active ? "page" : undefined}
-                aria-disabled={item.disabled}
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition",
                   active
                     ? "bg-slate-800 font-medium text-white"
                     : "text-slate-400 hover:bg-slate-900 hover:text-white",
-                  item.disabled && "pointer-events-none opacity-50",
                 )}
               >
                 <item.icon className="size-4" />
@@ -56,10 +86,10 @@ export function AppSidebar() {
           })}
           {session.data?.user.platformRole === "metauser" && (
             <Link
-              href="/administration/users"
+              href="/admin"
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition",
-                pathname.startsWith("/administration")
+                pathname.startsWith("/admin")
                   ? "bg-slate-800 font-medium text-white"
                   : "text-slate-400 hover:bg-slate-900 hover:text-white",
               )}
@@ -69,38 +99,20 @@ export function AppSidebar() {
             </Link>
           )}
         </div>
-        <div className="space-y-1 border-t border-slate-800 pt-3">
-          {secondaryNavigation.map((item) => (
-            <Link
-              key={item.label}
-              href={item.href}
-              aria-disabled={item.disabled}
-              className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-slate-400 opacity-50"
-            >
-              <item.icon className="size-4" />
-              {item.label}
-            </Link>
-          ))}
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={logout.isPending}
-            onClick={() => logout.mutate()}
-            className="mt-2 w-full justify-start gap-3 px-3 text-slate-300 hover:bg-slate-900 hover:text-white"
-          >
-            {logout.isPending ? (
-              <LoaderCircle
-                className="size-4 animate-spin"
-                aria-hidden="true"
-              />
-            ) : (
-              <LogOut className="size-4" aria-hidden="true" />
-            )}
-            <span>
-              {logout.isPending ? "Cerrando sesión…" : "Cerrar sesión"}
-            </span>
-          </Button>
-        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={logout.isPending}
+          onClick={() => logout.mutate()}
+          className="w-full justify-start gap-3 text-slate-300 hover:bg-slate-900 hover:text-white"
+        >
+          {logout.isPending ? (
+            <LoaderCircle className="size-4 animate-spin" />
+          ) : (
+            <LogOut className="size-4" />
+          )}
+          {logout.isPending ? "Cerrando sesión…" : "Cerrar sesión"}
+        </Button>
       </nav>
     </aside>
   );
