@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { InjectDataSource } from "@nestjs/typeorm";
-import { DataSource, IsNull, Repository } from "typeorm";
+import { InjectRepository } from "@nestjs/typeorm";
+import { IsNull, Repository } from "typeorm";
 import { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
 import { SiiAccountPlanVersionEntity } from "../../sii-account-plan/entities/sii-account-plan-version.entity";
 import { SiiAccountPlanVersionStatus } from "../../sii-account-plan/enums/sii-account-plan-version-status.enum";
@@ -41,19 +41,21 @@ type TermCandidate = {
 export class SiiAccountTermsSyncService {
   private readonly logger = new Logger(SiiAccountTermsSyncService.name);
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectRepository(SiiAccountEntity)
+    private readonly accountsRepository: Repository<SiiAccountEntity>,
+    @InjectRepository(SiiAccountPlanVersionEntity)
+    private readonly versionsRepository: Repository<SiiAccountPlanVersionEntity>,
+    @InjectRepository(SiiAccountTermEntity)
+    private readonly termsRepository: Repository<SiiAccountTermEntity>,
+  ) {}
 
   async synchronize(
     knowledge: readonly CuratedSiiAccountKnowledge[] = SII_ACCOUNT_ALIASES,
   ): Promise<TermsSyncSummary> {
-    const accountsRepository = this.dataSource.getRepository(SiiAccountEntity);
-    const versionsRepository = this.dataSource.getRepository(
-      SiiAccountPlanVersionEntity,
-    );
-    const termsRepository = this.dataSource.getRepository(SiiAccountTermEntity);
     const [totalSiiAccountsInDatabase, versions] = await Promise.all([
-      accountsRepository.count(),
-      versionsRepository.find({ order: { importedAt: "DESC" } }),
+      this.accountsRepository.count(),
+      this.versionsRepository.find({ order: { importedAt: "DESC" } }),
     ]);
     const selectedVersion =
       versions.find(
@@ -64,7 +66,7 @@ export class SiiAccountTermsSyncService {
         `No se encontró una versión del catálogo SII (${totalSiiAccountsInDatabase} cuentas en sii_accounts).`,
       );
     }
-    const accounts = await accountsRepository.find({
+    const accounts = await this.accountsRepository.find({
       where: { versionId: selectedVersion.id },
       order: { sortOrder: "ASC" },
     });
@@ -115,7 +117,7 @@ export class SiiAccountTermsSyncService {
     }
 
     for (const candidate of candidates) {
-      await this.createIfMissing(termsRepository, candidate, summary);
+      await this.createIfMissing(this.termsRepository, candidate, summary);
     }
     return summary;
   }

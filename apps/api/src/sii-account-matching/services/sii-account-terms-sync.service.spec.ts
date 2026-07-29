@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DataSource, Repository } from "typeorm";
-import { CompanyAccountMappingEntity } from "../../company-account-plan/entities/company-account-mapping.entity";
+import { Repository } from "typeorm";
 import { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
 import { SiiAccountPlanVersionEntity } from "../../sii-account-plan/entities/sii-account-plan-version.entity";
 import { SiiAccountPlanVersionStatus } from "../../sii-account-plan/enums/sii-account-plan-version-status.enum";
@@ -32,7 +31,6 @@ function fixture(
   versions: SiiAccountPlanVersionEntity[] = [version],
 ) {
   const terms = initial.map((term) => ({ ...term })) as SiiAccountTermEntity[];
-  let mappingRepositoryRequested = false;
   const accountRepository = {
     count: async () => availableAccounts.length,
     find: async ({ where }: { where: { versionId: string } }) =>
@@ -60,20 +58,13 @@ function fixture(
       return term;
     },
   } as unknown as Repository<SiiAccountTermEntity>;
-  const dataSource = {
-    getRepository: (entity: unknown) => {
-      if (entity === SiiAccountEntity) return accountRepository;
-      if (entity === SiiAccountPlanVersionEntity) return versionRepository;
-      if (entity === SiiAccountTermEntity) return termRepository;
-      if (entity === CompanyAccountMappingEntity)
-        mappingRepositoryRequested = true;
-      throw new Error("Unexpected repository");
-    },
-  } as DataSource;
   return {
-    service: new SiiAccountTermsSyncService(dataSource),
+    service: new SiiAccountTermsSyncService(
+      accountRepository,
+      versionRepository,
+      termRepository,
+    ),
     terms,
-    mappingRepositoryRequested: () => mappingRepositoryRequested,
   };
 }
 
@@ -115,7 +106,6 @@ test("crea nombres oficiales y conocimiento curado sin crear cuentas ni mappings
     },
   );
   assert.equal(state.terms.length, 4);
-  assert.equal(state.mappingRepositoryRequested(), false);
   assert.equal(accounts.length, 2);
 });
 

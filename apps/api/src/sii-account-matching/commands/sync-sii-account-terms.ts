@@ -1,12 +1,15 @@
 import { NestFactory } from "@nestjs/core";
+import { DataSource } from "typeorm";
 import { AppModule } from "../../app.module";
 import { SiiAccountTermsSyncService } from "../services/sii-account-terms-sync.service";
+import { assertSyncEntitiesMetadata } from "./sync-entities-metadata";
 
-async function main() {
+export async function main() {
   const context = await NestFactory.createApplicationContext(AppModule, {
     logger: ["error", "warn"],
   });
   try {
+    assertSyncEntitiesMetadata(context.get(DataSource));
     const result = await context.get(SiiAccountTermsSyncService).synchronize();
     console.log("SII account terms synchronization completed");
     console.log(
@@ -32,4 +35,10 @@ async function main() {
     await context.close();
   }
 }
-void main();
+if (require.main === module)
+  void main().catch((error: unknown) => {
+    console.error(
+      `SII account terms synchronization failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exitCode = 1;
+  });
