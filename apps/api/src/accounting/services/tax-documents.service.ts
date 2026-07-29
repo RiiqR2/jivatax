@@ -62,13 +62,14 @@ export class TaxDocumentsService {
     companyId: string,
     periodId: string,
     documentType?: TaxDocumentType,
-  ): Promise<TaxDocumentEntity[]> {
+  ) {
     await this.periods.get(companyId, periodId);
-    return this.documents.find({
+    const documents = await this.documents.find({
       where: { companyId, taxPeriodId: periodId, documentType },
-      relations: { storedFile: true },
+      relations: { storedFile: true, uploadedByUser: true },
       order: { uploadedAt: "DESC" },
     });
+    return documents.map((document) => this.present(document));
   }
 
   async get(
@@ -84,6 +85,22 @@ export class TaxDocumentsService {
     if (!document)
       throw new NotFoundException("Documento tributario no encontrado.");
     return document;
+  }
+
+  async detail(companyId: string, periodId: string, id: string) {
+    await this.periods.get(companyId, periodId);
+    const document = await this.documents.findOne({
+      where: { id, companyId, taxPeriodId: periodId },
+      relations: { storedFile: true, uploadedByUser: true },
+    });
+    if (!document)
+      throw new NotFoundException("Documento tributario no encontrado.");
+    const replacement = await this.documents.findOneBy({
+      replacesDocumentId: document.id,
+      companyId,
+      taxPeriodId: periodId,
+    });
+    return this.present(document, replacement?.id ?? null);
   }
 
   async create(
@@ -195,6 +212,40 @@ export class TaxDocumentsService {
     return this.get(companyId, periodId, id).then(
       (document) => document.metadata ?? {},
     );
+  }
+
+  private present(
+    document: TaxDocumentEntity,
+    replacedByDocumentId: string | null = null,
+  ) {
+    return {
+      id: document.id,
+      companyId: document.companyId,
+      taxPeriodId: document.taxPeriodId,
+      documentType: document.documentType,
+      status: document.status,
+      versionNumber: document.versionNumber,
+      replacesDocumentId: document.replacesDocumentId,
+      replacedByDocumentId,
+      uploadedAt: document.uploadedAt,
+      validatedAt: document.validatedAt,
+      processedAt: document.processedAt,
+      errorSummary: document.errorSummary,
+      warningSummary: document.warningSummary,
+      metadata: document.metadata,
+      storedFile: {
+        id: document.storedFile.id,
+        originalName: document.storedFile.originalName,
+        sizeBytes: document.storedFile.sizeBytes,
+      },
+      uploadedBy: document.uploadedByUser
+        ? {
+            id: document.uploadedByUser.id,
+            name: `${document.uploadedByUser.firstName} ${document.uploadedByUser.lastName}`.trim(),
+            email: document.uploadedByUser.email,
+          }
+        : null,
+    };
   }
 
   private parse(

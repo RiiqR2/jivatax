@@ -3,6 +3,7 @@ import { BaseEntity } from "../../common/entities/base.entity";
 import { StoredFileEntity } from "../../files/entities/stored-file.entity";
 import { TaxDocumentStatus, TaxDocumentType } from "../enums/accounting.enums";
 import { TaxPeriodEntity } from "./tax-period.entity";
+import { UserEntity } from "../../users/entities/user.entity";
 
 @Entity({ name: "tax_documents" })
 @Index(
@@ -72,4 +73,8 @@ export class TaxDocumentEntity extends BaseEntity {
     foreignKeyConstraintName: "fk_tax_documents_file",
   })
   storedFile!: StoredFileEntity;
+
+  @ManyToOne(() => UserEntity, { onDelete: "RESTRICT" })
+  @JoinColumn({ name: "uploaded_by_user_id" })
+  uploadedByUser!: UserEntity;
 }
