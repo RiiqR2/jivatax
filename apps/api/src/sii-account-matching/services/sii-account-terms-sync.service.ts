@@ -1,110 +1,173 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { InjectDataSource } from "@nestjs/typeorm";
-import { DataSource } from "typeorm";
-import { randomUUID } from "node:crypto";
+import { InjectRepository } from "@nestjs/typeorm";
+import { IsNull, Repository } from "typeorm";
+import { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
+import { SiiAccountPlanVersionEntity } from "../../sii-account-plan/entities/sii-account-plan-version.entity";
+import { SiiAccountPlanVersionStatus } from "../../sii-account-plan/enums/sii-account-plan-version-status.enum";
 import {
   SII_ACCOUNT_ALIASES,
   type CuratedSiiAccountKnowledge,
 } from "../data/sii-account-aliases";
+import {
+  SiiAccountTermEntity,
+  type SiiAccountTermType,
+} from "../entities/sii-account-term.entity";
 import { normalizeAccountTerm } from "../normalization/account-term-normalizer";
 
 export type TermsSyncSummary = {
+  totalSiiAccountsInDatabase: number;
+  versionsFound: number;
+  selectedVersionId: string;
+  selectedVersionLabel: string;
   siiAccountsRead: number;
   officialTermsCreated: number;
   aliasesCreated: number;
   negativeTermsCreated: number;
   existingTermsSkipped: number;
-  termsOmitted: number;
+  inactiveTermsSkipped: number;
   missingReferencedAccounts: string[];
   errors: number;
+};
+
+type TermCandidate = {
+  account: SiiAccountEntity;
+  term: string;
+  type: SiiAccountTermType;
+  weight: number;
+  source: string;
 };
 
 @Injectable()
 export class SiiAccountTermsSyncService {
   private readonly logger = new Logger(SiiAccountTermsSyncService.name);
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+
+  constructor(
+    @InjectRepository(SiiAccountEntity)
+    private readonly accountsRepository: Repository<SiiAccountEntity>,
+    @InjectRepository(SiiAccountPlanVersionEntity)
+    private readonly versionsRepository: Repository<SiiAccountPlanVersionEntity>,
+    @InjectRepository(SiiAccountTermEntity)
+    private readonly termsRepository: Repository<SiiAccountTermEntity>,
+  ) {}
 
   async synchronize(
     knowledge: readonly CuratedSiiAccountKnowledge[] = SII_ACCOUNT_ALIASES,
   ): Promise<TermsSyncSummary> {
-    const accounts: Array<{ id: string; code: string; name: string }> =
-      await this.dataSource.query(
-        `SELECT account.id, account.code, account.name FROM sii_accounts account
-       INNER JOIN sii_account_plan_versions version ON version.id = account.version_id
-       WHERE account.deleted_at IS NULL AND version.status = 'active'`,
+    const [totalSiiAccountsInDatabase, versions] = await Promise.all([
+      this.accountsRepository.count(),
+      this.versionsRepository.find({ order: { importedAt: "DESC" } }),
+    ]);
+    const selectedVersion =
+      versions.find(
+        (version) => version.status === SiiAccountPlanVersionStatus.ACTIVE,
+      ) ?? versions[0];
+    if (!selectedVersion) {
+      throw new Error(
+        `No se encontró una versión del catálogo SII (${totalSiiAccountsInDatabase} cuentas en sii_accounts).`,
       );
+    }
+    const accounts = await this.accountsRepository.find({
+      where: { versionId: selectedVersion.id },
+      order: { sortOrder: "ASC" },
+    });
+    if (totalSiiAccountsInDatabase > 0 && accounts.length === 0) {
+      throw new Error(
+        `La versión SII seleccionada ${selectedVersion.id} (${selectedVersion.code} · ${selectedVersion.name}) no contiene cuentas, pero sii_accounts contiene ${totalSiiAccountsInDatabase} registros.`,
+      );
+    }
     const summary: TermsSyncSummary = {
+      totalSiiAccountsInDatabase,
+      versionsFound: versions.length,
+      selectedVersionId: selectedVersion.id,
+      selectedVersionLabel: `${selectedVersion.code} · ${selectedVersion.name}`,
       siiAccountsRead: accounts.length,
       officialTermsCreated: 0,
       aliasesCreated: 0,
       negativeTermsCreated: 0,
       existingTermsSkipped: 0,
-      termsOmitted: 0,
+      inactiveTermsSkipped: 0,
       missingReferencedAccounts: [],
       errors: 0,
     };
     const byCode = new Map(accounts.map((account) => [account.code, account]));
-    const candidates = accounts
-      .map((account) => ({
-        account,
-        term: account.name,
-        type: "official_name",
-        weight: 45,
-        source: "sii_catalog",
-      }))
-      .concat(
-        knowledge.flatMap((entry) => {
-          const account = byCode.get(entry.siiAccountCode);
-          if (!account) {
-            summary.missingReferencedAccounts.push(entry.siiAccountCode);
-            this.logger.warn(
-              `No existe cuenta SII referenciada: ${entry.siiAccountCode}`,
-            );
-            return [];
-          }
-          return entry.terms.map((term) => ({
-            account,
-            ...term,
-            source: "jivatax_curated",
-          }));
-        }),
-      );
-    for (const candidate of candidates) {
-      const normalized = normalizeAccountTerm(candidate.term);
-      if (!normalized) {
-        summary.termsOmitted++;
+    const candidates: TermCandidate[] = accounts.map((account) => ({
+      account,
+      term: account.name,
+      type: "official_name",
+      weight: 45,
+      source: "sii_catalog",
+    }));
+
+    for (const entry of knowledge) {
+      const account = byCode.get(entry.siiAccountCode);
+      if (!account) {
+        summary.missingReferencedAccounts.push(entry.siiAccountCode);
+        this.logger.warn(
+          `No existe cuenta SII activa referenciada: ${entry.siiAccountCode}`,
+        );
         continue;
       }
-      try {
-        // INSERT IGNORE preserves disabled terms, metauser weights and all historical knowledge.
-        const result = await this.dataSource.query(
-          `INSERT IGNORE INTO sii_account_terms (id,sii_account_id,company_id,scope,term,normalized_term,type,weight,source,active,created_at,updated_at)
-           VALUES (?,?,NULL,'global',?,?,?,?,?,1,NOW(6),NOW(6))`,
-          [
-            randomUUID(),
-            candidate.account.id,
-            candidate.term,
-            normalized,
-            candidate.type,
-            candidate.weight,
-            candidate.source,
-          ],
-        );
-        const created = Number(result?.affectedRows ?? 0) > 0;
-        if (!created) summary.existingTermsSkipped++;
-        else if (candidate.type === "official_name")
-          summary.officialTermsCreated++;
-        else if (candidate.type === "negative_term")
-          summary.negativeTermsCreated++;
-        else summary.aliasesCreated++;
-      } catch (error) {
-        summary.errors++;
-        this.logger.error(
-          `Error sincronizando ${candidate.account.code}/${candidate.term}`,
-          error instanceof Error ? error.stack : String(error),
-        );
-      }
+      candidates.push(
+        ...entry.terms.map((term) => ({
+          account,
+          ...term,
+          source: "jivatax_curated",
+        })),
+      );
+    }
+
+    for (const candidate of candidates) {
+      await this.createIfMissing(this.termsRepository, candidate, summary);
     }
     return summary;
+  }
+
+  private async createIfMissing(
+    repository: Repository<SiiAccountTermEntity>,
+    candidate: TermCandidate,
+    summary: TermsSyncSummary,
+  ): Promise<void> {
+    const normalizedTerm = normalizeAccountTerm(candidate.term);
+    try {
+      const existing = await repository.findOne({
+        where: {
+          siiAccountId: candidate.account.id,
+          companyId: IsNull(),
+          normalizedTerm,
+          type: candidate.type,
+          source: candidate.source,
+          scope: "global",
+        },
+        withDeleted: true,
+      });
+      if (existing) {
+        if (existing.active) summary.existingTermsSkipped++;
+        else summary.inactiveTermsSkipped++;
+        return;
+      }
+      await repository.save(
+        repository.create({
+          siiAccountId: candidate.account.id,
+          companyId: null,
+          scope: "global",
+          term: candidate.term,
+          normalizedTerm,
+          type: candidate.type,
+          weight: candidate.weight,
+          source: candidate.source,
+          active: true,
+        }),
+      );
+      if (candidate.type === "official_name") summary.officialTermsCreated++;
+      else if (candidate.type === "negative_term")
+        summary.negativeTermsCreated++;
+      else summary.aliasesCreated++;
+    } catch (error) {
+      summary.errors++;
+      this.logger.error(
+        `Error sincronizando ${candidate.account.code}/${candidate.term}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 }
