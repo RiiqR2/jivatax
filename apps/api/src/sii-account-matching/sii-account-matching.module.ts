@@ -6,6 +6,9 @@ import { SiiAccountPlanVersionEntity } from "../sii-account-plan/entities/sii-ac
 import { SiiAccountTermEntity } from "./entities/sii-account-term.entity";
 import { SiiAccountTermsSyncService } from "./services/sii-account-terms-sync.service";
 import { AccountSuggestionService } from "./services/account-suggestion.service";
+import { AccountAttributeParserService } from "./services/account-attribute-parser.service";
+import { AccountCandidateGeneratorService } from "./services/account-candidate-generator.service";
+import { AccountSuggestionRankingService } from "./services/account-suggestion-ranking.service";
 
 @Module({
   imports: [
@@ -16,7 +19,18 @@ import { AccountSuggestionService } from "./services/account-suggestion.service"
       CompanyAccountSuggestionEntity,
     ]),
   ],
-  providers: [SiiAccountTermsSyncService, AccountSuggestionService],
-  exports: [SiiAccountTermsSyncService, AccountSuggestionService],
+  providers: [
+    SiiAccountTermsSyncService,
+    AccountAttributeParserService,
+    AccountCandidateGeneratorService,
+    AccountSuggestionRankingService,
+    AccountSuggestionService,
+  ],
+  exports: [
+    SiiAccountTermsSyncService,
+    AccountSuggestionService,
+    AccountCandidateGeneratorService,
+    AccountSuggestionRankingService,
+  ],
 })
 export class SiiAccountMatchingModule {}

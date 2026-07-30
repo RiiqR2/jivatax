@@ -29,6 +29,7 @@ import { TaxPeriodCompanyAccountEntity } from "../entities/tax-period-company-ac
 import { TaxPeriodsService } from "./tax-periods.service";
 import { TaxDocumentEntity } from "../entities/tax-document.entity";
 import { TaxDocumentType } from "../enums/accounting.enums";
+import { AccountMatchingFeedbackEntity } from "../../sii-account-matching/entities/account-matching-feedback.entity";
 
 type MappingListRow = {
   companyAccountId: string;
@@ -98,7 +99,11 @@ export class PeriodAccountMappingsService {
           relations: { storedFile: true },
         })
       : await this.documents.findOne({
-          where: { companyId, taxPeriodId, documentType: TaxDocumentType.BALANCE },
+          where: {
+            companyId,
+            taxPeriodId,
+            documentType: TaxDocumentType.BALANCE,
+          },
           relations: { storedFile: true },
           order: { versionNumber: "DESC" },
         });
@@ -435,6 +440,27 @@ export class PeriodAccountMappingsService {
           },
         );
       }
+    }
+    if (dto.action === "confirm") {
+      const selected = await suggestions.findOne({
+        where: { companyAccountId: accountId, siiAccountId: dto.siiAccountId },
+      });
+      const feedback = manager.getRepository(AccountMatchingFeedbackEntity);
+      await feedback.save(
+        feedback.create({
+          companyId,
+          taxPeriodId: null,
+          normalizedName: normalizeAccountTerm(mapping.companyAccount.name),
+          siiAccountId: dto.siiAccountId!,
+          originalScore: selected?.score ?? null,
+          candidatePosition: selected?.suggestionRank ?? null,
+          algorithm: selected?.algorithmVersion ?? "manual",
+          accepted: selected?.siiAccountId === dto.siiAccountId,
+          corrected: Boolean(
+            suggestion && suggestion.siiAccountId !== dto.siiAccountId,
+          ),
+        }),
+      );
     }
     if (dto.action === "confirm")
       await this.createCompanyAlias(
