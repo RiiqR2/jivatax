@@ -6,6 +6,8 @@ import { SiiAccountPlanVersionEntity } from "../../sii-account-plan/entities/sii
 import { SiiAccountPlanVersionStatus } from "../../sii-account-plan/enums/sii-account-plan-version-status.enum";
 import { SiiAccountTermEntity } from "../entities/sii-account-term.entity";
 import { SiiAccountTermsSyncService } from "./sii-account-terms-sync.service";
+import { SII_ACCOUNT_ALIASES } from "../data/sii-account-aliases";
+import { AccountCandidateGeneratorService } from "./account-candidate-generator.service";
 
 const accounts = [
   { id: "account-1", versionId: "version-1", code: "1101", name: "Disponible" },
@@ -197,4 +199,86 @@ test("informa códigos curados que no existen en el catálogo activo", async () 
   ]);
   assert.deepEqual(result.missingReferencedAccounts, ["INEXISTENTE"]);
   assert.equal(state.terms.length, 2);
+});
+
+test("persiste aliases de gastos en 3.01.03.00 y es idempotente", async () => {
+  const expense = {
+    id: "expense-account",
+    versionId: "version-1",
+    code: "3.01.03.00",
+    name: "Gastos de administración y ventas (menos)",
+  } as SiiAccountEntity;
+  const state = fixture([], [expense]);
+
+  const first = await state.service.synchronize();
+  assert.equal(first.aliasesCreated, 16);
+  const persisted = state.terms.filter(
+    (term) => term.source === "jivatax_curated",
+  );
+  assert.equal(persisted.length, 16);
+  assert.ok(
+    [
+      "arriendo",
+      "gastos de honorarios",
+      "honorarios",
+      "electricidad",
+      "luz",
+      "servicios basicos",
+    ].every((normalized) =>
+      persisted.some(
+        (term) =>
+          term.siiAccountId === expense.id &&
+          term.normalizedTerm === normalized &&
+          term.active,
+      ),
+    ),
+  );
+  assert.ok(
+    persisted.every(
+      (term) => Number(term.weight) >= 56 && Number(term.weight) <= 65,
+    ),
+  );
+
+  const candidates = new AccountCandidateGeneratorService().generate(
+    [expense],
+    state.terms,
+  );
+  for (const normalized of ["arriendo", "gastos de honorarios", "electricidad"])
+    assert.ok(
+      candidates[0].terms.some((term) => term.normalizedTerm === normalized),
+    );
+
+  const second = await state.service.synchronize();
+  assert.equal(second.aliasesCreated, 0);
+  assert.equal(second.existingTermsSkipped, 17);
+  assert.equal(state.terms.length, 17);
+});
+
+test("la fuente curada asocia gastos solo a 3.01.03.00", () => {
+  const expenseKnowledge = SII_ACCOUNT_ALIASES.find(
+    (entry) => entry.siiAccountCode === "3.01.03.00",
+  );
+  assert.ok(expenseKnowledge);
+  const prepaidKnowledge = SII_ACCOUNT_ALIASES.find(
+    (entry) => entry.siiAccountCode === "1.01.11.00",
+  );
+  const protectedTerms = new Set([
+    "arriendo",
+    "gastos de honorarios",
+    "honorarios",
+    "electricidad",
+    "luz",
+    "servicios basicos",
+  ]);
+  assert.ok(
+    [...protectedTerms].every((term) =>
+      expenseKnowledge.terms.some((candidate) => candidate.term === term),
+    ),
+  );
+  assert.equal(
+    prepaidKnowledge?.terms.some((candidate) =>
+      protectedTerms.has(candidate.term),
+    ) ?? false,
+    false,
+  );
 });
