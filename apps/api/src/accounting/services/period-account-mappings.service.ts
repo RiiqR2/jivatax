@@ -30,6 +30,7 @@ import { TaxPeriodsService } from "./tax-periods.service";
 import { TaxDocumentEntity } from "../entities/tax-document.entity";
 import { TaxDocumentType } from "../enums/accounting.enums";
 import { AccountMatchingFeedbackEntity } from "../../sii-account-matching/entities/account-matching-feedback.entity";
+import { SupervisedLearningService } from "../../sii-account-matching/services/supervised-learning.service";
 
 type MappingListRow = {
   companyAccountId: string;
@@ -84,6 +85,7 @@ export class PeriodAccountMappingsService {
     @InjectRepository(TaxDocumentEntity)
     private readonly documents: Repository<TaxDocumentEntity>,
     private readonly periods: TaxPeriodsService,
+    private readonly supervisedLearning: SupervisedLearningService,
   ) {}
 
   async list(
@@ -469,6 +471,13 @@ export class PeriodAccountMappingsService {
         mapping.companyAccount,
         dto.siiAccountId!,
       );
+    if (dto.action === "confirm")
+      await this.supervisedLearning.recordConfirmation(manager, {
+        companyId,
+        internalName: mapping.companyAccount.name,
+        siiAccountId: dto.siiAccountId!,
+        userId,
+      });
     return {
       id: mapping.id,
       status: nextStatus,

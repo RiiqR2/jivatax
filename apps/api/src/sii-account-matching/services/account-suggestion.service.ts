@@ -23,6 +23,10 @@ import { AccountCandidateGeneratorService } from "./account-candidate-generator.
 import { AccountSuggestionRankingService } from "./account-suggestion-ranking.service";
 import { SiiAccountConceptEntity } from "../entities/sii-account-concept.entity";
 import { resolveCatalogExpenseKnowledge } from "../data/catalog-expense-knowledge";
+import { SiiAccountKnowledgeEntity } from "../entities/sii-account-knowledge.entity";
+import { AccountMatchingRuleEntity } from "../entities/account-matching-rule.entity";
+import { AccountMatchingLearningEntity } from "../entities/account-matching-learning.entity";
+import { AccountMatchingDiagnosticEntity } from "../entities/account-matching-diagnostic.entity";
 export { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
 
 const POSITIVE_TERM_TYPES = new Set<SiiAccountTermType>([
@@ -82,6 +86,9 @@ export class AccountSuggestionService {
     const accounts = await this.loadCompanyAccounts(companyId, taxPeriodId);
     const loadedTerms = await this.loadTerms(companyId);
     const loadedConcepts = await this.loadConcepts();
+    const loadedKnowledge = await this.loadKnowledge();
+    const loadedRules = await this.loadRules();
+    const loadedLearning = await this.loadLearning(companyId);
     const siiAccountIds = Array.from(
       new Set(loadedTerms.map((term) => term.siiAccountId)),
     );
@@ -151,6 +158,13 @@ export class AccountSuggestionService {
       const suggestionRepository = manager.getRepository(
         CompanyAccountSuggestionEntity,
       );
+      const diagnosticRepository = manager.getRepository(
+        AccountMatchingDiagnosticEntity,
+      );
+      const diagnosticsEnabled =
+        typeof diagnosticRepository.softDelete === "function";
+      if (diagnosticsEnabled)
+        await diagnosticRepository.softDelete({ companyId, taxPeriodId });
       for (const companyAccount of accounts) {
         if (
           companyAccount.mapping?.status ===
@@ -179,12 +193,53 @@ export class AccountSuggestionService {
           siiAccounts,
           loadedTerms,
           loadedConcepts,
+          loadedKnowledge,
+          loadedLearning,
         );
         const deterministic = this.ranking.rank(
           companyAccount.name,
           generatedCandidates,
           companyAccount.matchingContext,
+          loadedRules,
         );
+        const generatedAt = new Date();
+        if (diagnosticsEnabled)
+          await diagnosticRepository.save(
+            diagnosticRepository.create({
+              companyId,
+              taxPeriodId,
+              companyAccountId: companyAccount.id,
+              accountName: companyAccount.name,
+              normalizedName: normalizeAccountTerm(companyAccount.name),
+              observedSection: deterministic.observedSection,
+              decision: deterministic.decision,
+              decisionReason: deterministic.reviewRequiredByRule
+                ? "review_required_by_rule"
+                : deterministic.decision === "review"
+                  ? deterministic.candidates[0]?.metadata.statementSection ===
+                    "unknown"
+                    ? "unknown_candidate_classification"
+                    : "below_minimum_score_or_confidence"
+                  : deterministic.decision === "ambiguous"
+                    ? "ambiguous_candidates"
+                    : deterministic.decision === "no_candidate"
+                      ? "no_candidate"
+                      : "automatic",
+              algorithmVersion: ACCOUNT_SUGGESTION_CONFIG.algorithmVersion,
+              candidates: deterministic.allCandidates.map((candidate) => ({
+                siiAccountId: candidate.account.id,
+                code: candidate.account.code,
+                name: candidate.account.name,
+                metadata: candidate.metadata,
+                score: candidate.score,
+                confidence: candidate.confidence,
+                signals: candidate.reasons,
+              })),
+              discardedCandidates: deterministic.discardedCandidates,
+              rulesEvaluated: deterministic.evaluatedRules,
+              generatedAt,
+            }),
+          );
         const ranked = {
           candidates: deterministic.candidates.map((candidate) => ({
             ...candidate,
@@ -243,7 +298,6 @@ export class AccountSuggestionService {
           continue;
         }
 
-        const generatedAt = new Date();
         const suggestions = ranked.candidates
           .slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates)
           .map((candidate, index) =>
@@ -335,6 +389,41 @@ export class AccountSuggestionService {
     return this.dataSource.getRepository(SiiAccountConceptEntity).find({
       where: { active: true, deletedAt: IsNull() },
     });
+  }
+
+  private loadKnowledge() {
+    if (typeof this.dataSource.getRepository !== "function") return [];
+    return this.dataSource
+      .getRepository(SiiAccountKnowledgeEntity)
+      .find({ where: { active: true, deletedAt: IsNull() } });
+  }
+
+  private loadRules() {
+    if (typeof this.dataSource.getRepository !== "function") return [];
+    return this.dataSource.getRepository(AccountMatchingRuleEntity).find({
+      where: { active: true, deletedAt: IsNull() },
+      order: { priority: "DESC" },
+    });
+  }
+
+  private loadLearning(companyId: string) {
+    if (typeof this.dataSource.getRepository !== "function") return [];
+    return this.dataSource
+      .getRepository(AccountMatchingLearningEntity)
+      .createQueryBuilder("learning")
+      .where("learning.active = :active", { active: true })
+      .andWhere("learning.deletedAt IS NULL")
+      .andWhere(
+        new Brackets((query) =>
+          query
+            .where("learning.scope = :global", { global: "global" })
+            .orWhere(
+              "learning.scope = :company AND learning.companyId = :companyId",
+              { company: "company", companyId },
+            ),
+        ),
+      )
+      .getMany();
   }
 
   private rank(

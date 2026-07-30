@@ -13,6 +13,9 @@ import {
 } from "../normalization/account-term-normalizer";
 import { AccountAttributeParserService } from "./account-attribute-parser.service";
 import { normalizeAccountConcept } from "../normalization/account-concept-normalizer";
+import { AccountRuleEngineService } from "../rules/account-rule-engine.service";
+import { AccountConfidenceCalibratorService } from "../calibration/account-confidence-calibrator.service";
+import type { AccountMatchingRuleEntity } from "../entities/account-matching-rule.entity";
 
 const GENERIC_CONCEPTS = new Set(["activo", "pasivo", "impuesto", "gasto"]);
 
@@ -23,12 +26,15 @@ export type RankingDecision =
 export class AccountSuggestionRankingService {
   constructor(
     private readonly parser: AccountAttributeParserService = new AccountAttributeParserService(),
+    private readonly rules: AccountRuleEngineService = new AccountRuleEngineService(),
+    private readonly calibrator: AccountConfidenceCalibratorService = new AccountConfidenceCalibratorService(),
   ) {}
 
   rank(
     name: string,
     candidates: GeneratedCandidate[],
     context?: BalanceContext,
+    configuredRules: AccountMatchingRuleEntity[] = [],
   ) {
     const source = this.parser.parse(name);
     const normalized = normalizeAccountTerm(name);
@@ -37,7 +43,17 @@ export class AccountSuggestionRankingService {
       source.statementSection,
       context,
     );
+    const ruleEvaluations = new Map(
+      candidates.map((candidate) => [
+        candidate.account.id,
+        this.rules.evaluate(name, source, observed, candidate, configuredRules),
+      ]),
+    );
     const discardedCandidates = candidates.flatMap((candidate) => {
+      if (ruleEvaluations.get(candidate.account.id)?.excluded)
+        return [
+          { accountId: candidate.account.id, reasons: ["excluded_by_rule"] },
+        ];
       if (!this.isHomologable(candidate))
         return [
           {
@@ -87,6 +103,9 @@ export class AccountSuggestionRankingService {
       return [];
     });
     const ranked = candidates
+      .filter(
+        (candidate) => !ruleEvaluations.get(candidate.account.id)?.excluded,
+      )
       .filter((candidate) => this.isHomologable(candidate))
       .filter((candidate) =>
         this.hasRequiredPrepaidSignal(normalized, candidate),
@@ -107,6 +126,24 @@ export class AccountSuggestionRankingService {
           .map((term) => this.lexicalSignals(normalized, term))
           .sort((a, b) => b.points - a.points)[0];
         const reasons = [...(best?.reasons ?? [])];
+        reasons.push(
+          ...(ruleEvaluations.get(candidate.account.id)?.signals ?? []),
+        );
+        const learned =
+          candidate.learning?.filter(
+            (item) => item.normalizedName === normalized,
+          ) ?? [];
+        for (const item of learned) {
+          const points =
+            item.scope === "company" ? 25 : item.scope === "industry" ? 15 : 10;
+          reasons.push({
+            signal: `supervised_learning_${item.scope}`,
+            description: `${item.confirmationCount} confirmación(es) supervisada(s) en alcance ${item.scope}`,
+            points,
+            kind: "evidence",
+            source: "history",
+          });
+        }
         reasons.push(...this.conceptReasons(normalized, source, candidate));
         if (
           source.family === candidate.metadata.family &&
@@ -199,13 +236,7 @@ export class AccountSuggestionRankingService {
         return {
           ...candidate,
           score,
-          confidence: Math.max(
-            0,
-            Math.min(
-              1,
-              score / ACCOUNT_SUGGESTION_CONFIG.scoreForFullConfidence,
-            ),
-          ),
+          confidence: 0,
           reasons,
         };
       })
@@ -213,20 +244,32 @@ export class AccountSuggestionRankingService {
         (a, b) =>
           b.score - a.score || a.account.code.localeCompare(b.account.code),
       );
+    ranked.forEach((candidate, index) => {
+      candidate.confidence = this.calibrator.calibrate(
+        candidate,
+        ranked[index + 1]?.score ?? 0,
+        ranked.length,
+      );
+    });
     const top = ranked.slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates);
     const gap = (top[0]?.score ?? 0) - (top[1]?.score ?? 0);
     const decision: RankingDecision = !top.length
       ? "no_candidate"
-      : top[0].metadata.statementSection === "unknown"
+      : ruleEvaluations.get(top[0].account.id)?.review
         ? "review"
-        : top[0].score < ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore
+        : top[0].metadata.statementSection === "unknown"
           ? "review"
-          : top.length > 1 &&
-              (gap < ACCOUNT_SUGGESTION_CONFIG.minimumAbsoluteDifference ||
-                gap / Math.max(top[0].score, 1) <
-                  ACCOUNT_SUGGESTION_CONFIG.minimumRelativeDifference)
-            ? "ambiguous"
-            : "automatic";
+          : top[0].score < ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore
+            ? "review"
+            : top[0].confidence <
+                ACCOUNT_SUGGESTION_CONFIG.minimumAutomaticConfidence
+              ? "review"
+              : top.length > 1 &&
+                  (gap < ACCOUNT_SUGGESTION_CONFIG.minimumAbsoluteDifference ||
+                    gap / Math.max(top[0].score, 1) <
+                      ACCOUNT_SUGGESTION_CONFIG.minimumRelativeDifference)
+                ? "ambiguous"
+                : "automatic";
     if (decision === "ambiguous")
       for (const item of top)
         item.reasons.push(
@@ -236,7 +279,23 @@ export class AccountSuggestionRankingService {
             0,
           ),
         );
-    return { candidates: top, decision, discardedCandidates };
+    return {
+      candidates: top,
+      allCandidates: ranked,
+      decision,
+      reviewRequiredByRule: Boolean(
+        top[0] && ruleEvaluations.get(top[0].account.id)?.review,
+      ),
+      discardedCandidates,
+      observedSection: observed,
+      evaluatedRules: [
+        ...new Set(
+          [...ruleEvaluations.values()].flatMap(
+            (item) => item.evaluatedRuleIds,
+          ),
+        ),
+      ],
+    };
   }
 
   private observedSection(
@@ -559,6 +618,18 @@ export class AccountSuggestionRankingService {
       : 0;
   }
   private reason(signal: string, description: string, points: number) {
-    return { signal, description, points };
+    return {
+      signal,
+      description,
+      points,
+      kind: points < 0 ? ("penalty" as const) : ("evidence" as const),
+      source: signal.includes("balance")
+        ? ("balance" as const)
+        : signal.includes("concept") ||
+            signal.includes("family") ||
+            signal.includes("section")
+          ? ("knowledge" as const)
+          : ("lexical" as const),
+    };
   }
 }

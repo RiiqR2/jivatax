@@ -5,14 +5,18 @@ import type { SiiAccountConceptEntity } from "../entities/sii-account-concept.en
 import { accountingMetadata } from "../metadata/accounting-metadata";
 import type { GeneratedCandidate } from "../account-matching.types";
 import { resolveCatalogExpenseKnowledge } from "../data/catalog-expense-knowledge";
+import type { SiiAccountKnowledgeEntity } from "../entities/sii-account-knowledge.entity";
+import type { AccountMatchingLearningEntity } from "../entities/account-matching-learning.entity";
 
 /** Retrieval only: every active catalogue account enters the ranking pool. */
 @Injectable()
 export class AccountCandidateGeneratorService {
   generate(
     accounts: SiiAccountEntity[],
-    terms: SiiAccountTermEntity[],
+    terms: SiiAccountTermEntity[] = [],
     concepts: SiiAccountConceptEntity[] = [],
+    knowledge: SiiAccountKnowledgeEntity[] = [],
+    learning: AccountMatchingLearningEntity[] = [],
   ): GeneratedCandidate[] {
     const catalogKnowledge = resolveCatalogExpenseKnowledge(accounts);
     const byAccount = new Map<string, SiiAccountTermEntity[]>();
@@ -32,11 +36,32 @@ export class AccountCandidateGeneratorService {
         concept,
       ]);
     }
+    const knowledgeByAccount = new Map(
+      knowledge
+        .filter((item) => item.active && !item.deletedAt)
+        .map((item) => [item.siiAccountId, item]),
+    );
+    const learningByAccount = new Map<
+      string,
+      AccountMatchingLearningEntity[]
+    >();
+    for (const item of learning.filter(
+      (item) => item.active && !item.deletedAt,
+    ))
+      learningByAccount.set(item.siiAccountId, [
+        ...(learningByAccount.get(item.siiAccountId) ?? []),
+        item,
+      ]);
     return accounts
       .filter((account) => !account.deletedAt)
       .map((account) => ({
         account,
-        metadata: accountingMetadata(account.name),
+        metadata: this.resolveMetadata(
+          account.name,
+          knowledgeByAccount.get(account.id),
+        ),
+        knowledge: knowledgeByAccount.get(account.id),
+        learning: learningByAccount.get(account.id) ?? [],
         terms: [
           ...(byAccount.get(account.id) ?? []),
           ...(catalogKnowledge.terms.get(account.id) ?? []),
@@ -46,5 +71,23 @@ export class AccountCandidateGeneratorService {
           ...(catalogKnowledge.concepts.get(account.id) ?? []),
         ],
       }));
+  }
+
+  private resolveMetadata(name: string, knowledge?: SiiAccountKnowledgeEntity) {
+    const inferred = accountingMetadata(name);
+    if (!knowledge) return inferred;
+    return {
+      ...inferred,
+      family: knowledge.accountingFamily,
+      statementSection: knowledge.statementSection,
+      expectedBalanceNature: knowledge.balanceNature,
+      term:
+        knowledge.isCurrent == null
+          ? inferred.term
+          : knowledge.isCurrent
+            ? ("current" as const)
+            : ("non_current" as const),
+      contraAccount: knowledge.isContraAccount,
+    };
   }
 }

@@ -1,6 +1,8 @@
 import type { SiiAccountEntity } from "../sii-account-plan/entities/sii-account.entity";
 import type { SiiAccountTermEntity } from "./entities/sii-account-term.entity";
 import type { SiiAccountConceptEntity } from "./entities/sii-account-concept.entity";
+import type { SiiAccountKnowledgeEntity } from "./entities/sii-account-knowledge.entity";
+import type { AccountMatchingLearningEntity } from "./entities/account-matching-learning.entity";
 
 export type StatementSection =
   "asset" | "liability" | "equity" | "income" | "expense" | "unknown";
@@ -39,10 +41,23 @@ export interface GeneratedCandidate {
   metadata: AccountingMetadata;
   terms: SiiAccountTermEntity[];
   concepts: SiiAccountConceptEntity[];
+  knowledge?: SiiAccountKnowledgeEntity;
+  learning?: AccountMatchingLearningEntity[];
+}
+
+export type MatchingSignalKind = "evidence" | "penalty" | "rule";
+
+export interface MatchingSignal {
+  signal: string;
+  description: string;
+  points: number;
+  kind: MatchingSignalKind;
+  source: "lexical" | "knowledge" | "balance" | "history" | "rule";
+  ruleId?: string;
 }
 
 export interface RankedCandidate extends GeneratedCandidate {
   score: number;
   confidence: number;
-  reasons: Array<{ signal: string; description: string; points: number }>;
+  reasons: MatchingSignal[];
 }
