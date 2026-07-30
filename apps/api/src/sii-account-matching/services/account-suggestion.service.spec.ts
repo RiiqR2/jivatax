@@ -46,6 +46,7 @@ function rank(
       siiAccountsById: Map<string, SiiAccountEntity>,
       positiveTerms: SiiAccountTermEntity[],
       negativeTerms: SiiAccountTermEntity[],
+      normalizedName?: string,
     ) => RankResult;
   };
   const indexes = internals.buildTermIndexes(terms);
@@ -54,6 +55,7 @@ function rank(
     new Map(accounts.map((account) => [account.id, account])),
     indexes.positiveTermsByNormalizedTerm.get(normalizedName) ?? [],
     indexes.negativeTermsByNormalizedTerm.get(normalizedName) ?? [],
+    normalizedName,
   );
 }
 
@@ -67,6 +69,7 @@ type RankResult = {
     account: SiiAccountEntity;
     score: number;
     confidence: number;
+    reasons: Array<{ signal: string; description: string; points: number }>;
   }>;
   discardReason?: string;
 };
@@ -180,8 +183,8 @@ describe("AccountSuggestionService matching", () => {
         term(maquinaria.id, "maquinarias y equipos", "official_name", 45),
       ],
     );
-    assert.equal(machineryResult.candidates[0]?.score, 105);
-    assert.equal(machineryResult.candidates[0]?.confidence, 1);
+    assert.equal(machineryResult.candidates[0]?.score, 60);
+    assert.equal(machineryResult.candidates[0]?.reasons.length, 1);
     const machineryIndexes = buildTermIndexes([
       term(maquinaria.id, "maquinarias y equipos", "erp_term", 60),
       term(maquinaria.id, "maquinarias y equipos", "official_name", 45),
@@ -211,9 +214,70 @@ describe("AccountSuggestionService matching", () => {
       [disponible],
       [term(disponible.id, "bancos", "alias", 55)],
     );
-    assert.equal(result.candidates[0].score, 55);
+    assert.equal(result.candidates[0].score, 60);
     assert.ok(result.candidates[0].confidence >= 0);
     assert.ok(result.candidates[0].confidence <= 1);
+  });
+
+  it("uses deterministic token similarity without confusing bank debt with Disponible", () => {
+    const service = new AccountSuggestionService({} as DataSource);
+    const internal = service as unknown as {
+      rank: (
+        accounts: Map<string, SiiAccountEntity>,
+        positive: SiiAccountTermEntity[],
+        negative: SiiAccountTermEntity[],
+        name: string,
+      ) => RankResult;
+    };
+    const result = internal.rank(
+      new Map([[disponible.id, disponible]]),
+      [term(disponible.id, "bancos", "alias", 55)],
+      [term(disponible.id, "deudas con bancos", "negative_term", 50)],
+      normalizeAccountTerm("DEUDAS CON BANCOS CORTO PLAZO"),
+    );
+    assert.equal(result.candidates.length, 0);
+  });
+
+  it("distinguishes machinery from its accumulated depreciation", () => {
+    const depreciation = sii(
+      "depreciation",
+      "1.02.06.00",
+      "Depreciación acumulada (menos)",
+    );
+    const machineryTerms = [
+      term(maquinaria.id, "maquinarias y equipos", "erp_term", 60),
+      term(maquinaria.id, "depreciacion acumulada", "negative_term", 60),
+      term(depreciation.id, "dep acum maquinarias y equipos", "erp_term", 60),
+    ];
+    assert.equal(
+      rank("MAQUINARIAS Y EQUIPOS", [maquinaria, depreciation], machineryTerms)
+        .candidates[0]?.account.id,
+      maquinaria.id,
+    );
+    assert.equal(
+      rank(
+        "DEP ACUM MAQUINARIAS Y EQUIPOS",
+        [maquinaria, depreciation],
+        machineryTerms,
+      ).candidates[0]?.account.id,
+      depreciation.id,
+    );
+  });
+
+  it("marks candidates with equal evidence as ambiguous", () => {
+    const result = rank(
+      "CLIENTES",
+      [clientes, sii("documents", "1.01.08.00", "Documentos por cobrar")],
+      [
+        term(clientes.id, "clientes", "alias", 60),
+        term("documents", "clientes", "manual_term", 60),
+      ],
+    );
+    assert.equal(result.discardReason, "ambiguous_candidates");
+    assert.equal(
+      result.candidates[0].reasons.at(-1)?.signal,
+      "ambiguous_candidates",
+    );
   });
 });
 

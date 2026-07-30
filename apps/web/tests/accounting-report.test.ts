@@ -114,4 +114,15 @@ test("homologación tiene vacío, filtros, búsqueda, confirmación e historial"
   assert.match(source, /Seleccionar todas las sugerencias visibles/);
   assert.match(source, /context\.company\.legalName/);
   assert.match(source, /Nombre modificado/);
+  assert.doesNotMatch(
+    source,
+    /window\.(?:alert|confirm|prompt)|\b(?:alert|confirm|prompt)\(/,
+  );
+  assert.match(source, /aria-labelledby="approval-title"/);
+  assert.match(source, /aria-describedby="approval-description"/);
+  assert.match(source, /Aprobando…/);
+  assert.match(source, /No fue posible aprobar\. La selección se mantuvo/);
+  assert.match(source, /onCancel=\{\(event\) => \{[\s\S]*if \(loading\)/);
+  assert.match(source, /Los mappings ya confirmados no serán reemplazados/);
+  assert.match(source, /Confirmar rechazo/);
 });

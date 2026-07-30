@@ -1,0 +1,26 @@
+/** Single source of truth for deterministic suggestion scoring. */
+export const ACCOUNT_SUGGESTION_CONFIG = Object.freeze({
+  algorithmVersion: "deterministic-v4",
+  topCandidates: 3,
+  minimumSuggestionScore: 45,
+  minimumAbsoluteDifference: 8,
+  minimumRelativeDifference: 0.12,
+  scoreForFullConfidence: 100,
+  lexicalCandidateThreshold: 0.34,
+  weights: {
+    historicalCompanyMapping: 100,
+    exactCompanyAlias: 80,
+    exactAlias: 60,
+    exactErpTerm: 60,
+    exactOfficialName: 55,
+    exactAbbreviation: 50,
+    exactManualTerm: 55,
+    exactIndustryTerm: 50,
+    tokenSimilarityMaximum: 30,
+    lexicalSimilarityMaximum: 25,
+    compatibleClassification: 15,
+    compatibleBalanceNature: 10,
+    incompatibleClassification: -50,
+    incompatibleBalanceNature: -35,
+  },
+});
