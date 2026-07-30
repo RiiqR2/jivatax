@@ -1,7 +1,7 @@
 /** Single source of truth for deterministic suggestion scoring. */
 export const ACCOUNT_SUGGESTION_CONFIG = Object.freeze({
-  algorithmVersion: "deterministic-v4",
-  topCandidates: 3,
+  algorithmVersion: "deterministic-v5",
+  topCandidates: 5,
   minimumSuggestionScore: 45,
   minimumAbsoluteDifference: 8,
   minimumRelativeDifference: 0.12,
@@ -18,6 +18,13 @@ export const ACCOUNT_SUGGESTION_CONFIG = Object.freeze({
     exactIndustryTerm: 50,
     tokenSimilarityMaximum: 30,
     lexicalSimilarityMaximum: 25,
+    jaccardMaximum: 24,
+    trigramMaximum: 18,
+    prefixMaximum: 8,
+    conceptMatchMaximum: 24,
+    familyMatch: 16,
+    termMatch: 10,
+    contraAccountMatch: 14,
     compatibleClassification: 15,
     compatibleBalanceNature: 10,
     incompatibleClassification: -50,

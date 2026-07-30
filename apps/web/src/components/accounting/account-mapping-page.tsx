@@ -534,30 +534,37 @@ function MappingDialog({
         <p id="mapping-description" className="mt-1 text-slate-600">
           {item.canonicalName} · La selección no se guarda automáticamente.
         </p>
-        {item.suggestions[0] ? (
-          <section className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm">
-            <h3 className="font-semibold">Sugerencia</h3>
-            <p>
-              {item.suggestions[0].siiAccount.code} ·{" "}
-              {item.suggestions[0].siiAccount.name}
-            </p>
-            <p>
-              Confianza: {Math.round(item.suggestions[0].confidence * 100)}% ·
-              Puntaje: {item.suggestions[0].score}
-            </p>
-            <details className="mt-2">
-              <summary className="cursor-pointer underline">
-                Ver explicación
-              </summary>
-              <ul className="mt-1 list-disc pl-5">
-                {item.suggestions[0].reasons.map((reason, index) => (
-                  <li key={`${reason.signal}-${index}`}>
-                    {reason.description} ({reason.points > 0 ? "+" : ""}
-                    {reason.points})
-                  </li>
-                ))}
-              </ul>
-            </details>
+        {item.suggestions.length ? (
+          <section className="mt-4 space-y-2 text-sm">
+            <h3 className="font-semibold">Top candidatos</h3>
+            {item.suggestions.slice(0, 5).map((suggestion, rank) => (
+              <article
+                key={suggestion.id}
+                className="rounded-lg border border-emerald-200 bg-emerald-50 p-3"
+              >
+                <p className="font-medium">
+                  {rank + 1}. {suggestion.siiAccount.code} ·{" "}
+                  {suggestion.siiAccount.name}
+                </p>
+                <p>
+                  Score: {suggestion.score} · Confianza:{" "}
+                  {Math.round(suggestion.confidence * 100)}%
+                </p>
+                <details className="mt-1">
+                  <summary className="cursor-pointer underline">
+                    Razones
+                  </summary>
+                  <ul className="mt-1 list-disc pl-5">
+                    {suggestion.reasons.map((reason, index) => (
+                      <li key={`${reason.signal}-${index}`}>
+                        {reason.description} ({reason.points > 0 ? "+" : ""}
+                        {reason.points})
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </article>
+            ))}
           </section>
         ) : (
           <p className="mt-4 text-sm text-slate-500">Sin sugerencias</p>

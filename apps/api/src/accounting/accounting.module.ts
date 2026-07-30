@@ -21,6 +21,7 @@ import { TaxDocumentsService } from "./services/tax-documents.service";
 import { TaxPeriodsService } from "./services/tax-periods.service";
 import { PeriodAccountMappingsService } from "./services/period-account-mappings.service";
 import { SiiAccountMatchingModule } from "../sii-account-matching/sii-account-matching.module";
+import { AccountMatchingFeedbackEntity } from "../sii-account-matching/entities/account-matching-feedback.entity";
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { SiiAccountMatchingModule } from "../sii-account-matching/sii-account-ma
       CompanyAccountSuggestionEntity,
       CompanyAccountMappingHistoryEntity,
       CompanyAccountEntity,
+      AccountMatchingFeedbackEntity,
     ]),
     AuthModule,
     StorageModule,

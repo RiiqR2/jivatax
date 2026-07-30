@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { InjectDataSource } from "@nestjs/typeorm";
-import { Brackets, DataSource, In } from "typeorm";
+import { Brackets, DataSource, IsNull } from "typeorm";
 import {
   CompanyAccountSuggestionEntity,
   CompanyAccountSuggestionStatus,
@@ -19,6 +19,8 @@ import {
   weightedTokenSimilarity,
 } from "../normalization/account-term-normalizer";
 import { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
+import { AccountCandidateGeneratorService } from "./account-candidate-generator.service";
+import { AccountSuggestionRankingService } from "./account-suggestion-ranking.service";
 export { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
 
 const POSITIVE_TERM_TYPES = new Set<SiiAccountTermType>([
@@ -68,17 +70,19 @@ type DiscardReason =
 export class AccountSuggestionService {
   private readonly logger = new Logger(AccountSuggestionService.name);
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly candidateGenerator: AccountCandidateGeneratorService = new AccountCandidateGeneratorService(),
+    private readonly ranking: AccountSuggestionRankingService = new AccountSuggestionRankingService(),
+  ) {}
 
   async generateForPeriod(companyId: string, taxPeriodId: string) {
     const accounts = await this.loadCompanyAccounts(companyId, taxPeriodId);
     const loadedTerms = await this.loadTerms(companyId);
-    const { positiveTermsByNormalizedTerm } =
-      this.buildTermIndexes(loadedTerms);
     const siiAccountIds = Array.from(
       new Set(loadedTerms.map((term) => term.siiAccountId)),
     );
-    const siiAccounts = await this.loadSiiAccounts(siiAccountIds);
+    const siiAccounts = await this.loadSiiAccounts();
     const siiAccountsById = new Map(
       siiAccounts.map((account) => [account.id, account]),
     );
@@ -150,30 +154,38 @@ export class AccountSuggestionService {
           { status: CompanyAccountSuggestionStatus.SUPERSEDED },
         );
 
-        const normalizedName = normalizeAccountTerm(companyAccount.name);
-        const exactTerms =
-          positiveTermsByNormalizedTerm.get(normalizedName) ?? [];
-        const lexicalTerms = loadedTerms.filter((term) => {
-          if (!POSITIVE_TERM_TYPES.has(term.type) || exactTerms.includes(term))
-            return false;
-          return (
-            this.tokenSimilarity(normalizedName, term.normalizedTerm) >=
-            ACCOUNT_SUGGESTION_CONFIG.lexicalCandidateThreshold
-          );
-        });
-        const matchedTerms = [...exactTerms, ...lexicalTerms];
-        const matchedNegativeTerms = loadedTerms.filter(
-          (term) =>
-            term.type === "negative_term" &&
-            this.termOccurs(normalizedName, term.normalizedTerm),
+        const generatedCandidates = this.candidateGenerator.generate(
+          siiAccounts,
+          loadedTerms,
         );
-        const ranked = this.rank(
-          siiAccountsById,
-          matchedTerms,
-          matchedNegativeTerms,
-          normalizedName,
+        const deterministic = this.ranking.rank(
+          companyAccount.name,
+          generatedCandidates,
           companyAccount.matchingContext,
         );
+        const ranked = {
+          candidates: deterministic.candidates.map((candidate) => ({
+            ...candidate,
+            exact: candidate.reasons.some(
+              (reason) => reason.signal === "exact_alias",
+            ),
+          })),
+          exactMatches: deterministic.candidates.filter((candidate) =>
+            candidate.reasons.some((reason) => reason.signal === "exact_alias"),
+          ).length,
+          discardedByScore:
+            deterministic.decision === "review"
+              ? deterministic.candidates.length
+              : 0,
+          discardReason:
+            deterministic.decision === "ambiguous"
+              ? ("ambiguous_candidates" as const)
+              : undefined,
+        };
+        /* Retrieval and scoring intentionally happen before persistence. Every
+           catalogue account was evaluated and even review-only Top 5 survive. */
+        if (deterministic.decision === "review")
+          ranked.discardReason = undefined;
         diagnostics.exactMatches += ranked.exactMatches;
         diagnostics.aliasMatches += ranked.candidates.filter((candidate) =>
           candidate.reasons.some((reason) => reason.signal.includes("alias")),
@@ -209,7 +221,7 @@ export class AccountSuggestionService {
                     algorithmVersion:
                       ACCOUNT_SUGGESTION_CONFIG.algorithmVersion,
                     reasons: candidate.reasons,
-                    status: CompanyAccountSuggestionStatus.SUPERSEDED,
+                    status: CompanyAccountSuggestionStatus.ACTIVE,
                     generatedAt,
                     reviewedByUserId: null,
                     reviewedAt: null,
@@ -278,10 +290,9 @@ export class AccountSuggestionService {
       .getMany() as Promise<AccountWithContext[]>;
   }
 
-  private loadSiiAccounts(siiAccountIds: string[]) {
-    if (!siiAccountIds.length) return Promise.resolve([]);
+  private loadSiiAccounts() {
     return this.dataSource.getRepository(SiiAccountEntity).find({
-      where: { id: In(siiAccountIds) },
+      where: { deletedAt: IsNull() },
     });
   }
 
