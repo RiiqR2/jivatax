@@ -2,6 +2,7 @@
 
 import {
   FileText,
+  ListChecks,
   LayoutDashboard,
   Leaf,
   LoaderCircle,
@@ -47,6 +48,16 @@ export function AppSidebar() {
             title: operationalBase
               ? undefined
               : "Crea un período tributario para cargar documentos",
+          },
+          {
+            label: "Homologación",
+            href: operationalBase
+              ? `${operationalBase}/account-mapping`
+              : setupPath,
+            icon: ListChecks,
+            title: operationalBase
+              ? undefined
+              : "Selecciona un período tributario para homologar cuentas",
           },
           {
             label: "Usuarios",

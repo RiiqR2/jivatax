@@ -71,6 +71,8 @@ test("el sidebar conserva operación sin período y limita Administración a met
 
   assert.match(sidebar, /label: "Resumen"/);
   assert.match(sidebar, /label: "Documentos"/);
+  assert.match(sidebar, /label: "Homologación"/);
+  assert.match(sidebar, /account-mapping/);
   assert.match(sidebar, /label: "Usuarios"/);
   assert.match(sidebar, /Crea un período tributario para cargar documentos/);
   assert.match(sidebar, /platformRole === "metauser"/);

@@ -28,6 +28,8 @@ export function AccountMappingPage({
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<AccountMappingItem | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [approving, setApproving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const query = useQuery({
     queryKey: [
@@ -49,6 +51,37 @@ export function AccountMappingPage({
       }),
   });
   const summary = query.data?.summary;
+  const visibleSuggested =
+    query.data?.items.filter(
+      (item) => item.mapping.status === "pending" && item.suggestions[0],
+    ) ?? [];
+  const approve = async (items: AccountMappingItem[]) => {
+    if (!items.length) return;
+    const preview = items
+      .map(
+        (item) =>
+          `${item.code} · ${item.periodName} → ${item.suggestions[0]?.siiAccount.code} · ${item.suggestions[0]?.siiAccount.name} (${Math.round((item.suggestions[0]?.confidence ?? 0) * 100)}%)`,
+      )
+      .join("\n");
+    if (
+      !window.confirm(`Se aprobarán ${items.length} sugerencias:\n\n${preview}`)
+    )
+      return;
+    setApproving(true);
+    try {
+      await accountingService.approveAccountSuggestions(
+        companyId,
+        taxPeriodId,
+        items.map((item) => item.companyAccountId),
+      );
+      setSelectedIds([]);
+      await queryClient.invalidateQueries({
+        queryKey: ["period-account-mappings"],
+      });
+    } finally {
+      setApproving(false);
+    }
+  };
   return (
     <main className="mx-auto max-w-7xl p-4 sm:p-8">
       <header>
@@ -59,12 +92,21 @@ export function AccountMappingPage({
           ← Volver a documentos
         </Link>
         <h1 className="mt-2 text-3xl font-semibold">Homologación de cuentas</h1>
-        <p className="mt-1 text-slate-600">
-          Empresa {companyId} · período tributario {taxPeriodId}
-        </p>
-        {parameters.get("documentId") && (
+        {query.data?.context && (
+          <p className="mt-1 text-slate-600">
+            Empresa: {query.data.context.company.legalName}
+            {query.data.context.company.taxId
+              ? ` · RUT: ${query.data.context.company.taxId}`
+              : ""}
+            <br />
+            Período: AT {query.data.context.taxPeriod.taxYear} · Año comercial{" "}
+            {query.data.context.taxPeriod.commercialYear}
+          </p>
+        )}
+        {query.data?.context.sourceDocument && (
           <p className="mt-1 text-sm text-slate-500">
-            Balance origen: {parameters.get("documentId")}
+            Balance origen: {query.data.context.sourceDocument.filename} ·
+            versión {query.data.context.sourceDocument.version}
           </p>
         )}
       </header>
@@ -102,6 +144,25 @@ export function AccountMappingPage({
       >
         {generating ? "Generando sugerencias…" : "Generar sugerencias"}
       </button>
+      <button
+        type="button"
+        disabled={
+          approving ||
+          !visibleSuggested.some(
+            (item) => (item.suggestions[0]?.confidence ?? 0) >= 0.8,
+          )
+        }
+        onClick={() =>
+          void approve(
+            visibleSuggested.filter(
+              (item) => (item.suggestions[0]?.confidence ?? 0) >= 0.8,
+            ),
+          )
+        }
+        className="ml-2 mt-4 rounded-lg border border-emerald-700 px-4 py-2 text-sm text-emerald-800 disabled:opacity-50"
+      >
+        Aprobar sugerencias de alta confianza
+      </button>
       <section className="mt-5 rounded-xl border bg-white p-5">
         <div
           className="flex flex-wrap gap-2"
@@ -112,6 +173,7 @@ export function AccountMappingPage({
             { value: "", label: "Todas" },
             { value: "pending", label: "Pendientes" },
             { value: "suggested", label: "Sugeridas" },
+            { value: "withoutSuggestion", label: "Sin sugerencia" },
             { value: "confirmed", label: "Confirmadas" },
             { value: "rejected", label: "Rechazadas" },
           ].map((filter) => (
@@ -148,15 +210,56 @@ export function AccountMappingPage({
         <h2 id="mapping-table" className="border-b p-5 font-semibold">
           Cuentas detectadas en el Balance
         </h2>
+        {selectedIds.length > 0 && (
+          <div className="flex items-center gap-3 border-b bg-emerald-50 p-3 text-sm">
+            <strong>{selectedIds.length} seleccionadas</strong>
+            <button
+              type="button"
+              disabled={approving}
+              onClick={() =>
+                void approve(
+                  visibleSuggested.filter((item) =>
+                    selectedIds.includes(item.companyAccountId),
+                  ),
+                )
+              }
+              className="rounded bg-emerald-700 px-3 py-2 text-white"
+            >
+              Aprobar seleccionadas
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedIds([])}
+              className="underline"
+            >
+              Limpiar selección
+            </button>
+          </div>
+        )}
         {query.isLoading ? (
           <p className="p-6">Cargando cuentas…</p>
+        ) : query.isError ? (
+          <div className="p-8 text-center" role="alert">
+            <h3 className="font-semibold">
+              No fue posible cargar la homologación
+            </h3>
+            <p className="mt-2 text-sm text-slate-600">Intenta nuevamente.</p>
+          </div>
         ) : query.data?.items.length === 0 ? (
           <div className="p-8 text-center">
-            <h3 className="font-semibold">No existen cuentas para homologar</h3>
-            <p className="mt-2 text-sm text-slate-600">
-              Carga y procesa un Balance válido con filas para generar las
-              cuentas del período.
-            </p>
+            <h3 className="font-semibold">
+              {query.data.summary.total === 0
+                ? "No existen cuentas para homologar"
+                : status === "suggested"
+                  ? "No existen sugerencias con los filtros seleccionados."
+                  : "No existen cuentas con los filtros seleccionados."}
+            </h3>
+            {query.data.summary.total === 0 && (
+              <p className="mt-2 text-sm text-slate-600">
+                Carga y procesa un Balance válido con filas para generar las
+                cuentas del período.
+              </p>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -166,10 +269,30 @@ export function AccountMappingPage({
               </caption>
               <thead className="bg-slate-50">
                 <tr>
+                  <th scope="col" className="px-3 py-3">
+                    <input
+                      type="checkbox"
+                      aria-label="Seleccionar todas las sugerencias visibles"
+                      checked={
+                        visibleSuggested.length > 0 &&
+                        visibleSuggested.every((item) =>
+                          selectedIds.includes(item.companyAccountId),
+                        )
+                      }
+                      onChange={(event) =>
+                        setSelectedIds(
+                          event.target.checked
+                            ? visibleSuggested.map(
+                                (item) => item.companyAccountId,
+                              )
+                            : [],
+                        )
+                      }
+                    />
+                  </th>
                   {[
                     "Código interno",
-                    "Nombre canónico",
-                    "Nombre del período",
+                    "Nombre de cuenta",
                     "Cuenta SII",
                     "Estado",
                     "Confianza",
@@ -185,13 +308,33 @@ export function AccountMappingPage({
               <tbody>
                 {query.data?.items.map((item) => (
                   <tr key={item.companyAccountId} className="border-t">
+                    <td className="px-3 py-3">
+                      {item.mapping.status === "pending" &&
+                        item.suggestions[0] && (
+                          <input
+                            type="checkbox"
+                            aria-label={`Seleccionar ${item.periodName}`}
+                            checked={selectedIds.includes(
+                              item.companyAccountId,
+                            )}
+                            onChange={(event) =>
+                              setSelectedIds((current) =>
+                                event.target.checked
+                                  ? [...current, item.companyAccountId]
+                                  : current.filter(
+                                      (id) => id !== item.companyAccountId,
+                                    ),
+                              )
+                            }
+                          />
+                        )}
+                    </td>
                     <td className="px-3 py-3 font-mono">{item.code}</td>
-                    <td className="px-3 py-3">{item.canonicalName}</td>
                     <td className="px-3 py-3">
                       {item.periodName}
                       {item.nameChanged && (
-                        <span className="ml-2 text-xs text-amber-700">
-                          Cambió
+                        <span className="mt-1 block text-xs text-amber-700">
+                          Nombre modificado · Canónico: {item.canonicalName}
                         </span>
                       )}
                     </td>
@@ -216,6 +359,17 @@ export function AccountMappingPage({
                     </td>
                     <td className="px-3 py-3">{item.lastSeenTaxYear ?? "—"}</td>
                     <td className="px-3 py-3">
+                      {item.mapping.status === "pending" &&
+                        item.suggestions[0] && (
+                          <button
+                            type="button"
+                            disabled={approving}
+                            onClick={() => void approve([item])}
+                            className="mr-2 rounded-lg bg-emerald-700 px-3 py-2 text-white"
+                          >
+                            Aprobar
+                          </button>
+                        )}
                       <button
                         type="button"
                         onClick={() => setSelected(item)}
@@ -447,7 +601,7 @@ function MappingDialog({
           >
             Cancelar
           </button>
-          {item.mapping.status === "suggested" && (
+          {item.mapping.status === "pending" && item.suggestions[0] && (
             <button
               type="button"
               onClick={async () => {

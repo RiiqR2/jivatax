@@ -13,6 +13,7 @@ import { CompanyAccessGuard } from "../../auth/guards/company-access.guard";
 import { CompanyWriteAccessGuard } from "../../auth/guards/company-write-access.guard";
 import type { AuthenticatedUser } from "../../auth/interfaces/authenticated-user.interface";
 import {
+  ApproveAccountSuggestionsBatchDto,
   ListPeriodAccountMappingsDto,
   UpdatePeriodAccountMappingDto,
 } from "../dto/account-mappings.dto";
@@ -54,6 +55,22 @@ export class PeriodAccountMappingsController {
     @Body() dto: UpdatePeriodAccountMappingDto,
   ) {
     return this.mappings.update(companyId, accountId, user.id, dto);
+  }
+
+  @Post("tax-periods/:taxPeriodId/account-mappings/suggestions/approve-batch")
+  @UseGuards(CompanyWriteAccessGuard)
+  approveBatch(
+    @Param("companyId") companyId: string,
+    @Param("taxPeriodId") taxPeriodId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: ApproveAccountSuggestionsBatchDto,
+  ) {
+    return this.mappings.approveBatch(
+      companyId,
+      taxPeriodId,
+      user.id,
+      dto.companyAccountIds,
+    );
   }
 
   @Get("company-accounts/:companyAccountId/mapping-history")

@@ -26,6 +26,12 @@ test("list usa QueryBuilder y conserva filtros, búsqueda, summary y sugerencia 
   assert.match(source, /suggestedCount/);
   assert.match(source, /highConfidence/);
   assert.doesNotMatch(source, /suggestionRank: [23]/);
+  assert.match(source, /query\.status === "suggested"/);
+  assert.match(source, /suggestion\.id IS NOT NULL/);
+  assert.match(source, /query\.status === "withoutSuggestion"/);
+  assert.match(source, /suggestion\.id IS NULL/);
+  assert.match(source, /mapping\.status = :pendingMappingStatus/);
+  assert.match(source, /CompanyAccountMappingStatus\.CONFIRMED[\s\S]*CompanyAccountMappingStatus\.PENDING/);
 });
 
 test("update usa repositorios transaccionales, relaciones e historial", () => {
@@ -39,6 +45,15 @@ test("update usa repositorios transaccionales, relaciones e historial", () => {
     source,
     /BadRequestException\("La cuenta SII seleccionada no existe\."\)/,
   );
+});
+
+test("aprobación masiva valida período, estado y sugerencia principal y reutiliza el dominio", () => {
+  assert.match(source, /async approveBatch/);
+  assert.match(source, /TaxPeriodCompanyAccountEntity/);
+  assert.match(source, /mapping_not_pending/);
+  assert.match(source, /active_primary_suggestion_not_found/);
+  assert.match(source, /applyMappingDecision/);
+  assert.match(source, /CompanyAccountSuggestionStatus\.SUPERSEDED/);
 });
 
 test("history carga relaciones y presenta solamente el contrato público", () => {
