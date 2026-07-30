@@ -69,6 +69,7 @@ type RankResult = {
     account: SiiAccountEntity;
     score: number;
     confidence: number;
+    reasons: Array<{ signal: string; description: string; points: number }>;
   }>;
   discardReason?: string;
 };
@@ -182,8 +183,8 @@ describe("AccountSuggestionService matching", () => {
         term(maquinaria.id, "maquinarias y equipos", "official_name", 45),
       ],
     );
-    assert.equal(machineryResult.candidates[0]?.score, 105);
-    assert.equal(machineryResult.candidates[0]?.confidence, 1);
+    assert.equal(machineryResult.candidates[0]?.score, 60);
+    assert.equal(machineryResult.candidates[0]?.reasons.length, 1);
     const machineryIndexes = buildTermIndexes([
       term(maquinaria.id, "maquinarias y equipos", "erp_term", 60),
       term(maquinaria.id, "maquinarias y equipos", "official_name", 45),
@@ -213,7 +214,7 @@ describe("AccountSuggestionService matching", () => {
       [disponible],
       [term(disponible.id, "bancos", "alias", 55)],
     );
-    assert.equal(result.candidates[0].score, 55);
+    assert.equal(result.candidates[0].score, 60);
     assert.ok(result.candidates[0].confidence >= 0);
     assert.ok(result.candidates[0].confidence <= 1);
   });
@@ -237,6 +238,32 @@ describe("AccountSuggestionService matching", () => {
     assert.equal(result.candidates.length, 0);
   });
 
+  it("distinguishes machinery from its accumulated depreciation", () => {
+    const depreciation = sii(
+      "depreciation",
+      "1.02.06.00",
+      "Depreciación acumulada (menos)",
+    );
+    const machineryTerms = [
+      term(maquinaria.id, "maquinarias y equipos", "erp_term", 60),
+      term(maquinaria.id, "depreciacion acumulada", "negative_term", 60),
+      term(depreciation.id, "dep acum maquinarias y equipos", "erp_term", 60),
+    ];
+    assert.equal(
+      rank("MAQUINARIAS Y EQUIPOS", [maquinaria, depreciation], machineryTerms)
+        .candidates[0]?.account.id,
+      maquinaria.id,
+    );
+    assert.equal(
+      rank(
+        "DEP ACUM MAQUINARIAS Y EQUIPOS",
+        [maquinaria, depreciation],
+        machineryTerms,
+      ).candidates[0]?.account.id,
+      depreciation.id,
+    );
+  });
+
   it("marks candidates with equal evidence as ambiguous", () => {
     const result = rank(
       "CLIENTES",
@@ -247,6 +274,10 @@ describe("AccountSuggestionService matching", () => {
       ],
     );
     assert.equal(result.discardReason, "ambiguous_candidates");
+    assert.equal(
+      result.candidates[0].reasons.at(-1)?.signal,
+      "ambiguous_candidates",
+    );
   });
 });
 
