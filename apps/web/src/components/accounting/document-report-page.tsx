@@ -200,12 +200,63 @@ export function DocumentReportPage({
         <section className="mt-5 rounded-xl border bg-white p-5">
           <h2 className="font-semibold">Conciliación y totales</h2>
           <dl className="mt-4 grid gap-4 sm:grid-cols-3">
-            {Object.entries(report.totals ?? {}).map(([key, value]) => (
+            {/* {Object.entries(report.totals ?? {}).map(([key, value]) => (
               <Metric key={key} label={fieldLabel(key)} value={String(value)} />
-            ))}
-            {Object.entries(report.reconciliation ?? {}).map(([key, value]) => (
-              <Metric key={key} label={fieldLabel(key)} value={String(value)} />
-            ))}
+            ))} */}
+            {report.reconciliation?.movements && (
+              <>
+                <Metric
+                  label="Debe"
+                  value={formatAmount(
+                    report.reconciliation.movements.debitTotal,
+                  )}
+                />
+                <Metric
+                  label="Haber"
+                  value={formatAmount(
+                    report.reconciliation.movements.creditTotal,
+                  )}
+                />
+                <Metric
+                  label="Diferencia movimientos"
+                  value={formatAmount(
+                    report.reconciliation.movements.difference,
+                  )}
+                />
+                <Metric
+                  label="Estado movimientos"
+                  value={
+                    report.reconciliation.movements.isBalanced
+                      ? "Cuadrado"
+                      : "Descuadrado"
+                  }
+                />
+              </>
+            )}
+            {report.reconciliation?.equity && (
+              <>
+                <Metric
+                  label="Activo + Pérdidas"
+                  value={formatAmount(report.reconciliation.equity.leftSide)}
+                />
+                <Metric
+                  label="Pasivo + Ganancias"
+                  value={formatAmount(report.reconciliation.equity.rightSide)}
+                />
+                <Metric
+                  label="Diferencia patrimonial"
+                  value={formatAmount(report.reconciliation.equity.difference)}
+                />
+                <Metric
+                  label="Estado patrimonial"
+                  value={
+                    report.reconciliation.equity.isBalanced
+                      ? "Cuadrado"
+                      : "Descuadrado"
+                  }
+                />
+              </>
+            )}
           </dl>
         </section>
       )}
@@ -405,6 +456,12 @@ function Metric({ label, value }: { label: string; value: unknown }) {
         {value === null || value === undefined ? "—" : String(value)}
       </dd>
     </div>
+  );
+}
+
+function formatAmount(value: number): string {
+  return new Intl.NumberFormat("es-CL", { maximumFractionDigits: 4 }).format(
+    value,
   );
 }
 

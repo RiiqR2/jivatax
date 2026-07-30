@@ -299,7 +299,6 @@ export function AccountingDocumentsPage({
         ))}
       </div>
 
-
       <section className="mt-5 rounded-xl border border-slate-200 bg-white">
         <button
           type="button"
@@ -579,11 +578,38 @@ function History({
   loading: boolean;
   refresh: () => unknown;
 }) {
+  const [discarding, setDiscarding] = useState<TaxDocument | null>(null);
+  const [reason, setReason] = useState("");
+  const [discardError, setDiscardError] = useState<string | null>(null);
+  const [discardLoading, setDiscardLoading] = useState(false);
   const downloadOriginal = async (fileId: string) => {
     const response = await filesApi.downloadUrl(companyId, fileId);
     window.location.assign(response.downloadUrl);
   };
-  void refresh;
+  const discard = async () => {
+    if (!discarding || reason.trim().length < 3 || discardLoading) return;
+    setDiscardLoading(true);
+    setDiscardError(null);
+    try {
+      await accountingService.discardDocument(
+        companyId,
+        taxPeriodId,
+        discarding.id,
+        reason.trim(),
+      );
+      await refresh();
+      setDiscarding(null);
+      setReason("");
+    } catch (error) {
+      setDiscardError(
+        error instanceof Error
+          ? error.message
+          : "No fue posible descartar la versión.",
+      );
+    } finally {
+      setDiscardLoading(false);
+    }
+  };
   return (
     <section className="mt-5 overflow-hidden rounded-xl border border-slate-200 bg-white">
       <div className="border-b p-5">
@@ -687,12 +713,110 @@ function History({
                       >
                         Descargar original
                       </button>
+                      {type === "balance" &&
+                        document.status !== "discarded" && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDiscarding(document);
+                              setReason("");
+                              setDiscardError(null);
+                            }}
+                            className="rounded border border-red-300 px-2 py-1 text-red-700"
+                          >
+                            Descartar versión
+                          </button>
+                        )}
                     </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      {discarding && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="discard-title"
+        >
+          <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+            <h2 id="discard-title" className="text-xl font-semibold">
+              Descartar versión del Balance
+            </h2>
+            <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+              <Metric
+                label="Archivo"
+                value={discarding.storedFile.originalName}
+              />
+              <Metric label="Versión" value={`v${discarding.versionNumber}`} />
+              <Metric
+                label="Fecha"
+                value={new Date(discarding.uploadedAt).toLocaleDateString(
+                  "es-CL",
+                )}
+              />
+              <Metric
+                label="Usuario"
+                value={discarding.uploadedBy?.name ?? "No disponible"}
+              />
+              <Metric
+                label="Estado"
+                value={statusPresentation(discarding.status).label}
+              />
+              <Metric
+                label="Filas"
+                value={discarding.metadata?.rowsRead ?? 0}
+              />
+              <Metric
+                label="Errores / warnings"
+                value={`${discarding.metadata?.errors?.length ?? 0} / ${discarding.metadata?.warnings?.length ?? 0}`}
+              />
+              <Metric label="Período tributario" value={taxPeriodId} />
+            </dl>
+            <p className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+              Esta versión dejará de utilizarse en el período. El archivo y su
+              historial se conservarán. Los mappings confirmados no serán
+              eliminados.
+            </p>
+            <label className="mt-4 block text-sm font-medium">
+              Motivo obligatorio
+              <textarea
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                disabled={discardLoading}
+                className="mt-1 min-h-24 w-full rounded-lg border p-2"
+              />
+            </label>
+            {discardError && (
+              <p role="alert" className="mt-2 text-sm text-red-700">
+                {discardError}
+              </p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={discardLoading}
+                onClick={() => setDiscarding(null)}
+                className="rounded-lg border px-4 py-2"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={discardLoading || reason.trim().length < 3}
+                onClick={() => void discard()}
+                className="inline-flex items-center gap-2 rounded-lg bg-red-700 px-4 py-2 text-white disabled:opacity-50"
+              >
+                {discardLoading && (
+                  <LoaderCircle className="size-4 animate-spin" />
+                )}
+                Descartar versión
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </section>

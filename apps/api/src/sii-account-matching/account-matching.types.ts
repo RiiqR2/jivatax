@@ -3,7 +3,16 @@ import type { SiiAccountTermEntity } from "./entities/sii-account-term.entity";
 import type { SiiAccountConceptEntity } from "./entities/sii-account-concept.entity";
 
 export type StatementSection =
-  "asset" | "liability" | "equity" | "income" | "expense";
+  "asset" | "liability" | "equity" | "income" | "expense" | "unknown";
+export type ObservedAccountSection =
+  | "asset"
+  | "liability"
+  | "equity"
+  | "income"
+  | "expense"
+  | "contra_asset"
+  | "contra_liability"
+  | "unknown";
 export type BalanceNature = "debit" | "credit";
 export type AccountTerm = "current" | "non_current";
 

@@ -57,6 +57,20 @@ export class TaxPeriodCompanyAccountEntity {
   lossAmount!: string;
   @Column({ name: "gain_amount", type: "decimal", precision: 24, scale: 4 })
   gainAmount!: string;
+  @Column({
+    name: "discarded_at",
+    type: "datetime",
+    precision: 6,
+    nullable: true,
+  })
+  discardedAt!: Date | null;
+  @Column({
+    name: "discarded_by_document_id",
+    type: "char",
+    length: 36,
+    nullable: true,
+  })
+  discardedByDocumentId!: string | null;
   @Column({ name: "first_seen_at", type: "datetime", precision: 6 })
   firstSeenAt!: Date;
   @Column({ name: "last_seen_at", type: "datetime", precision: 6 })

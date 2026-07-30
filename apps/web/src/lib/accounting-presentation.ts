@@ -11,6 +11,7 @@ export const documentStatus = {
   processing: { label: "Procesando", variant: "info" },
   processed: { label: "Procesado", variant: "success" },
   superseded: { label: "Reemplazado", variant: "neutral" },
+  discarded: { label: "Descartado", variant: "neutral" },
   processing_error: { label: "Error de procesamiento", variant: "danger" },
 } as const;
 

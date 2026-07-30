@@ -345,6 +345,7 @@ describe("AccountSuggestionService persistence", () => {
         sii("available", "1.01.01.00", "Disponible"),
       ],
       loadTerms: async () => [term("available", "caja", "alias", 60)],
+      loadConcepts: async () => [],
     });
 
     const result = await service.generateForPeriod(companyId, "period-1");
@@ -397,6 +398,7 @@ describe("AccountSuggestionService persistence", () => {
         sii("available", "1.01.01.00", "Disponible"),
       ],
       loadTerms: async () => [term("available", "caja", "alias", 60)],
+      loadConcepts: async () => [],
     });
     const result = await service.generateForPeriod(companyId, "period-1");
     assert.equal(result.withoutSuggestionReasons.confirmed_mapping, 1);

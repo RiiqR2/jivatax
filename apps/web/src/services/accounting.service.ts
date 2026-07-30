@@ -106,6 +106,18 @@ export const accountingService = {
   ): Promise<TaxDocumentReport> {
     return this.report(companyId, periodId, documentId);
   },
+  async discardDocument(
+    companyId: string,
+    periodId: string,
+    documentId: string,
+    reason: string,
+  ) {
+    const response = await api.post(
+      `/companies/${companyId}/tax-periods/${periodId}/documents/${documentId}/discard`,
+      { reason },
+    );
+    return response.data;
+  },
   async accountMappings(
     companyId: string,
     periodId: string,

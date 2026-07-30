@@ -239,6 +239,37 @@ export function parseBalanceRows(
       tolerance,
       warnings,
     );
+
+    const hasBalance =
+      money.debitBalance.effectiveValue > tolerance ||
+      money.creditBalance.effectiveValue > tolerance;
+    const classifiedAmount =
+      money.assets.effectiveValue +
+      money.liabilities.effectiveValue +
+      money.losses.effectiveValue +
+      money.gains.effectiveValue;
+    if (hasBalance && Math.abs(classifiedAmount) <= tolerance) {
+      const unclassifiedDifference =
+        money.debitBalance.effectiveValue || money.creditBalance.effectiveValue;
+      errors.push({
+        sourceRowNumber,
+        field: "classification",
+        code: "UNCLASSIFIED_ACCOUNT_BALANCE",
+        message:
+          "La cuenta tiene saldo, pero no informa Activo, Pasivo, Pérdidas ni Ganancias.",
+        rawValue: {
+          accountCode,
+          accountName,
+          debitBalance: money.debitBalance.reportedValue,
+          creditBalance: money.creditBalance.reportedValue,
+          assets: money.assets.reportedValue,
+          liabilities: money.liabilities.reportedValue,
+          losses: money.losses.reportedValue,
+          gains: money.gains.reportedValue,
+          unclassifiedDifference,
+        },
+      });
+    }
     compareAccountBalance(
       row,
       "creditBalance",
@@ -325,12 +356,20 @@ export function parseBalanceRows(
       },
     });
   if (Math.abs(equityLeft - equityRight) > tolerance)
-    warnings.push({
+    errors.push({
       sourceRowNumber: 0,
       field: "equity",
       code: "BALANCE_EQUATION_NOT_BALANCED",
       message: "La ecuación patrimonial calculada no cuadra.",
-      rawValue: { leftSide: equityLeft, rightSide: equityRight },
+      rawValue: {
+        assets: systemTotals.assets,
+        liabilities: systemTotals.liabilities,
+        losses: systemTotals.losses,
+        gains: systemTotals.gains,
+        leftSide: equityLeft,
+        rightSide: equityRight,
+        difference: equityLeft - equityRight,
+      },
     });
 
   return {

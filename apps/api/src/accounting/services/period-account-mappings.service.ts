@@ -248,7 +248,8 @@ export class PeriodAccountMappingsService {
       )
       .leftJoin("suggestion.siiAccount", "suggestedSii")
       .where("periodAccount.companyId = :companyId", { companyId })
-      .andWhere("periodAccount.taxPeriodId = :taxPeriodId", { taxPeriodId });
+      .andWhere("periodAccount.taxPeriodId = :taxPeriodId", { taxPeriodId })
+      .andWhere("periodAccount.discardedAt IS NULL");
   }
 
   private createListQuery(
