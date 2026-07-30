@@ -15,6 +15,11 @@ export const SII_ACCOUNT_CONCEPT_TYPES = [
 
 export type SiiAccountConceptType = (typeof SII_ACCOUNT_CONCEPT_TYPES)[number];
 
+export const decimalNumberTransformer = {
+  to: (value: number): number => value,
+  from: (value: string | number): number => Number(value),
+};
+
 @Entity({ name: "sii_account_concepts" })
 @Index(
   "uq_sii_account_concepts_identity",
@@ -42,7 +47,12 @@ export class SiiAccountConceptEntity extends BaseEntity {
   })
   conceptType!: SiiAccountConceptType;
 
-  @Column({ type: "decimal", precision: 7, scale: 2 })
+  @Column({
+    type: "decimal",
+    precision: 7,
+    scale: 2,
+    transformer: decimalNumberTransformer,
+  })
   weight!: number;
 
   @Column({ type: "varchar", length: 100 })

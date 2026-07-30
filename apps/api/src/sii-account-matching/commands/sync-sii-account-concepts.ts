@@ -18,6 +18,10 @@ export async function main() {
       console.log(`- ${key}: ${Array.isArray(value) ? value.length : value}`);
     for (const code of result.missingReferencedAccounts)
       console.log(`  - ${code}`);
+    if (result.accountsWithoutConcepts.length)
+      console.log("- Accounts without curated or derived concepts:");
+    for (const code of result.accountsWithoutConcepts)
+      console.log(`  - ${code}`);
     if (result.errors) process.exitCode = 1;
   } finally {
     await context.close();
