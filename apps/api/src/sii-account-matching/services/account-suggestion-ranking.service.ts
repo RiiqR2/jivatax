@@ -11,6 +11,9 @@ import {
   relevantWords,
 } from "../normalization/account-term-normalizer";
 import { AccountAttributeParserService } from "./account-attribute-parser.service";
+import { normalizeAccountConcept } from "../normalization/account-concept-normalizer";
+
+const GENERIC_CONCEPTS = new Set(["activo", "pasivo", "impuesto", "gasto"]);
 
 export type RankingDecision =
   "automatic" | "ambiguous" | "review" | "no_candidate";
@@ -38,6 +41,7 @@ export class AccountSuggestionRankingService {
           .map((term) => this.lexicalSignals(normalized, term))
           .sort((a, b) => b.points - a.points)[0];
         const reasons = [...(best?.reasons ?? [])];
+        reasons.push(...this.conceptReasons(normalized, source, candidate));
         if (
           source.family === candidate.metadata.family &&
           source.family !== "other"
@@ -83,6 +87,14 @@ export class AccountSuggestionRankingService {
             ),
           );
         reasons.push(...this.contextReasons(candidate, context));
+        if (!reasons.length)
+          reasons.push(
+            this.reason(
+              "no_matching_signal",
+              "Candidato evaluado sin coincidencias positivas",
+              0,
+            ),
+          );
         const score = reasons.reduce(
           (total, reason) => total + reason.points,
           0,
@@ -188,6 +200,131 @@ export class AccountSuggestionRankingService {
       reasons,
       points: reasons.reduce((sum, reason) => sum + reason.points, 0),
     };
+  }
+
+  private conceptReasons(
+    normalizedName: string,
+    source: ReturnType<AccountAttributeParserService["parse"]>,
+    candidate: GeneratedCandidate,
+  ): RankedCandidate["reasons"] {
+    const reasons: RankedCandidate["reasons"] = [];
+    const weights = ACCOUNT_SUGGESTION_CONFIG.weights;
+    for (const concept of candidate.concepts) {
+      const value = normalizeAccountConcept(
+        concept.normalizedConcept || concept.concept,
+      );
+      const exact =
+        value &&
+        !GENERIC_CONCEPTS.has(value) &&
+        (normalizedName === value || normalizedName.includes(value));
+      if (exact)
+        reasons.push(
+          this.reason(
+            "exact_concept",
+            `Coincidencia conceptual: “${concept.concept}”`,
+            weights.exactConceptMatch,
+          ),
+        );
+      const compatible =
+        concept.conceptType === "accounting_family"
+          ? this.familyCompatible(source.family, value)
+          : concept.conceptType === "statement_section"
+            ? value.includes(this.sectionSpanish(source.statementSection))
+            : concept.conceptType === "balance_nature"
+              ? value.includes(
+                  source.expectedBalanceNature === "debit"
+                    ? "deudor"
+                    : "acreedor",
+                )
+              : concept.conceptType === "temporal_classification"
+                ? Boolean(
+                    source.term &&
+                    value.includes(
+                      source.term === "current" ? "corto plazo" : "largo plazo",
+                    ),
+                  )
+                : concept.conceptType === "contra_account_indicator"
+                  ? source.contraAccount
+                  : false;
+      if (!compatible) continue;
+      const signal = (
+        {
+          accounting_family: "accounting_family_match",
+          statement_section: "statement_section_match",
+          balance_nature: "balance_nature_match",
+          temporal_classification: "temporal_classification_match",
+          contra_account_indicator: "contra_account_match",
+        } as const
+      )[
+        concept.conceptType as
+          | "accounting_family"
+          | "statement_section"
+          | "balance_nature"
+          | "temporal_classification"
+          | "contra_account_indicator"
+      ];
+      const points = (
+        {
+          accounting_family: weights.accountingFamilyMatch,
+          statement_section: weights.statementSectionMatch,
+          balance_nature: weights.balanceNatureMatch,
+          temporal_classification: weights.temporalClassificationMatch,
+          contra_account_indicator: weights.conceptContraAccountMatch,
+        } as const
+      )[
+        concept.conceptType as
+          | "accounting_family"
+          | "statement_section"
+          | "balance_nature"
+          | "temporal_classification"
+          | "contra_account_indicator"
+      ];
+      if (
+        signal &&
+        points &&
+        !reasons.some((reason) => reason.signal === signal)
+      )
+        reasons.push(
+          this.reason(
+            signal,
+            `Concepto compatible: ${concept.concept}`,
+            points,
+          ),
+        );
+    }
+    return reasons;
+  }
+
+  private familyCompatible(family: string, concept: string): boolean {
+    return (
+      (
+        {
+          cash: /liquidez|circulante/,
+          receivables: /cobrar|credito comercial/,
+          fixed_assets: /activo fijo|propiedad planta/,
+          depreciation: /activo fijo/,
+          financial_liabilities: /financiera|pasivo/,
+          payables: /obligacion comercial|pasivo/,
+          equity: /patrimonio/,
+          income: /ingreso/,
+          expenses: /gasto|costo/,
+        } as Record<string, RegExp>
+      )[family]?.test(concept) ?? false
+    );
+  }
+
+  private sectionSpanish(section: string): string {
+    return (
+      (
+        {
+          asset: "activo",
+          liability: "pasivo",
+          equity: "patrimonio",
+          income: "ingreso",
+          expense: "resultado",
+        } as Record<string, string>
+      )[section] ?? section
+    );
   }
 
   private contextReasons(

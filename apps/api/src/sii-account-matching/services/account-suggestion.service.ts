@@ -21,6 +21,7 @@ import {
 import { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
 import { AccountCandidateGeneratorService } from "./account-candidate-generator.service";
 import { AccountSuggestionRankingService } from "./account-suggestion-ranking.service";
+import { SiiAccountConceptEntity } from "../entities/sii-account-concept.entity";
 export { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
 
 const POSITIVE_TERM_TYPES = new Set<SiiAccountTermType>([
@@ -79,6 +80,7 @@ export class AccountSuggestionService {
   async generateForPeriod(companyId: string, taxPeriodId: string) {
     const accounts = await this.loadCompanyAccounts(companyId, taxPeriodId);
     const loadedTerms = await this.loadTerms(companyId);
+    const loadedConcepts = await this.loadConcepts();
     const siiAccountIds = Array.from(
       new Set(loadedTerms.map((term) => term.siiAccountId)),
     );
@@ -157,6 +159,7 @@ export class AccountSuggestionService {
         const generatedCandidates = this.candidateGenerator.generate(
           siiAccounts,
           loadedTerms,
+          loadedConcepts,
         );
         const deterministic = this.ranking.rank(
           companyAccount.name,
@@ -315,6 +318,12 @@ export class AccountSuggestionService {
         }),
       )
       .getMany();
+  }
+
+  private loadConcepts() {
+    return this.dataSource.getRepository(SiiAccountConceptEntity).find({
+      where: { active: true, deletedAt: IsNull() },
+    });
   }
 
   private rank(

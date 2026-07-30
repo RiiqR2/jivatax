@@ -1,6 +1,6 @@
 /** Single source of truth for deterministic suggestion scoring. */
 export const ACCOUNT_SUGGESTION_CONFIG = Object.freeze({
-  algorithmVersion: "deterministic-v5",
+  algorithmVersion: "deterministic-v6-concepts",
   topCandidates: 5,
   minimumSuggestionScore: 45,
   minimumAbsoluteDifference: 8,
@@ -29,5 +29,14 @@ export const ACCOUNT_SUGGESTION_CONFIG = Object.freeze({
     compatibleBalanceNature: 10,
     incompatibleClassification: -50,
     incompatibleBalanceNature: -35,
+    exactConceptMatch: 35,
+    accountingFamilyMatch: 25,
+    statementSectionMatch: 20,
+    balanceNatureMatch: 15,
+    temporalClassificationMatch: 10,
+    conceptContraAccountMatch: 30,
+    incompatibleFamily: -50,
+    incompatibleStatementSection: -60,
+    incompatibleContraAccount: -60,
   },
 });

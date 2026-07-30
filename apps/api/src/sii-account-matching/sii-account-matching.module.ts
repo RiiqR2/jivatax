@@ -4,6 +4,8 @@ import { CompanyAccountSuggestionEntity } from "../accounting/entities/company-a
 import { SiiAccountEntity } from "../sii-account-plan/entities/sii-account.entity";
 import { SiiAccountPlanVersionEntity } from "../sii-account-plan/entities/sii-account-plan-version.entity";
 import { SiiAccountTermEntity } from "./entities/sii-account-term.entity";
+import { SiiAccountConceptEntity } from "./entities/sii-account-concept.entity";
+import { SiiAccountConceptsSyncService } from "./services/sii-account-concepts-sync.service";
 import { SiiAccountTermsSyncService } from "./services/sii-account-terms-sync.service";
 import { AccountSuggestionService } from "./services/account-suggestion.service";
 import { AccountAttributeParserService } from "./services/account-attribute-parser.service";
@@ -16,11 +18,13 @@ import { AccountSuggestionRankingService } from "./services/account-suggestion-r
       SiiAccountEntity,
       SiiAccountPlanVersionEntity,
       SiiAccountTermEntity,
+      SiiAccountConceptEntity,
       CompanyAccountSuggestionEntity,
     ]),
   ],
   providers: [
     SiiAccountTermsSyncService,
+    SiiAccountConceptsSyncService,
     AccountAttributeParserService,
     AccountCandidateGeneratorService,
     AccountSuggestionRankingService,
@@ -28,6 +32,7 @@ import { AccountSuggestionRankingService } from "./services/account-suggestion-r
   ],
   exports: [
     SiiAccountTermsSyncService,
+    SiiAccountConceptsSyncService,
     AccountSuggestionService,
     AccountCandidateGeneratorService,
     AccountSuggestionRankingService,
