@@ -30,6 +30,8 @@ export function AccountMappingPage({
   const [selected, setSelected] = useState<AccountMappingItem | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [approving, setApproving] = useState(false);
+  const [approvalItems, setApprovalItems] = useState<AccountMappingItem[]>([]);
+  const [notice, setNotice] = useState("");
   const [generating, setGenerating] = useState(false);
   const query = useQuery({
     queryKey: [
@@ -56,17 +58,6 @@ export function AccountMappingPage({
       (item) => item.mapping.status === "pending" && item.suggestions[0],
     ) ?? [];
   const approve = async (items: AccountMappingItem[]) => {
-    if (!items.length) return;
-    const preview = items
-      .map(
-        (item) =>
-          `${item.code} · ${item.periodName} → ${item.suggestions[0]?.siiAccount.code} · ${item.suggestions[0]?.siiAccount.name} (${Math.round((item.suggestions[0]?.confidence ?? 0) * 100)}%)`,
-      )
-      .join("\n");
-    if (
-      !window.confirm(`Se aprobarán ${items.length} sugerencias:\n\n${preview}`)
-    )
-      return;
     setApproving(true);
     try {
       await accountingService.approveAccountSuggestions(
@@ -75,6 +66,12 @@ export function AccountMappingPage({
         items.map((item) => item.companyAccountId),
       );
       setSelectedIds([]);
+      setApprovalItems([]);
+      setNotice(
+        items.length === 1
+          ? "Homologación aprobada correctamente."
+          : `${items.length} homologaciones aprobadas correctamente.`,
+      );
       await queryClient.invalidateQueries({
         queryKey: ["period-account-mappings"],
       });
@@ -153,7 +150,7 @@ export function AccountMappingPage({
           )
         }
         onClick={() =>
-          void approve(
+          setApprovalItems(
             visibleSuggested.filter(
               (item) => (item.suggestions[0]?.confidence ?? 0) >= 0.8,
             ),
@@ -217,7 +214,7 @@ export function AccountMappingPage({
               type="button"
               disabled={approving}
               onClick={() =>
-                void approve(
+                setApprovalItems(
                   visibleSuggested.filter((item) =>
                     selectedIds.includes(item.companyAccountId),
                   ),
@@ -364,7 +361,7 @@ export function AccountMappingPage({
                           <button
                             type="button"
                             disabled={approving}
-                            onClick={() => void approve([item])}
+                            onClick={() => setApprovalItems([item])}
                             className="mr-2 rounded-lg bg-emerald-700 px-3 py-2 text-white"
                           >
                             Aprobar
@@ -419,6 +416,26 @@ export function AccountMappingPage({
           }}
         />
       )}
+      {approvalItems.length > 0 && (
+        <ApprovalDialog
+          items={approvalItems}
+          taxYear={query.data?.context.taxPeriod.taxYear}
+          loading={approving}
+          close={() => setApprovalItems([])}
+          approve={() => approve(approvalItems)}
+        />
+      )}
+      {notice && (
+        <div
+          role="status"
+          className="fixed bottom-4 right-4 z-50 rounded-lg bg-emerald-800 px-4 py-3 text-sm text-white shadow-lg"
+        >
+          {notice}
+          <button className="ml-4 underline" onClick={() => setNotice("")}>
+            Cerrar
+          </button>
+        </div>
+      )}
     </main>
   );
 }
@@ -455,7 +472,10 @@ function MappingDialog({
     item.mapping.siiAccount?.id ?? item.suggestions[0]?.siiAccount.id ?? "",
   );
   const [confirmChange, setConfirmChange] = useState(false);
+  const [confirmReject, setConfirmReject] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   const sii = useQuery({
     queryKey: ["sii-accounts", search],
     queryFn: () => accountingService.siiAccounts(search),
@@ -470,8 +490,8 @@ function MappingDialog({
   useEffect(() => {
     ref.current?.showModal();
   }, []);
-  const confirm = async () => {
-    if (!selectedSii) return;
+  const saveMapping = async () => {
+    if (!selectedSii || saving) return;
     if (
       item.mapping.status === "confirmed" &&
       selectedSii !== item.mapping.siiAccount?.id &&
@@ -480,26 +500,38 @@ function MappingDialog({
       setConfirmChange(true);
       return;
     }
-    await accountingService.updateAccountMapping(
-      companyId,
-      item.companyAccountId,
-      "confirm",
-      selectedSii,
-    );
-    await saved();
+    setSaving(true);
+    setError("");
+    try {
+      await accountingService.updateAccountMapping(
+        companyId,
+        item.companyAccountId,
+        "confirm",
+        selectedSii,
+      );
+      await saved();
+    } catch {
+      setError("No fue posible guardar la homologación. Intenta nuevamente.");
+    } finally {
+      setSaving(false);
+    }
   };
   return (
     <dialog
       ref={ref}
       onClose={close}
+      onCancel={(event) => {
+        if (saving) event.preventDefault();
+      }}
       aria-labelledby="mapping-title"
+      aria-describedby="mapping-description"
       className="m-auto w-full max-w-2xl rounded-xl p-0 backdrop:bg-slate-900/40"
     >
       <div className="p-6">
         <h2 id="mapping-title" className="text-xl font-semibold">
           Revisar cuenta {item.code}
         </h2>
-        <p className="mt-1 text-slate-600">
+        <p id="mapping-description" className="mt-1 text-slate-600">
           {item.canonicalName} · La selección no se guarda automáticamente.
         </p>
         {item.suggestions[0] ? (
@@ -570,6 +602,29 @@ function MappingDialog({
             historial.
           </p>
         )}
+        {error && (
+          <p
+            role="alert"
+            className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-800"
+          >
+            {error}
+          </p>
+        )}
+        {confirmReject && (
+          <section
+            aria-labelledby="reject-title"
+            className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm"
+          >
+            <h3 id="reject-title" className="font-semibold text-red-900">
+              Rechazar sugerencia actual
+            </h3>
+            <p className="mt-1 text-red-800">
+              Se conservará como historial, junto con su score, versión del
+              algoritmo, usuario y fecha de revisión. Puedes seleccionar otra
+              cuenta SII antes de confirmar una homologación.
+            </p>
+          </section>
+        )}
         <button
           type="button"
           onClick={() => setHistoryOpen((open) => !open)}
@@ -596,6 +651,7 @@ function MappingDialog({
         <div className="mt-6 flex flex-wrap justify-end gap-2">
           <button
             type="button"
+            disabled={saving}
             onClick={() => ref.current?.close()}
             className="rounded-lg border px-4 py-2"
           >
@@ -604,31 +660,259 @@ function MappingDialog({
           {item.mapping.status === "pending" && item.suggestions[0] && (
             <button
               type="button"
+              disabled={saving}
               onClick={async () => {
-                await accountingService.updateAccountMapping(
-                  companyId,
-                  item.companyAccountId,
-                  "reject",
-                );
-                await saved();
+                if (!confirmReject) {
+                  setConfirmReject(true);
+                  return;
+                }
+                setSaving(true);
+                setError("");
+                try {
+                  await accountingService.updateAccountMapping(
+                    companyId,
+                    item.companyAccountId,
+                    "reject",
+                  );
+                  await saved();
+                } catch {
+                  setError(
+                    "No fue posible rechazar la sugerencia. Intenta nuevamente.",
+                  );
+                  setSaving(false);
+                }
               }}
               className="rounded-lg border border-red-300 px-4 py-2 text-red-700"
             >
-              Rechazar sugerencia
+              {confirmReject ? "Confirmar rechazo" : "Rechazar sugerencia"}
             </button>
           )}
           <button
             type="button"
-            disabled={!selectedSii}
-            onClick={() => void confirm()}
+            disabled={!selectedSii || saving}
+            onClick={() => void saveMapping()}
             className="rounded-lg bg-emerald-700 px-4 py-2 text-white disabled:opacity-50"
           >
-            {item.suggestions[0]?.siiAccount.id === selectedSii
-              ? "Aceptar sugerencia"
-              : "Confirmar homologación"}
+            {saving
+              ? "Guardando…"
+              : item.suggestions[0]?.siiAccount.id === selectedSii
+                ? "Aceptar sugerencia"
+                : "Confirmar homologación"}
           </button>
         </div>
       </div>
     </dialog>
+  );
+}
+
+function confidenceLabel(confidence: number) {
+  return confidence >= 0.8 ? "Alta" : confidence >= 0.55 ? "Media" : "Baja";
+}
+
+function ApprovalDialog({
+  items,
+  taxYear,
+  loading,
+  close,
+  approve,
+}: {
+  items: AccountMappingItem[];
+  taxYear?: number;
+  loading: boolean;
+  close: () => void;
+  approve: () => Promise<void>;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const [error, setError] = useState("");
+  const eligible = items.filter(
+    (item) => item.mapping.status === "pending" && item.suggestions[0],
+  );
+  const excluded = items.length - eligible.length;
+  useEffect(() => {
+    ref.current?.showModal();
+  }, []);
+  const first = eligible[0];
+  const single = eligible.length === 1;
+  return (
+    <dialog
+      ref={ref}
+      onClose={close}
+      onCancel={(event) => {
+        if (loading) event.preventDefault();
+      }}
+      aria-labelledby="approval-title"
+      aria-describedby="approval-description"
+      className="m-auto max-h-[90vh] w-[calc(100%-2rem)] max-w-3xl overflow-y-auto rounded-xl p-0 backdrop:bg-slate-900/50"
+    >
+      <div className="p-5 sm:p-6">
+        <h2 id="approval-title" className="text-xl font-semibold">
+          {single
+            ? "Aprobar homologación"
+            : "Aprobar homologaciones seleccionadas"}
+        </h2>
+        <p id="approval-description" className="mt-2 text-sm text-slate-600">
+          Esta acción confirmará el mapping para la empresa y será reutilizado
+          en períodos posteriores.
+        </p>
+        {single && first ? (
+          <dl className="mt-5 grid gap-4 sm:grid-cols-2">
+            <Info
+              label="Cuenta interna"
+              value={`${first.code} · ${first.periodName}`}
+            />
+            <Info
+              label="Cuenta SII sugerida"
+              value={`${first.suggestions[0].siiAccount.code} · ${first.suggestions[0].siiAccount.name}`}
+            />
+            <Info
+              label="Confianza"
+              value={`${Math.round(first.suggestions[0].confidence * 100)}% · ${confidenceLabel(first.suggestions[0].confidence)}`}
+            />
+            <Info
+              label="Última aparición / período tributario"
+              value={`${first.lastSeenTaxYear ?? "—"} · AT ${taxYear ?? "—"}`}
+            />
+            <div className="sm:col-span-2">
+              <dt className="text-xs font-medium uppercase text-slate-500">
+                Motivos
+              </dt>
+              <dd>
+                <ul className="mt-1 list-disc pl-5 text-sm">
+                  {first.suggestions[0].reasons
+                    .slice(0, 4)
+                    .map((reason, index) => (
+                      <li key={`${reason.signal}-${index}`}>
+                        {reason.description}
+                      </li>
+                    ))}
+                </ul>
+              </dd>
+            </div>
+          </dl>
+        ) : (
+          <>
+            <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
+              <Info label="Seleccionadas" value={String(items.length)} />
+              <Info
+                label="Alta"
+                value={String(
+                  eligible.filter((i) => i.suggestions[0].confidence >= 0.8)
+                    .length,
+                )}
+              />
+              <Info
+                label="Media"
+                value={String(
+                  eligible.filter(
+                    (i) =>
+                      i.suggestions[0].confidence >= 0.55 &&
+                      i.suggestions[0].confidence < 0.8,
+                  ).length,
+                )}
+              />
+              <Info
+                label="Baja"
+                value={String(
+                  eligible.filter((i) => i.suggestions[0].confidence < 0.55)
+                    .length,
+                )}
+              />
+              <Info label="Excluidas" value={String(excluded)} />
+            </div>
+            <div className="mt-4 max-h-64 overflow-y-auto rounded-lg border">
+              <table className="w-full text-left text-sm">
+                <thead className="sticky top-0 bg-slate-50">
+                  <tr>
+                    <th className="p-2">Cuenta interna</th>
+                    <th className="p-2">Cuenta SII</th>
+                    <th className="p-2">Confianza</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {eligible.slice(0, 20).map((item) => (
+                    <tr className="border-t" key={item.companyAccountId}>
+                      <td className="p-2">
+                        {item.code} · {item.periodName}
+                      </td>
+                      <td className="p-2">
+                        {item.suggestions[0].siiAccount.code} ·{" "}
+                        {item.suggestions[0].siiAccount.name}
+                      </td>
+                      <td className="p-2">
+                        {Math.round(item.suggestions[0].confidence * 100)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {eligible.length > 20 && (
+              <p className="mt-2 text-sm text-slate-500">
+                y {eligible.length - 20} más
+              </p>
+            )}
+            <ul className="mt-4 list-disc pl-5 text-sm text-amber-900">
+              <li>Los mappings ya confirmados no serán reemplazados.</li>
+              <li>
+                Las cuentas sin sugerencia activa serán excluidas
+                {excluded ? ` (${excluded} excluidas).` : "."}
+              </li>
+              <li>
+                El backend revalidará las cuentas modificadas desde que se abrió
+                este modal.
+              </li>
+            </ul>
+          </>
+        )}
+        {error && (
+          <p
+            role="alert"
+            className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-800"
+          >
+            {error}
+          </p>
+        )}
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => ref.current?.close()}
+            className="rounded-lg border px-4 py-2 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            disabled={loading || !eligible.length}
+            onClick={async () => {
+              setError("");
+              try {
+                await approve();
+              } catch {
+                setError(
+                  "No fue posible aprobar. La selección se mantuvo; intenta nuevamente.",
+                );
+              }
+            }}
+            className="rounded-lg bg-emerald-700 px-4 py-2 text-white disabled:opacity-50"
+          >
+            {loading
+              ? "Aprobando…"
+              : single
+                ? "Aprobar homologación"
+                : `Aprobar ${eligible.length} homologaciones`}
+          </button>
+        </div>
+      </div>
+    </dialog>
+  );
+}
+
+function Info({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-xs font-medium uppercase text-slate-500">{label}</dt>
+      <dd className="mt-1 text-sm font-medium">{value}</dd>
+    </div>
   );
 }

@@ -13,17 +13,24 @@ import {
   SiiAccountTermEntity,
   type SiiAccountTermType,
 } from "../entities/sii-account-term.entity";
-import { normalizeAccountTerm } from "../normalization/account-term-normalizer";
+import {
+  normalizeAccountTerm,
+  relevantWords,
+} from "../normalization/account-term-normalizer";
 
 /** Scores are points (not percentages); confidence is always in the 0..1 range. */
 export const ACCOUNT_SUGGESTION_CONFIG = Object.freeze({
-  algorithmVersion: "deterministic-v2",
+  algorithmVersion: "deterministic-v3",
   minimumSuggestionScore: 45,
   ambiguityMinimumDifference: 5,
   scoreForFullConfidence: 75,
   topCandidates: 3,
   confidence: { high: 0.8, medium: 0.55 },
   partialScore: 15,
+  tokenSimilarityScore: 32,
+  companyAliasScore: 90,
+  lexicalCandidateThreshold: 0.34,
+  ambiguityRelativeDifference: 0.12,
 });
 
 const POSITIVE_TERM_TYPES = new Set<SiiAccountTermType>([
@@ -65,7 +72,7 @@ export class AccountSuggestionService {
   async generateForPeriod(companyId: string, taxPeriodId: string) {
     const accounts = await this.loadCompanyAccounts(companyId, taxPeriodId);
     const loadedTerms = await this.loadTerms(companyId);
-    const { positiveTermsByNormalizedTerm, negativeTermsByNormalizedTerm } =
+    const { positiveTermsByNormalizedTerm } =
       this.buildTermIndexes(loadedTerms);
     const siiAccountIds = Array.from(
       new Set(loadedTerms.map((term) => term.siiAccountId)),
@@ -91,7 +98,8 @@ export class AccountSuggestionService {
     }
 
     const diagnostics = {
-      processed: accounts.length,
+      accountsProcessed: accounts.length,
+      mappingsReused: 0,
       termsLoaded: loadedTerms.length,
       globalTermsLoaded: loadedTerms.filter((term) => term.scope === "global")
         .length,
@@ -100,7 +108,9 @@ export class AccountSuggestionService {
       siiAccountIdsRequested: siiAccountIds.length,
       siiAccountsFound: foundAccountIds.length,
       siiAccountIdsMissing: missingAccountIds.length,
-      exactMatchesFound: 0,
+      exactMatches: 0,
+      aliasMatches: 0,
+      lexicalMatches: 0,
       candidatesGenerated: 0,
       candidatesDiscardedByScore: 0,
       candidatesDiscardedByAmbiguity: 0,
@@ -108,6 +118,7 @@ export class AccountSuggestionService {
       withoutSuggestion: 0,
       withoutSuggestionReasons: {} as Record<DiscardReason, number>,
       algorithmVersion: ACCOUNT_SUGGESTION_CONFIG.algorithmVersion,
+      averageConfidence: 0,
     };
 
     await this.dataSource.transaction(async (manager) => {
@@ -123,21 +134,53 @@ export class AccountSuggestionService {
             diagnostics.withoutSuggestionReasons,
             "confirmed_mapping",
           );
-          diagnostics.withoutSuggestion++;
+          diagnostics.mappingsReused++;
           continue;
         }
 
+        // Retire the previous active generation inside the same transaction.
+        // A failed transaction restores it, while a successful no-match cannot
+        // leave a stale suggestion looking approvable.
+        await suggestionRepository.update(
+          {
+            companyAccountId: companyAccount.id,
+            status: CompanyAccountSuggestionStatus.ACTIVE,
+          },
+          { status: CompanyAccountSuggestionStatus.SUPERSEDED },
+        );
+
         const normalizedName = normalizeAccountTerm(companyAccount.name);
-        const matchedTerms =
+        const exactTerms =
           positiveTermsByNormalizedTerm.get(normalizedName) ?? [];
-        const matchedNegativeTerms =
-          negativeTermsByNormalizedTerm.get(normalizedName) ?? [];
+        const lexicalTerms = loadedTerms.filter((term) => {
+          if (!POSITIVE_TERM_TYPES.has(term.type) || exactTerms.includes(term))
+            return false;
+          return (
+            this.tokenSimilarity(normalizedName, term.normalizedTerm) >=
+            ACCOUNT_SUGGESTION_CONFIG.lexicalCandidateThreshold
+          );
+        });
+        const matchedTerms = [...exactTerms, ...lexicalTerms];
+        const matchedNegativeTerms = loadedTerms.filter(
+          (term) =>
+            term.type === "negative_term" &&
+            this.termOccurs(normalizedName, term.normalizedTerm),
+        );
         const ranked = this.rank(
           siiAccountsById,
           matchedTerms,
           matchedNegativeTerms,
+          normalizedName,
         );
-        diagnostics.exactMatchesFound += ranked.exactMatches;
+        diagnostics.exactMatches += ranked.exactMatches;
+        diagnostics.aliasMatches += ranked.candidates.filter((candidate) =>
+          candidate.reasons.some((reason) => reason.signal.includes("alias")),
+        ).length;
+        diagnostics.lexicalMatches += ranked.candidates.filter((candidate) =>
+          candidate.reasons.some(
+            (reason) => reason.signal === "token_similarity",
+          ),
+        ).length;
         diagnostics.candidatesGenerated += ranked.candidates.length;
         diagnostics.candidatesDiscardedByScore += ranked.discardedByScore;
 
@@ -153,13 +196,6 @@ export class AccountSuggestionService {
           continue;
         }
 
-        await suggestionRepository.update(
-          {
-            companyAccountId: companyAccount.id,
-            status: CompanyAccountSuggestionStatus.ACTIVE,
-          },
-          { status: CompanyAccountSuggestionStatus.SUPERSEDED },
-        );
         const generatedAt = new Date();
         const suggestions = ranked.candidates
           .slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates)
@@ -180,10 +216,20 @@ export class AccountSuggestionService {
           );
         await suggestionRepository.save(suggestions);
         diagnostics.suggestionsCreated += suggestions.length;
+        diagnostics.averageConfidence += suggestions.reduce(
+          (sum, suggestion) => sum + Number(suggestion.confidence),
+          0,
+        );
       }
     });
 
-    return { ...diagnostics, suggested: diagnostics.suggestionsCreated };
+    return {
+      ...diagnostics,
+      averageConfidence: diagnostics.suggestionsCreated
+        ? diagnostics.averageConfidence / diagnostics.suggestionsCreated
+        : 0,
+      suggested: diagnostics.suggestionsCreated,
+    };
   }
 
   private loadCompanyAccounts(companyId: string, taxPeriodId: string) {
@@ -235,6 +281,7 @@ export class AccountSuggestionService {
     siiAccountsById: Map<string, SiiAccountEntity>,
     positiveTerms: SiiAccountTermEntity[],
     negativeTerms: SiiAccountTermEntity[],
+    normalizedName?: string,
   ) {
     let exactMatches = 0;
     let discardedByScore = 0;
@@ -266,13 +313,36 @@ export class AccountSuggestionService {
             points: -Math.abs(weight),
           });
         } else if (POSITIVE_TERM_TYPES.has(term.type)) {
+          const similarity = normalizedName
+            ? this.tokenSimilarity(normalizedName, term.normalizedTerm)
+            : 1;
+          if (
+            normalizedName &&
+            similarity < ACCOUNT_SUGGESTION_CONFIG.lexicalCandidateThreshold
+          )
+            continue;
           positiveTermsSeen++;
-          exactMatches++;
-          exact = true;
+          const isExact =
+            !normalizedName || normalizedName === term.normalizedTerm;
+          if (isExact) exactMatches++;
+          exact ||= isExact;
           reasons.push({
-            signal: `exact_${term.type}`,
-            description: `Coincidencia exacta con ${term.type}: ${term.term}`,
-            points: weight,
+            signal:
+              isExact && term.scope === "company"
+                ? "exact_company_alias"
+                : isExact
+                  ? `exact_${term.type}`
+                  : "token_similarity",
+            description: isExact
+              ? `Coincidencia exacta con ${term.type}: ${term.term}`
+              : `Similitud de tokens (${Math.round(similarity * 100)}%) con: ${term.term}`,
+            points: isExact
+              ? term.scope === "company"
+                ? Math.max(weight, ACCOUNT_SUGGESTION_CONFIG.companyAliasScore)
+                : weight
+              : Math.round(
+                  ACCOUNT_SUGGESTION_CONFIG.tokenSimilarityScore * similarity,
+                ),
           });
         }
       }
@@ -302,6 +372,9 @@ export class AccountSuggestionService {
     const difference = candidates[0]
       ? candidates[0].score - (candidates[1]?.score ?? 0)
       : 0;
+    const relativeDifference = candidates[0]?.score
+      ? difference / candidates[0].score
+      : 0;
     const discardReason: DiscardReason | undefined = !candidates.length
       ? positiveTermsSeen === 0
         ? penalizedCandidates > 0
@@ -309,7 +382,9 @@ export class AccountSuggestionService {
           : "no_positive_terms"
         : "below_minimum_score"
       : candidates.length > 1 &&
-          difference < ACCOUNT_SUGGESTION_CONFIG.ambiguityMinimumDifference
+          (difference < ACCOUNT_SUGGESTION_CONFIG.ambiguityMinimumDifference ||
+            relativeDifference <
+              ACCOUNT_SUGGESTION_CONFIG.ambiguityRelativeDifference)
         ? "ambiguous_candidates"
         : undefined;
     return {
@@ -319,6 +394,26 @@ export class AccountSuggestionService {
       debugTerms,
       discardReason,
     };
+  }
+
+  private tokenSimilarity(left: string, right: string): number {
+    const leftWords = relevantWords(left);
+    const rightWords = relevantWords(right);
+    if (!leftWords.size || !rightWords.size) return 0;
+    const intersection = [...leftWords].filter((word) =>
+      rightWords.has(word),
+    ).length;
+    const union = new Set([...leftWords, ...rightWords]).size;
+    return intersection / union;
+  }
+
+  private termOccurs(name: string, term: string): boolean {
+    if (!term) return false;
+    const nameWords = relevantWords(name);
+    const termWords = relevantWords(term);
+    return (
+      termWords.size > 0 && [...termWords].every((word) => nameWords.has(word))
+    );
   }
 
   private buildTermIndexes(terms: SiiAccountTermEntity[]): TermIndexes {

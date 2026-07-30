@@ -6,6 +6,10 @@ const ABBREVIATIONS: ReadonlyArray<[RegExp, string]> = [
   [/\bcta\b/g, "cuenta"],
   [/\bctte\b/g, "corriente"],
   [/\bcred\b/g, "credito"],
+  [/\bcf\b/g, "credito fiscal"],
+  [/\bdf\b/g, "debito fiscal"],
+  [/\blp\b/g, "largo plazo"],
+  [/\bcp\b/g, "corto plazo"],
 ];
 
 /** Canonical, deterministic representation used by both sync and scoring. */
@@ -22,7 +26,26 @@ export function normalizeAccountTerm(value: string): string {
 }
 
 export function relevantWords(value: string): Set<string> {
-  const ignored = new Set(["de", "del", "la", "las", "los", "y", "en", "por"]);
+  const ignored = new Set([
+    "de",
+    "del",
+    "la",
+    "las",
+    "los",
+    "y",
+    "en",
+    "por",
+    "cuenta",
+    "cuentas",
+    "otros",
+    "otras",
+    "varias",
+    "general",
+    "impuesto",
+    "gasto",
+    "activo",
+    "pasivo",
+  ]);
   return new Set(
     normalizeAccountTerm(value)
       .split(" ")

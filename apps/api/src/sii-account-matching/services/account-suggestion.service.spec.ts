@@ -46,6 +46,7 @@ function rank(
       siiAccountsById: Map<string, SiiAccountEntity>,
       positiveTerms: SiiAccountTermEntity[],
       negativeTerms: SiiAccountTermEntity[],
+      normalizedName?: string,
     ) => RankResult;
   };
   const indexes = internals.buildTermIndexes(terms);
@@ -54,6 +55,7 @@ function rank(
     new Map(accounts.map((account) => [account.id, account])),
     indexes.positiveTermsByNormalizedTerm.get(normalizedName) ?? [],
     indexes.negativeTermsByNormalizedTerm.get(normalizedName) ?? [],
+    normalizedName,
   );
 }
 
@@ -214,6 +216,37 @@ describe("AccountSuggestionService matching", () => {
     assert.equal(result.candidates[0].score, 55);
     assert.ok(result.candidates[0].confidence >= 0);
     assert.ok(result.candidates[0].confidence <= 1);
+  });
+
+  it("uses deterministic token similarity without confusing bank debt with Disponible", () => {
+    const service = new AccountSuggestionService({} as DataSource);
+    const internal = service as unknown as {
+      rank: (
+        accounts: Map<string, SiiAccountEntity>,
+        positive: SiiAccountTermEntity[],
+        negative: SiiAccountTermEntity[],
+        name: string,
+      ) => RankResult;
+    };
+    const result = internal.rank(
+      new Map([[disponible.id, disponible]]),
+      [term(disponible.id, "bancos", "alias", 55)],
+      [term(disponible.id, "deudas con bancos", "negative_term", 50)],
+      normalizeAccountTerm("DEUDAS CON BANCOS CORTO PLAZO"),
+    );
+    assert.equal(result.candidates.length, 0);
+  });
+
+  it("marks candidates with equal evidence as ambiguous", () => {
+    const result = rank(
+      "CLIENTES",
+      [clientes, sii("documents", "1.01.08.00", "Documentos por cobrar")],
+      [
+        term(clientes.id, "clientes", "alias", 60),
+        term("documents", "clientes", "manual_term", 60),
+      ],
+    );
+    assert.equal(result.discardReason, "ambiguous_candidates");
   });
 });
 

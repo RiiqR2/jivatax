@@ -21,17 +21,32 @@ export const SII_ACCOUNT_ALIASES: readonly CuratedSiiAccountKnowledge[] = [
       { term: "banco", type: "alias", weight: 55 },
       { term: "bancos", type: "alias", weight: 55 },
       { term: "cuenta corriente", type: "erp_term", weight: 50 },
+      { term: "efectivo", type: "alias", weight: 55 },
+      { term: "disponibilidades", type: "alias", weight: 55 },
+      { term: "deuda bancaria", type: "negative_term", weight: -50 },
+      { term: "deudas con bancos", type: "negative_term", weight: -50 },
       { term: "préstamo bancario", type: "negative_term", weight: -40 },
       { term: "obligación bancaria", type: "negative_term", weight: -40 },
+      { term: "pagar", type: "negative_term", weight: -35 },
+      { term: "sobregiro", type: "negative_term", weight: -35 },
     ],
   },
   {
     siiAccountCode: "1.01.05.00",
-    terms: [{ term: "clientes", type: "erp_term", weight: 60 }],
+    terms: [
+      { term: "clientes", type: "erp_term", weight: 60 },
+      { term: "deudores por venta", type: "alias", weight: 60 },
+      { term: "cuentas por cobrar clientes", type: "erp_term", weight: 55 },
+      { term: "documentos por cobrar", type: "negative_term", weight: -35 },
+    ],
   },
   {
     siiAccountCode: "1.02.03.00",
-    terms: [{ term: "maquinarias y equipos", type: "erp_term", weight: 60 }],
+    terms: [
+      { term: "maquinarias y equipos", type: "erp_term", weight: 60 },
+      { term: "maquinaria y equipos", type: "alias", weight: 60 },
+      { term: "depreciación acumulada", type: "negative_term", weight: -60 },
+    ],
   },
   {
     siiAccountCode: "1.02.06.00",
@@ -41,6 +56,8 @@ export const SII_ACCOUNT_ALIASES: readonly CuratedSiiAccountKnowledge[] = [
         type: "erp_term",
         weight: 60,
       },
+      { term: "depreciación acumulada maquinaria", type: "alias", weight: 60 },
+      { term: "depreciación acumulada maquinarias", type: "alias", weight: 60 },
     ],
   },
 ];
