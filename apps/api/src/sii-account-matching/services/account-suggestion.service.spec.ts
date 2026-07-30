@@ -282,6 +282,82 @@ describe("AccountSuggestionService matching", () => {
 });
 
 describe("AccountSuggestionService persistence", () => {
+  it("persists the three Limpiesito expenses against the real SII (menos) account", async () => {
+    const saved: Array<Record<string, unknown>> = [];
+    const repository = {
+      update: async () => undefined,
+      create: (value: Record<string, unknown>) => value,
+      save: async (values: Array<Record<string, unknown>>) => {
+        saved.push(...values);
+        return values;
+      },
+    };
+    const dataSource = {
+      transaction: async (
+        callback: (manager: {
+          getRepository: () => typeof repository;
+        }) => unknown,
+      ) => callback({ getRepository: () => repository }),
+    } as unknown as DataSource;
+    const expense = sii(
+      "admin-expense",
+      "3.01.03.00",
+      "Gastos de administración y ventas (menos)",
+    );
+    const internalAccounts = [
+      ["expense-rent", "5.1.03.01", "Arriendo"],
+      ["expense-fees", "5.1.04.01", "Gastos de Honorarios"],
+      ["expense-electricity", "5.1.05.01", "Electricidad"],
+    ].map(([id, internalCode, name]) => ({
+      id,
+      internalCode,
+      name,
+      matchingContext: {
+        assetAmount: "0",
+        liabilityAmount: "0",
+        lossAmount: "100",
+        gainAmount: "0",
+        debitBalance: "100",
+        creditBalance: "0",
+      },
+      mapping: { status: CompanyAccountMappingStatus.UNMAPPED },
+    }));
+    const service = new AccountSuggestionService(dataSource);
+    Object.assign(service as object, {
+      loadCompanyAccounts: async () => internalAccounts,
+      loadSiiAccounts: async () => [expense],
+      loadTerms: async () => [
+        term(expense.id, "arriendo", "alias", 60),
+        term(expense.id, "gastos de honorarios", "alias", 60),
+        term(expense.id, "electricidad", "alias", 60),
+      ],
+      loadConcepts: async () => [],
+    });
+
+    const result = await service.generateForPeriod(companyId, "period-1");
+
+    assert.equal(result.suggestionsCreated, 3);
+    assert.equal(saved.length, 3);
+    assert.deepEqual(
+      saved.map((suggestion) => ({
+        companyAccountId: suggestion.companyAccountId,
+        siiAccountId: suggestion.siiAccountId,
+        status: suggestion.status,
+        suggestionRank: suggestion.suggestionRank,
+        exactAlias: (suggestion.reasons as Array<{ signal: string }>).some(
+          (reason) => reason.signal === "exact_alias",
+        ),
+      })),
+      internalAccounts.map((account) => ({
+        companyAccountId: account.id,
+        siiAccountId: expense.id,
+        status: CompanyAccountSuggestionStatus.ACTIVE,
+        suggestionRank: 1,
+        exactAlias: true,
+      })),
+    );
+  });
+
   it("loads SII accounts only by the IDs referenced by terms", async () => {
     let findOptions: Record<string, unknown> | undefined;
     const repository = {

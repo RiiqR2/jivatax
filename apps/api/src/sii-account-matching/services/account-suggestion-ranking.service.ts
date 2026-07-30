@@ -75,7 +75,13 @@ export class AccountSuggestionRankingService {
         return [
           {
             accountId: candidate.account.id,
-            reasons: ["incompatible_statement_section"],
+            reasons: [
+              this.incompatibilityReason(
+                observed,
+                candidate.metadata.statementSection,
+                candidate.metadata.contraAccount,
+              ),
+            ],
           },
         ];
       return [];
@@ -282,6 +288,23 @@ export class AccountSuggestionRankingService {
       return target === "liability" && targetContra;
     if (targetContra) return false;
     return observed === target;
+  }
+
+  private incompatibilityReason(
+    observed: ObservedAccountSection,
+    target: string,
+    targetContra: boolean,
+  ): "incompatible_contra_account" | "incompatible_statement_section" {
+    const observedContra =
+      observed === "contra_asset" || observed === "contra_liability";
+    const observedBase = observedContra
+      ? observed === "contra_asset"
+        ? "asset"
+        : "liability"
+      : observed;
+    return observedBase === target && observedContra !== targetContra
+      ? "incompatible_contra_account"
+      : "incompatible_statement_section";
   }
 
   private lexicalSignals(left: string, rawRight: string) {
