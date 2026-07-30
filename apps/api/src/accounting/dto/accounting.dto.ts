@@ -36,6 +36,10 @@ export class ProcessTaxDocumentDto {
   @IsOptional() @IsString() sheetName?: string;
 }
 
+export class DiscardTaxDocumentDto {
+  @IsString() @Length(3, 1000) reason!: string;
+}
+
 export class ListTaxDocumentsQueryDto {
   @IsOptional()
   @IsEnum(TaxDocumentType)

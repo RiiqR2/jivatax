@@ -19,5 +19,6 @@ export enum TaxDocumentStatus {
   PROCESSING = "processing",
   PROCESSED = "processed",
   SUPERSEDED = "superseded",
+  DISCARDED = "discarded",
   PROCESSING_ERROR = "processing_error",
 }

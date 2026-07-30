@@ -20,6 +20,10 @@ import {
 } from "../contracts/document-contracts";
 import { CreateTaxDocumentDto } from "../dto/accounting.dto";
 import { TaxDocumentEntity } from "../entities/tax-document.entity";
+import {
+  CompanyAccountSuggestionEntity,
+  CompanyAccountSuggestionStatus,
+} from "../entities/company-account-suggestion.entity";
 import { TaxDocumentStatus, TaxDocumentType } from "../enums/accounting.enums";
 import {
   BALANCE_MONETARY_FIELDS,
@@ -188,10 +192,9 @@ export class TaxDocumentsService {
       const parsed = this.parse(workbook, document.documentType, sheetName);
       if (parsed.report.errors.length > 0) {
         document.status = TaxDocumentStatus.INVALID;
-        document.validatedAt = new Date();
-        document.errorSummary = `${parsed.report.errors.length} errores de validación`;
-        document.metadata = parsed.report;
-        await this.documents.save(document);
+        // Preserve the import, source rows, entries and report as evidence,
+        // without publishing period-account effects or superseding a valid version.
+        await this.persist(document, parsed.rows, parsed.report, false);
         return parsed.report;
       }
       await this.persist(document, parsed.rows, parsed.report);
@@ -249,6 +252,9 @@ export class TaxDocumentsService {
       processedAt: document.processedAt,
       errorSummary: document.errorSummary,
       warningSummary: document.warningSummary,
+      discardedAt: document.discardedAt,
+      discardedByUserId: document.discardedByUserId,
+      discardReason: document.discardReason,
       metadata: document.metadata,
       storedFile: {
         id: document.storedFile.id,
@@ -472,6 +478,7 @@ export class TaxDocumentsService {
     document: TaxDocumentEntity,
     rows: Record<string, unknown>[],
     report: ImportReport,
+    operational = true,
   ): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
       const importId = randomUUID();
@@ -521,13 +528,26 @@ export class TaxDocumentsService {
             importId,
           ],
         );
-        await this.persistBalance(manager, document, importId, rows, report);
+        await this.persistBalance(
+          manager,
+          document,
+          importId,
+          rows,
+          report,
+          operational,
+        );
       }
-      document.status = TaxDocumentStatus.PROCESSED;
+      document.status = operational
+        ? TaxDocumentStatus.PROCESSED
+        : TaxDocumentStatus.INVALID;
       document.validatedAt = new Date();
       document.processedAt = new Date();
       document.metadata = report;
+      document.errorSummary = report.errors.length
+        ? `${report.errors.length} errores de validación`
+        : null;
       await manager.save(document);
+      if (!operational) return;
       const previous = await manager.findOne(TaxDocumentEntity, {
         where: {
           companyId: document.companyId,
@@ -553,6 +573,7 @@ export class TaxDocumentsService {
     importId: string,
     rows: Record<string, unknown>[],
     report: ImportReport,
+    operational: boolean,
   ): Promise<void> {
     const balanceRows = rows as unknown as BalanceParsedRow[];
     for (const row of balanceRows) {
@@ -626,6 +647,7 @@ export class TaxDocumentsService {
           JSON.stringify(row.rawData),
         ],
       );
+      if (!operational) continue;
       const existing = (
         await manager.query(
           "SELECT id, name FROM company_accounts WHERE company_id = ? AND internal_code = ? AND deleted_at IS NULL LIMIT 1",
@@ -689,5 +711,85 @@ export class TaxDocumentsService {
         ],
       );
     }
+  }
+
+  async discard(
+    companyId: string,
+    periodId: string,
+    id: string,
+    userId: string,
+    reason: string,
+  ) {
+    await this.periods.get(companyId, periodId);
+    return this.dataSource.transaction(async (manager) => {
+      const document = await manager.findOne(TaxDocumentEntity, {
+        where: { id, companyId, taxPeriodId: periodId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!document)
+        throw new NotFoundException("Documento tributario no encontrado.");
+      if (document.documentType !== TaxDocumentType.BALANCE)
+        throw new BadRequestException(
+          "Solo se pueden descartar versiones de Balance.",
+        );
+      if (document.status === TaxDocumentStatus.DISCARDED)
+        throw new BadRequestException("La versión ya fue descartada.");
+
+      const previousStatus = document.status;
+      const affectedAccounts = (await manager.query(
+        `SELECT p.company_account_id
+         FROM tax_period_company_accounts p
+         WHERE p.company_id = ? AND p.tax_period_id = ?
+           AND p.source_document_id = ? AND p.discarded_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM balance_entries e
+             JOIN balance_imports i ON i.id = e.balance_import_id
+             JOIN tax_documents d ON d.id = i.tax_document_id
+             JOIN company_accounts a ON a.company_id = e.company_id
+               AND a.internal_code = e.account_code AND a.id = p.company_account_id
+             WHERE e.company_id = p.company_id AND e.tax_period_id = p.tax_period_id
+               AND d.id <> ? AND d.status IN ('processed', 'superseded')
+           )`,
+        [companyId, periodId, id, id],
+      )) as Array<{ company_account_id: string }>;
+      const accountIds = affectedAccounts.map((row) => row.company_account_id);
+      let supersededSuggestions = 0;
+      if (accountIds.length) {
+        const result = await manager
+          .createQueryBuilder()
+          .update(CompanyAccountSuggestionEntity)
+          .set({ status: CompanyAccountSuggestionStatus.SUPERSEDED })
+          .where("company_account_id IN (:...accountIds)", { accountIds })
+          .andWhere("status = :status", {
+            status: CompanyAccountSuggestionStatus.ACTIVE,
+          })
+          .execute();
+        supersededSuggestions = result.affected ?? 0;
+      }
+      const presenceResult = (await manager.query(
+        `UPDATE tax_period_company_accounts
+         SET discarded_at = NOW(6), discarded_by_document_id = ?, updated_at = NOW(6)
+         WHERE company_id = ? AND tax_period_id = ? AND source_document_id = ?
+           AND discarded_at IS NULL
+           AND company_account_id IN (${accountIds.length ? accountIds.map(() => "?").join(",") : "NULL"})`,
+        [id, companyId, periodId, id, ...accountIds],
+      )) as { affectedRows?: number };
+      document.statusBeforeDiscard = previousStatus;
+      document.status = TaxDocumentStatus.DISCARDED;
+      document.discardedAt = new Date();
+      document.discardedByUserId = userId;
+      document.discardReason = reason.trim();
+      await manager.save(document);
+      return {
+        documentId: id,
+        discarded: true,
+        previousStatus,
+        currentStatus: document.status,
+        removedPeriodAccountPresences: presenceResult.affectedRows ?? 0,
+        supersededSuggestions,
+        preservedCompanyAccounts: accountIds.length,
+        preservedConfirmedMappings: accountIds.length,
+      };
+    });
   }
 }

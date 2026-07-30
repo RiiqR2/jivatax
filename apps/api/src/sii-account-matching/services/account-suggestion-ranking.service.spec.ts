@@ -57,7 +57,7 @@ describe("deterministic candidate retrieval and ranking", () => {
     );
   });
 
-  it("uses Balance classification and balance nature as strong constraints", () => {
+  it("excludes candidates incompatible with the observed Balance section", () => {
     const result = ranking.rank(
       "bancos",
       generator.generate(catalogue, []),
@@ -68,12 +68,9 @@ describe("deterministic candidate retrieval and ranking", () => {
     )!;
     const cash = result.candidates.find(
       (candidate) => candidate.account.id === "cash",
-    )!;
-    assert.ok(debt.score > cash.score);
-    assert.ok(debt.reasons.some((reason) => reason.signal === "balance_match"));
-    assert.ok(
-      cash.reasons.some((reason) => reason.signal === "balance_mismatch"),
     );
+    assert.ok(debt.reasons.some((reason) => reason.signal === "balance_match"));
+    assert.equal(cash, undefined);
   });
 
   it("extracts families, term and complementary-account attributes", () => {

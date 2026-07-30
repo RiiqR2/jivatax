@@ -24,7 +24,9 @@ const FAMILY_RULES: ReadonlyArray<[RegExp, string, StatementSection]> = [
 export function accountingMetadata(value: string): AccountingMetadata {
   const name = normalizeAccountTerm(value);
   const matched = FAMILY_RULES.find(([pattern]) => pattern.test(name));
-  const statementSection = matched?.[2] ?? "asset";
+  // Missing structured metadata must remain unknown. Treating every unknown
+  // catalogue account as an asset made lexical matches operationally unsafe.
+  const statementSection = matched?.[2] ?? "unknown";
   const contraAccount =
     /depreciacion acumulada|amortizacion acumulada|\bmenos\b/.test(name);
   return {

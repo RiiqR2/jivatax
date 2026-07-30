@@ -289,6 +289,7 @@ export class AccountSuggestionService {
       .leftJoinAndSelect("account.mapping", "mapping")
       .where("account.companyId = :companyId", { companyId })
       .andWhere("account.deletedAt IS NULL")
+      .andWhere("periodAccount.discardedAt IS NULL")
       .distinct(true)
       .getMany() as Promise<AccountWithContext[]>;
   }

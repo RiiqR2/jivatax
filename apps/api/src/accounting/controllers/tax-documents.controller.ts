@@ -12,6 +12,7 @@ import { CompanyAccessGuard } from "../../auth/guards/company-access.guard";
 import type { AuthenticatedUser } from "../../auth/interfaces/authenticated-user.interface";
 import {
   CreateTaxDocumentDto,
+  DiscardTaxDocumentDto,
   ListTaxDocumentsQueryDto,
   ProcessTaxDocumentDto,
 } from "../dto/accounting.dto";
@@ -57,5 +58,14 @@ export class TaxDocumentsController {
     @Param("documentId") id: string,
   ) {
     return this.service.report(companyId, periodId, id);
+  }
+  @Post(":documentId/discard") discard(
+    @Param("companyId") companyId: string,
+    @Param("taxPeriodId") periodId: string,
+    @Param("documentId") id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: DiscardTaxDocumentDto,
+  ) {
+    return this.service.discard(companyId, periodId, id, user.id, dto.reason);
   }
 }

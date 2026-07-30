@@ -56,6 +56,34 @@ export class TaxDocumentEntity extends BaseEntity {
   errorSummary!: string | null;
   @Column({ name: "warning_summary", type: "text", nullable: true })
   warningSummary!: string | null;
+  @Column({
+    name: "discarded_at",
+    type: "datetime",
+    precision: 6,
+    nullable: true,
+  })
+  discardedAt!: Date | null;
+  @Column({
+    name: "discarded_by_user_id",
+    type: "char",
+    length: 36,
+    nullable: true,
+  })
+  discardedByUserId!: string | null;
+  @Column({
+    name: "discard_reason",
+    type: "varchar",
+    length: 1000,
+    nullable: true,
+  })
+  discardReason!: string | null;
+  @Column({
+    name: "status_before_discard",
+    type: "varchar",
+    length: 40,
+    nullable: true,
+  })
+  statusBeforeDiscard!: string | null;
   @Column({ type: "json", nullable: true }) metadata!: Record<
     string,
     unknown

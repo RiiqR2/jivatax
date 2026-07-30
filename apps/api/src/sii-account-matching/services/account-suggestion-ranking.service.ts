@@ -4,6 +4,7 @@ import type {
   BalanceContext,
   GeneratedCandidate,
   RankedCandidate,
+  ObservedAccountSection,
 } from "../account-matching.types";
 import { singularize } from "../metadata/accounting-metadata";
 import {
@@ -31,7 +32,20 @@ export class AccountSuggestionRankingService {
   ) {
     const source = this.parser.parse(name);
     const normalized = normalizeAccountTerm(name);
+    const observed = this.observedSection(
+      source.contraAccount,
+      source.statementSection,
+      context,
+    );
     const ranked = candidates
+      .filter((candidate) => this.isHomologable(candidate))
+      .filter((candidate) =>
+        this.isCompatible(
+          observed,
+          candidate.metadata.statementSection,
+          candidate.metadata.contraAccount,
+        ),
+      )
       .map((candidate): RankedCandidate => {
         const variants = [
           candidate.account.name,
@@ -87,6 +101,14 @@ export class AccountSuggestionRankingService {
             ),
           );
         reasons.push(...this.contextReasons(candidate, context));
+        if (observed !== "unknown")
+          reasons.push(
+            this.reason(
+              "compatible_statement_section",
+              "Sección contable compatible",
+              0,
+            ),
+          );
         if (!reasons.length)
           reasons.push(
             this.reason(
@@ -120,14 +142,16 @@ export class AccountSuggestionRankingService {
     const gap = (top[0]?.score ?? 0) - (top[1]?.score ?? 0);
     const decision: RankingDecision = !top.length
       ? "no_candidate"
-      : top[0].score < ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore
+      : top[0].metadata.statementSection === "unknown"
         ? "review"
-        : top.length > 1 &&
-            (gap < ACCOUNT_SUGGESTION_CONFIG.minimumAbsoluteDifference ||
-              gap / Math.max(top[0].score, 1) <
-                ACCOUNT_SUGGESTION_CONFIG.minimumRelativeDifference)
-          ? "ambiguous"
-          : "automatic";
+        : top[0].score < ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore
+          ? "review"
+          : top.length > 1 &&
+              (gap < ACCOUNT_SUGGESTION_CONFIG.minimumAbsoluteDifference ||
+                gap / Math.max(top[0].score, 1) <
+                  ACCOUNT_SUGGESTION_CONFIG.minimumRelativeDifference)
+            ? "ambiguous"
+            : "automatic";
     if (decision === "ambiguous")
       for (const item of top)
         item.reasons.push(
@@ -138,6 +162,44 @@ export class AccountSuggestionRankingService {
           ),
         );
     return { candidates: top, decision };
+  }
+
+  private observedSection(
+    contraAccount: boolean,
+    nameSection: string,
+    context?: BalanceContext,
+  ): ObservedAccountSection {
+    if (!context) return "unknown";
+    if (Number(context.assetAmount))
+      return contraAccount ? "contra_asset" : "asset";
+    if (Number(context.lossAmount)) return "expense";
+    if (Number(context.gainAmount)) return "income";
+    if (Number(context.liabilityAmount)) {
+      // Balance columns do not distinguish ordinary liabilities from equity;
+      // concepts in the internal name provide that pending context.
+      if (nameSection === "equity") return "equity";
+      return contraAccount ? "contra_liability" : "liability";
+    }
+    return "unknown";
+  }
+
+  private isHomologable(candidate: GeneratedCandidate): boolean {
+    return !/(^|\s)(total|subtotal|suma)(es)?(\s|$)/i.test(
+      candidate.account.name,
+    );
+  }
+
+  private isCompatible(
+    observed: ObservedAccountSection,
+    target: string,
+    targetContra: boolean,
+  ): boolean {
+    if (observed === "unknown" || target === "unknown") return true;
+    if (observed === "contra_asset") return target === "asset" && targetContra;
+    if (observed === "contra_liability")
+      return target === "liability" && targetContra;
+    if (targetContra) return false;
+    return observed === target;
   }
 
   private lexicalSignals(left: string, rawRight: string) {

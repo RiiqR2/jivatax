@@ -25,6 +25,8 @@ export type TaxDocument = {
   warningSummary?: string | null;
   storedFile: { id: string; originalName: string; sizeBytes: string };
   metadata: TaxDocumentReport | null;
+  discardedAt?: string | null;
+  discardReason?: string | null;
 };
 
 export type TaxDocumentReport = {
@@ -34,7 +36,20 @@ export type TaxDocumentReport = {
   errors?: ValidationIssue[];
   warnings?: ValidationIssue[];
   totals?: Record<string, unknown>;
-  reconciliation?: Record<string, unknown>;
+  reconciliation?: {
+    movements?: {
+      debitTotal: number;
+      creditTotal: number;
+      difference: number;
+      isBalanced: boolean;
+    };
+    equity?: {
+      leftSide: number;
+      rightSide: number;
+      difference: number;
+      isBalanced: boolean;
+    };
+  };
   detectedSheet?: string;
   headerRowNumber?: number;
   sourceRowsRead?: number;
