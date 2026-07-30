@@ -90,11 +90,35 @@ describe("deterministic candidate retrieval and ranking", () => {
     );
   });
 
+  it("does not treat the SII presentation suffix as universal contra-account evidence", () => {
+    assert.deepEqual(
+      accountingMetadata("Gastos de administración y ventas (menos)"),
+      {
+        family: "expenses",
+        statementSection: "expense",
+        expectedBalanceNature: "debit",
+        term: undefined,
+        contraAccount: false,
+        concepts: ["gasto", "administracion", "venta", "meno"],
+      },
+    );
+
+    const depreciation = accountingMetadata("Depreciación (menos)");
+    assert.equal(depreciation.family, "depreciation");
+    assert.equal(depreciation.statementSection, "asset");
+    assert.equal(depreciation.expectedBalanceNature, "credit");
+    assert.equal(depreciation.contraAccount, true);
+  });
+
   describe("Balance corto de Limpiesito", () => {
     const shortBalanceCatalogue = [
       account("machinery", "1.02.03.00", "Maquinarias y equipos"),
       account("prepaid", "1.01.11.00", "Gastos pagados por anticipado"),
-      account("admin", "expense-real", "Gastos de administración y ventas"),
+      account(
+        "admin",
+        "3.01.03.00",
+        "Gastos de administración y ventas (menos)",
+      ),
       account("cost", "cost-real", "Costo de ventas"),
       account("retained", "equity-real", "Pérdidas acumuladas"),
       account("sales", "income-real", "Ingresos por ventas"),
@@ -127,7 +151,7 @@ describe("deterministic candidate retrieval and ranking", () => {
         );
         assert.equal(
           result.candidates[0]?.account.name,
-          "Gastos de administración y ventas",
+          "Gastos de administración y ventas (menos)",
         );
         assert.equal(result.decision, "automatic");
         assert.ok((result.candidates[0]?.confidence ?? 0) >= 0.55);
@@ -176,11 +200,44 @@ describe("deterministic candidate retrieval and ranking", () => {
       assert.equal(result.candidates[0]?.account.name, "Ingresos por ventas");
       assert.equal(
         result.candidates.some(
-          (item) => item.account.name === "Gastos de administración y ventas",
+          (item) =>
+            item.account.name === "Gastos de administración y ventas (menos)",
         ),
         false,
       );
     });
+
+    it("mantiene la depreciación acumulada en la cuenta complementaria", () => {
+      const depreciationCatalogue = [
+        account("dep-contra", "1.02.06.00", "Depreciación (menos)"),
+        account("dep-expense", "3.01.04.00", "Gasto por depreciación"),
+      ];
+      const result = ranking.rank(
+        "Depreciación acumulada",
+        generator.generate(depreciationCatalogue, []),
+        context("asset", "credit"),
+      );
+      assert.equal(result.candidates[0]?.account.code, "1.02.06.00");
+      assert.equal(
+        result.candidates.some(
+          (candidate) => candidate.account.id === "dep-expense",
+        ),
+        false,
+      );
+    });
+  });
+
+  it("reports a contra-account mismatch separately from a section mismatch", () => {
+    const result = ranking.rank(
+      "Gasto",
+      generator.generate([
+        account("wrong-contra", "x", "Depreciación (menos)"),
+      ]),
+      context("asset", "debit"),
+    );
+    assert.deepEqual(result.discardedCandidates[0]?.reasons, [
+      "incompatible_contra_account",
+    ]);
   });
 
   it("marks close candidates as ambiguous", () => {

@@ -34,14 +34,29 @@ const FAMILY_RULES: ReadonlyArray<[RegExp, string, StatementSection]> = [
   [/existencia|inventario|mercaderia/, "inventory", "asset"],
 ];
 
+// "(menos)" is also used by the SII catalogue to present ordinary result
+// accounts. It is therefore not, by itself, evidence of a contra account.
+// Keep this list restricted to accounting descriptions whose complementary
+// nature is explicit and verified.
+const CONTRA_ACCOUNT_RULES: ReadonlyArray<RegExp> = [
+  /depreciacion acumulada/,
+  /depreciacion(?: \( menos \)| menos)/,
+  /amortizacion acumulada/,
+  /amortizacion(?: \( menos \)| menos)/,
+  /deterioro acumulado/,
+  /provision complementaria (?:de )?activo/,
+  /mayor valor (?:de )?inversiones?(?: \( menos \)| menos)/,
+];
+
 export function accountingMetadata(value: string): AccountingMetadata {
   const name = normalizeAccountTerm(value);
   const matched = FAMILY_RULES.find(([pattern]) => pattern.test(name));
   // Missing structured metadata must remain unknown. Treating every unknown
   // catalogue account as an asset made lexical matches operationally unsafe.
   const statementSection = matched?.[2] ?? "unknown";
-  const contraAccount =
-    /depreciacion acumulada|amortizacion acumulada|\bmenos\b/.test(name);
+  const contraAccount = CONTRA_ACCOUNT_RULES.some((pattern) =>
+    pattern.test(name),
+  );
   return {
     family: matched?.[1] ?? "other",
     statementSection,
