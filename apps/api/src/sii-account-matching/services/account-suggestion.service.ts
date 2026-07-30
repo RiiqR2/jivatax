@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { InjectDataSource } from "@nestjs/typeorm";
-import { Brackets, DataSource } from "typeorm";
+import { Brackets, DataSource, In } from "typeorm";
 import {
   CompanyAccountSuggestionEntity,
   CompanyAccountSuggestionStatus,
@@ -9,7 +9,6 @@ import { TaxPeriodCompanyAccountEntity } from "../../accounting/entities/tax-per
 import { CompanyAccountEntity } from "../../company-account-plan/entities/company-account.entity";
 import { CompanyAccountMappingStatus } from "../../company-account-plan/enums/company-account-plan.enums";
 import { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
-import { SiiAccountPlanVersionStatus } from "../../sii-account-plan/enums/sii-account-plan-version-status.enum";
 import {
   SiiAccountTermEntity,
   type SiiAccountTermType,
@@ -75,6 +74,21 @@ export class AccountSuggestionService {
     const siiAccountsById = new Map(
       siiAccounts.map((account) => [account.id, account]),
     );
+    const foundAccountIds = Array.from(siiAccountsById.keys());
+    const missingAccountIds = siiAccountIds.filter(
+      (id) => !siiAccountsById.has(id),
+    );
+    const accountResolution = {
+      requestedAccountIds: siiAccountIds,
+      foundAccountIds,
+      missingAccountIds,
+    };
+    if (missingAccountIds.length) {
+      this.logger.warn({
+        message: "No se encontraron todas las cuentas SII referenciadas",
+        ...accountResolution,
+      });
+    }
 
     const diagnostics = {
       processed: accounts.length,
@@ -83,6 +97,9 @@ export class AccountSuggestionService {
         .length,
       companyTermsLoaded: loadedTerms.filter((term) => term.scope === "company")
         .length,
+      siiAccountIdsRequested: siiAccountIds.length,
+      siiAccountsFound: foundAccountIds.length,
+      siiAccountIdsMissing: missingAccountIds.length,
       exactMatchesFound: 0,
       candidatesGenerated: 0,
       candidatesDiscardedByScore: 0,
@@ -188,17 +205,9 @@ export class AccountSuggestionService {
 
   private loadSiiAccounts(siiAccountIds: string[]) {
     if (!siiAccountIds.length) return Promise.resolve([]);
-    return this.dataSource
-      .getRepository(SiiAccountEntity)
-      .createQueryBuilder("account")
-      .innerJoin("account.version", "version")
-      .where("account.deletedAt IS NULL")
-      .andWhere("version.deletedAt IS NULL")
-      .andWhere("version.status = :status", {
-        status: SiiAccountPlanVersionStatus.ACTIVE,
-      })
-      .andWhere("account.id IN (:...siiAccountIds)", { siiAccountIds })
-      .getMany();
+    return this.dataSource.getRepository(SiiAccountEntity).find({
+      where: { id: In(siiAccountIds) },
+    });
   }
 
   private loadTerms(companyId: string) {
@@ -244,12 +253,7 @@ export class AccountSuggestionService {
 
     for (const [siiAccountId, matchedTerms] of matchedTermsByAccount) {
       const account = siiAccountsById.get(siiAccountId);
-      if (!account) {
-        this.logger.warn(
-          `Se omitieron ${matchedTerms.length} término(s): la cuenta SII ${siiAccountId} no está disponible`,
-        );
-        continue;
-      }
+      if (!account) continue;
       const reasons: Candidate["reasons"] = [];
       let exact = false;
       for (const term of matchedTerms) {

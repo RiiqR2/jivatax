@@ -218,6 +218,33 @@ describe("AccountSuggestionService matching", () => {
 });
 
 describe("AccountSuggestionService persistence", () => {
+  it("loads SII accounts only by the IDs referenced by terms", async () => {
+    let findOptions: Record<string, unknown> | undefined;
+    const repository = {
+      find: async (options: Record<string, unknown>) => {
+        findOptions = options;
+        return [sii("available", "1.01.01.00", "Disponible")];
+      },
+    };
+    const service = new AccountSuggestionService({
+      getRepository: () => repository,
+    } as unknown as DataSource);
+
+    const result = await (
+      service as unknown as {
+        loadSiiAccounts: (ids: string[]) => Promise<SiiAccountEntity[]>;
+      }
+    ).loadSiiAccounts(["available", "receivables"]);
+
+    assert.equal(result.length, 1);
+    assert.ok(findOptions);
+    assert.deepEqual(Object.keys(findOptions), ["where"]);
+    const where = findOptions.where as { id: { value: string[] } };
+    assert.deepEqual(where.id.value, ["available", "receivables"]);
+    assert.equal("versionId" in where, false);
+    assert.equal("status" in where, false);
+  });
+
   it("persists ranked suggestions and supersedes active rows without changing a mapping", async () => {
     const saved: Array<Record<string, unknown>> = [];
     const updates: Array<Record<string, unknown>> = [];
@@ -302,7 +329,9 @@ describe("AccountSuggestionService persistence", () => {
           mapping: { status: CompanyAccountMappingStatus.CONFIRMED },
         },
       ],
-      loadSiiAccounts: async () => [],
+      loadSiiAccounts: async () => [
+        sii("available", "1.01.01.00", "Disponible"),
+      ],
       loadTerms: async () => [term("available", "caja", "alias", 60)],
     });
     const result = await service.generateForPeriod(companyId, "period-1");
