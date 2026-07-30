@@ -200,9 +200,9 @@ export function DocumentReportPage({
         <section className="mt-5 rounded-xl border bg-white p-5">
           <h2 className="font-semibold">Conciliación y totales</h2>
           <dl className="mt-4 grid gap-4 sm:grid-cols-3">
-            {Object.entries(report.totals ?? {}).map(([key, value]) => (
+            {/* {Object.entries(report.totals ?? {}).map(([key, value]) => (
               <Metric key={key} label={fieldLabel(key)} value={String(value)} />
-            ))}
+            ))} */}
             {report.reconciliation?.movements && (
               <>
                 <Metric
