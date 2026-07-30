@@ -1,87 +1,356 @@
-import { randomUUID } from "node:crypto";
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { InjectDataSource } from "@nestjs/typeorm";
-import { DataSource } from "typeorm";
-import { MATCHING_CONFIG } from "../matching.config";
-import { rankSiiAccounts, type MatchAccount } from "../matcher";
+import { Brackets, DataSource, In } from "typeorm";
+import {
+  CompanyAccountSuggestionEntity,
+  CompanyAccountSuggestionStatus,
+} from "../../accounting/entities/company-account-suggestion.entity";
+import { TaxPeriodCompanyAccountEntity } from "../../accounting/entities/tax-period-company-account.entity";
+import { CompanyAccountEntity } from "../../company-account-plan/entities/company-account.entity";
+import { CompanyAccountMappingStatus } from "../../company-account-plan/enums/company-account-plan.enums";
+import { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
+import {
+  SiiAccountTermEntity,
+  type SiiAccountTermType,
+} from "../entities/sii-account-term.entity";
+import { normalizeAccountTerm } from "../normalization/account-term-normalizer";
+
+/** Scores are points (not percentages); confidence is always in the 0..1 range. */
+export const ACCOUNT_SUGGESTION_CONFIG = Object.freeze({
+  algorithmVersion: "deterministic-v2",
+  minimumSuggestionScore: 45,
+  ambiguityMinimumDifference: 5,
+  scoreForFullConfidence: 75,
+  topCandidates: 3,
+  confidence: { high: 0.8, medium: 0.55 },
+  partialScore: 15,
+});
+
+const POSITIVE_TERM_TYPES = new Set<SiiAccountTermType>([
+  "official_name",
+  "alias",
+  "abbreviation",
+  "manual_term",
+  "erp_term",
+  "industry_term",
+]);
+
+type Candidate = {
+  account: SiiAccountEntity;
+  score: number;
+  confidence: number;
+  exact: boolean;
+  reasons: Array<{ signal: string; description: string; points: number }>;
+};
+
+type TermIndexes = {
+  positiveTermsByNormalizedTerm: Map<string, SiiAccountTermEntity[]>;
+  negativeTermsByNormalizedTerm: Map<string, SiiAccountTermEntity[]>;
+};
+
+type DiscardReason =
+  | "below_minimum_score"
+  | "ambiguous_candidates"
+  | "no_positive_terms"
+  | "all_candidates_penalized"
+  | "confirmed_mapping"
+  | "unsupported_term_type";
 
 @Injectable()
 export class AccountSuggestionService {
+  private readonly logger = new Logger(AccountSuggestionService.name);
+
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   async generateForPeriod(companyId: string, taxPeriodId: string) {
-    const accounts: Array<{ id: string; name: string }> =
-      await this.dataSource.query(
-        `SELECT DISTINCT account.id, account.name FROM tax_period_company_accounts period_account
-       INNER JOIN company_accounts account ON account.id=period_account.company_account_id
-       INNER JOIN company_account_mappings mapping ON mapping.company_account_id=account.id
-       WHERE period_account.company_id=? AND period_account.tax_period_id=? AND mapping.status <> 'confirmed'`,
-        [companyId, taxPeriodId],
-      );
-    const rows: Array<Record<string, unknown>> = await this.dataSource.query(
-      `SELECT sii.id, sii.code, sii.name, term.term, term.normalized_term AS normalizedTerm, term.type, term.weight, term.company_id AS companyId
-       FROM sii_accounts sii INNER JOIN sii_account_plan_versions version ON version.id=sii.version_id
-       LEFT JOIN sii_account_terms term ON term.sii_account_id=sii.id AND term.active=1 AND (term.company_id IS NULL OR term.company_id=?)
-       WHERE sii.deleted_at IS NULL AND version.status='active'`,
-      [companyId],
+    const accounts = await this.loadCompanyAccounts(companyId, taxPeriodId);
+    const loadedTerms = await this.loadTerms(companyId);
+    const { positiveTermsByNormalizedTerm, negativeTermsByNormalizedTerm } =
+      this.buildTermIndexes(loadedTerms);
+    const siiAccountIds = Array.from(
+      new Set(loadedTerms.map((term) => term.siiAccountId)),
     );
-    const candidates = new Map<string, MatchAccount>();
-    for (const row of rows) {
-      let candidate = candidates.get(String(row.id));
-      if (!candidate) {
-        candidate = {
-          id: String(row.id),
-          code: String(row.code),
-          name: String(row.name),
-          terms: [],
-        };
-        candidates.set(candidate.id, candidate);
-      }
-      if (row.term)
-        candidate.terms.push({
-          term: String(row.term),
-          normalizedTerm: String(row.normalizedTerm),
-          type: String(row.type),
-          weight: Number(row.weight),
-          companyId: row.companyId ? String(row.companyId) : null,
-        });
+    const siiAccounts = await this.loadSiiAccounts(siiAccountIds);
+    const siiAccountsById = new Map(
+      siiAccounts.map((account) => [account.id, account]),
+    );
+    const foundAccountIds = Array.from(siiAccountsById.keys());
+    const missingAccountIds = siiAccountIds.filter(
+      (id) => !siiAccountsById.has(id),
+    );
+    const accountResolution = {
+      requestedAccountIds: siiAccountIds,
+      foundAccountIds,
+      missingAccountIds,
+    };
+    if (missingAccountIds.length) {
+      this.logger.warn({
+        message: "No se encontraron todas las cuentas SII referenciadas",
+        ...accountResolution,
+      });
     }
-    let suggested = 0;
+
+    const diagnostics = {
+      processed: accounts.length,
+      termsLoaded: loadedTerms.length,
+      globalTermsLoaded: loadedTerms.filter((term) => term.scope === "global")
+        .length,
+      companyTermsLoaded: loadedTerms.filter((term) => term.scope === "company")
+        .length,
+      siiAccountIdsRequested: siiAccountIds.length,
+      siiAccountsFound: foundAccountIds.length,
+      siiAccountIdsMissing: missingAccountIds.length,
+      exactMatchesFound: 0,
+      candidatesGenerated: 0,
+      candidatesDiscardedByScore: 0,
+      candidatesDiscardedByAmbiguity: 0,
+      suggestionsCreated: 0,
+      withoutSuggestion: 0,
+      withoutSuggestionReasons: {} as Record<DiscardReason, number>,
+      algorithmVersion: ACCOUNT_SUGGESTION_CONFIG.algorithmVersion,
+    };
+
     await this.dataSource.transaction(async (manager) => {
-      for (const account of accounts) {
-        const ranked = rankSiiAccounts(account.name, companyId, [
-          ...candidates.values(),
-        ]);
-        await manager.query(
-          "UPDATE company_account_suggestions SET status='superseded',updated_at=NOW(6) WHERE company_account_id=? AND status='active'",
-          [account.id],
-        );
-        for (let index = 0; index < ranked.length; index++) {
-          const match = ranked[index];
-          await manager.query(
-            `INSERT INTO company_account_suggestions
-            (id,company_account_id,sii_account_id,suggestion_rank,score,confidence,algorithm_version,reasons,status,generated_at,created_at,updated_at)
-            VALUES (?,?,?,?,?,?,?,?,'active',NOW(6),NOW(6),NOW(6))`,
-            [
-              randomUUID(),
-              account.id,
-              match.id,
-              index + 1,
-              match.score,
-              match.confidence,
-              MATCHING_CONFIG.algorithmVersion,
-              JSON.stringify(match.reasons),
-            ],
+      const suggestionRepository = manager.getRepository(
+        CompanyAccountSuggestionEntity,
+      );
+      for (const companyAccount of accounts) {
+        if (
+          companyAccount.mapping?.status ===
+          CompanyAccountMappingStatus.CONFIRMED
+        ) {
+          this.discard(
+            diagnostics.withoutSuggestionReasons,
+            "confirmed_mapping",
           );
+          diagnostics.withoutSuggestion++;
+          continue;
         }
-        if (ranked.length) suggested++;
+
+        const normalizedName = normalizeAccountTerm(companyAccount.name);
+        const matchedTerms =
+          positiveTermsByNormalizedTerm.get(normalizedName) ?? [];
+        const matchedNegativeTerms =
+          negativeTermsByNormalizedTerm.get(normalizedName) ?? [];
+        const ranked = this.rank(
+          siiAccountsById,
+          matchedTerms,
+          matchedNegativeTerms,
+        );
+        diagnostics.exactMatchesFound += ranked.exactMatches;
+        diagnostics.candidatesGenerated += ranked.candidates.length;
+        diagnostics.candidatesDiscardedByScore += ranked.discardedByScore;
+
+        if (ranked.discardReason) {
+          this.discard(
+            diagnostics.withoutSuggestionReasons,
+            ranked.discardReason,
+          );
+          if (ranked.discardReason === "ambiguous_candidates")
+            diagnostics.candidatesDiscardedByAmbiguity +=
+              ranked.candidates.length;
+          diagnostics.withoutSuggestion++;
+          continue;
+        }
+
+        await suggestionRepository.update(
+          {
+            companyAccountId: companyAccount.id,
+            status: CompanyAccountSuggestionStatus.ACTIVE,
+          },
+          { status: CompanyAccountSuggestionStatus.SUPERSEDED },
+        );
+        const generatedAt = new Date();
+        const suggestions = ranked.candidates
+          .slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates)
+          .map((candidate, index) =>
+            suggestionRepository.create({
+              companyAccountId: companyAccount.id,
+              siiAccountId: candidate.account.id,
+              suggestionRank: index + 1,
+              score: candidate.score.toFixed(2),
+              confidence: candidate.confidence.toFixed(4),
+              algorithmVersion: ACCOUNT_SUGGESTION_CONFIG.algorithmVersion,
+              reasons: candidate.reasons,
+              status: CompanyAccountSuggestionStatus.ACTIVE,
+              generatedAt,
+              reviewedByUserId: null,
+              reviewedAt: null,
+            }),
+          );
+        await suggestionRepository.save(suggestions);
+        diagnostics.suggestionsCreated += suggestions.length;
       }
     });
+
+    return { ...diagnostics, suggested: diagnostics.suggestionsCreated };
+  }
+
+  private loadCompanyAccounts(companyId: string, taxPeriodId: string) {
+    return this.dataSource
+      .getRepository(CompanyAccountEntity)
+      .createQueryBuilder("account")
+      .innerJoin(
+        TaxPeriodCompanyAccountEntity,
+        "periodAccount",
+        "periodAccount.companyAccountId = account.id AND periodAccount.companyId = :companyId AND periodAccount.taxPeriodId = :taxPeriodId",
+        { companyId, taxPeriodId },
+      )
+      .leftJoinAndSelect("account.mapping", "mapping")
+      .where("account.companyId = :companyId", { companyId })
+      .andWhere("account.deletedAt IS NULL")
+      .distinct(true)
+      .getMany();
+  }
+
+  private loadSiiAccounts(siiAccountIds: string[]) {
+    if (!siiAccountIds.length) return Promise.resolve([]);
+    return this.dataSource.getRepository(SiiAccountEntity).find({
+      where: { id: In(siiAccountIds) },
+    });
+  }
+
+  private loadTerms(companyId: string) {
+    return this.dataSource
+      .getRepository(SiiAccountTermEntity)
+      .createQueryBuilder("term")
+      .where("term.active = :active", { active: true })
+      .andWhere("term.deletedAt IS NULL")
+      .andWhere(
+        new Brackets((query) => {
+          query
+            .where("term.scope = :globalScope AND term.companyId IS NULL", {
+              globalScope: "global",
+            })
+            .orWhere(
+              "term.scope = :companyScope AND term.companyId = :companyId",
+              { companyScope: "company", companyId },
+            );
+        }),
+      )
+      .getMany();
+  }
+
+  private rank(
+    siiAccountsById: Map<string, SiiAccountEntity>,
+    positiveTerms: SiiAccountTermEntity[],
+    negativeTerms: SiiAccountTermEntity[],
+  ) {
+    let exactMatches = 0;
+    let discardedByScore = 0;
+    let positiveTermsSeen = 0;
+    let penalizedCandidates = 0;
+    const debugTerms: Array<{ type: string; weight: number; term: string }> =
+      [];
+    const candidates: Candidate[] = [];
+
+    const matchedTermsByAccount = new Map<string, SiiAccountTermEntity[]>();
+    for (const term of [...positiveTerms, ...negativeTerms]) {
+      const accountTerms = matchedTermsByAccount.get(term.siiAccountId) ?? [];
+      accountTerms.push(term);
+      matchedTermsByAccount.set(term.siiAccountId, accountTerms);
+    }
+
+    for (const [siiAccountId, matchedTerms] of matchedTermsByAccount) {
+      const account = siiAccountsById.get(siiAccountId);
+      if (!account) continue;
+      const reasons: Candidate["reasons"] = [];
+      let exact = false;
+      for (const term of matchedTerms) {
+        const weight = Number(term.weight);
+        debugTerms.push({ type: term.type, weight, term: term.term });
+        if (term.type === "negative_term") {
+          reasons.push({
+            signal: "negative_term",
+            description: `Penalización por término negativo: ${term.term}`,
+            points: -Math.abs(weight),
+          });
+        } else if (POSITIVE_TERM_TYPES.has(term.type)) {
+          positiveTermsSeen++;
+          exactMatches++;
+          exact = true;
+          reasons.push({
+            signal: `exact_${term.type}`,
+            description: `Coincidencia exacta con ${term.type}: ${term.term}`,
+            points: weight,
+          });
+        }
+      }
+      const score = reasons.reduce((sum, reason) => sum + reason.points, 0);
+      if (reasons.some((reason) => reason.points < 0) && score <= 0)
+        penalizedCandidates++;
+      if (score < ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore) {
+        if (reasons.some((reason) => reason.points > 0)) discardedByScore++;
+        continue;
+      }
+      candidates.push({
+        account,
+        score,
+        exact,
+        confidence: Math.min(
+          1,
+          score / ACCOUNT_SUGGESTION_CONFIG.scoreForFullConfidence,
+        ),
+        reasons,
+      });
+    }
+    candidates.sort(
+      (left, right) =>
+        right.score - left.score ||
+        left.account.code.localeCompare(right.account.code),
+    );
+    const difference = candidates[0]
+      ? candidates[0].score - (candidates[1]?.score ?? 0)
+      : 0;
+    const discardReason: DiscardReason | undefined = !candidates.length
+      ? positiveTermsSeen === 0
+        ? penalizedCandidates > 0
+          ? "all_candidates_penalized"
+          : "no_positive_terms"
+        : "below_minimum_score"
+      : candidates.length > 1 &&
+          difference < ACCOUNT_SUGGESTION_CONFIG.ambiguityMinimumDifference
+        ? "ambiguous_candidates"
+        : undefined;
     return {
-      processed: accounts.length,
-      suggested,
-      withoutSuggestion: accounts.length - suggested,
-      algorithmVersion: MATCHING_CONFIG.algorithmVersion,
+      candidates,
+      exactMatches,
+      discardedByScore,
+      debugTerms,
+      discardReason,
     };
+  }
+
+  private buildTermIndexes(terms: SiiAccountTermEntity[]): TermIndexes {
+    const positiveTermsByNormalizedTerm = new Map<
+      string,
+      SiiAccountTermEntity[]
+    >();
+    const negativeTermsByNormalizedTerm = new Map<
+      string,
+      SiiAccountTermEntity[]
+    >();
+
+    for (const term of terms) {
+      const key = term.normalizedTerm;
+      if (!key) continue;
+
+      const targetMap =
+        term.type === "negative_term"
+          ? negativeTermsByNormalizedTerm
+          : positiveTermsByNormalizedTerm;
+      const existingTerms = targetMap.get(key) ?? [];
+      existingTerms.push(term);
+      targetMap.set(key, existingTerms);
+    }
+
+    return { positiveTermsByNormalizedTerm, negativeTermsByNormalizedTerm };
+  }
+
+  private discard(
+    counts: Record<DiscardReason, number>,
+    reason: DiscardReason,
+  ) {
+    counts[reason] = (counts[reason] ?? 0) + 1;
   }
 }
