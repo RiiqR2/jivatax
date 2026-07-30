@@ -129,6 +129,13 @@ describe("deterministic candidate retrieval and ranking", () => {
           result.candidates[0]?.account.name,
           "Gastos de administración y ventas",
         );
+        assert.equal(result.decision, "automatic");
+        assert.ok((result.candidates[0]?.confidence ?? 0) >= 0.55);
+        assert.ok(
+          result.candidates[0]?.reasons.some(
+            (reason) => reason.signal === "exact_alias",
+          ),
+        );
         assert.ok(
           result.candidates[0]?.reasons.some(
             (reason) => reason.signal === "observed_expense_classification",

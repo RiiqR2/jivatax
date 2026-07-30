@@ -4,6 +4,7 @@ import type { SiiAccountTermEntity } from "../entities/sii-account-term.entity";
 import type { SiiAccountConceptEntity } from "../entities/sii-account-concept.entity";
 import { accountingMetadata } from "../metadata/accounting-metadata";
 import type { GeneratedCandidate } from "../account-matching.types";
+import { resolveCatalogExpenseKnowledge } from "../data/catalog-expense-knowledge";
 
 /** Retrieval only: every active catalogue account enters the ranking pool. */
 @Injectable()
@@ -13,6 +14,7 @@ export class AccountCandidateGeneratorService {
     terms: SiiAccountTermEntity[],
     concepts: SiiAccountConceptEntity[] = [],
   ): GeneratedCandidate[] {
+    const catalogKnowledge = resolveCatalogExpenseKnowledge(accounts);
     const byAccount = new Map<string, SiiAccountTermEntity[]>();
     for (const term of terms) {
       if (!term.active || term.deletedAt || term.type === "negative_term")
@@ -35,8 +37,14 @@ export class AccountCandidateGeneratorService {
       .map((account) => ({
         account,
         metadata: accountingMetadata(account.name),
-        terms: byAccount.get(account.id) ?? [],
-        concepts: conceptsByAccount.get(account.id) ?? [],
+        terms: [
+          ...(byAccount.get(account.id) ?? []),
+          ...(catalogKnowledge.terms.get(account.id) ?? []),
+        ],
+        concepts: [
+          ...(conceptsByAccount.get(account.id) ?? []),
+          ...(catalogKnowledge.concepts.get(account.id) ?? []),
+        ],
       }));
   }
 }

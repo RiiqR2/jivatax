@@ -22,6 +22,7 @@ import { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
 import { AccountCandidateGeneratorService } from "./account-candidate-generator.service";
 import { AccountSuggestionRankingService } from "./account-suggestion-ranking.service";
 import { SiiAccountConceptEntity } from "../entities/sii-account-concept.entity";
+import { resolveCatalogExpenseKnowledge } from "../data/catalog-expense-knowledge";
 export { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
 
 const POSITIVE_TERM_TYPES = new Set<SiiAccountTermType>([
@@ -84,7 +85,10 @@ export class AccountSuggestionService {
     const siiAccountIds = Array.from(
       new Set(loadedTerms.map((term) => term.siiAccountId)),
     );
-    const siiAccounts = await this.loadSiiAccounts();
+    // Terms are synchronized against the selected active SII version. Resolving
+    // by those real account ids prevents mixing candidates from older versions.
+    const siiAccounts = await this.loadSiiAccounts(siiAccountIds);
+    const expenseKnowledge = resolveCatalogExpenseKnowledge(siiAccounts);
     const siiAccountsById = new Map(
       siiAccounts.map((account) => [account.id, account]),
     );
@@ -127,6 +131,20 @@ export class AccountSuggestionService {
       withoutSuggestionReasons: {} as Record<DiscardReason, number>,
       algorithmVersion: ACCOUNT_SUGGESTION_CONFIG.algorithmVersion,
       averageConfidence: 0,
+      catalogExpenseDestinations: expenseKnowledge.destinations.map(
+        (destination) => {
+          const account = siiAccounts.find(
+            (candidate) => candidate.code === destination.code,
+          );
+          return {
+            ...destination,
+            classification: "expense" as const,
+            concepts: loadedConcepts
+              .filter((concept) => concept.siiAccountId === account?.id)
+              .map((concept) => concept.concept),
+          };
+        },
+      ),
     };
 
     await this.dataSource.transaction(async (manager) => {
