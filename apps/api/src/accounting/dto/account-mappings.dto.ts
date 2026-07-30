@@ -1,7 +1,7 @@
 import { Transform, Type } from "class-transformer";
 import {
+  IsArray,
   IsBoolean,
-  IsEnum,
   IsIn,
   IsInt,
   IsOptional,
@@ -12,12 +12,23 @@ import {
   Min,
   ValidateIf,
 } from "class-validator";
-import { CompanyAccountMappingStatus } from "../../company-account-plan/enums/company-account-plan.enums";
-
 export class ListPeriodAccountMappingsDto {
   @IsOptional()
-  @IsEnum(CompanyAccountMappingStatus)
-  status?: CompanyAccountMappingStatus;
+  @IsIn([
+    "pending",
+    "suggested",
+    "withoutSuggestion",
+    "confirmed",
+    "rejected",
+    "unmapped",
+  ])
+  status?:
+    | "pending"
+    | "suggested"
+    | "withoutSuggestion"
+    | "confirmed"
+    | "rejected"
+    | "unmapped";
 
   @IsOptional()
   @IsString()
@@ -55,6 +66,12 @@ export class ListPeriodAccountMappingsDto {
   @Min(1)
   @Max(100)
   limit?: number;
+}
+
+export class ApproveAccountSuggestionsBatchDto {
+  @IsArray()
+  @IsUUID("4", { each: true })
+  companyAccountIds!: string[];
 }
 
 export class UpdatePeriodAccountMappingDto {

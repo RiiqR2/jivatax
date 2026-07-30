@@ -5,6 +5,8 @@ import {
 } from "@nestjs/common";
 import { InjectDataSource, InjectRepository } from "@nestjs/typeorm";
 import { DataSource, Repository, SelectQueryBuilder } from "typeorm";
+import type { EntityManager } from "typeorm";
+import { CompanyEntity } from "../../companies/entities/company.entity";
 import { CompanyAccountEntity } from "../../company-account-plan/entities/company-account.entity";
 import { CompanyAccountMappingEntity } from "../../company-account-plan/entities/company-account-mapping.entity";
 import {
@@ -25,6 +27,8 @@ import {
 } from "../entities/company-account-suggestion.entity";
 import { TaxPeriodCompanyAccountEntity } from "../entities/tax-period-company-account.entity";
 import { TaxPeriodsService } from "./tax-periods.service";
+import { TaxDocumentEntity } from "../entities/tax-document.entity";
+import { TaxDocumentType } from "../enums/accounting.enums";
 
 type MappingListRow = {
   companyAccountId: string;
@@ -74,6 +78,10 @@ export class PeriodAccountMappingsService {
     private readonly companyAccounts: Repository<CompanyAccountEntity>,
     @InjectRepository(CompanyAccountMappingHistoryEntity)
     private readonly mappingHistory: Repository<CompanyAccountMappingHistoryEntity>,
+    @InjectRepository(CompanyEntity)
+    private readonly companies: Repository<CompanyEntity>,
+    @InjectRepository(TaxDocumentEntity)
+    private readonly documents: Repository<TaxDocumentEntity>,
     private readonly periods: TaxPeriodsService,
   ) {}
 
@@ -83,6 +91,17 @@ export class PeriodAccountMappingsService {
     query: ListPeriodAccountMappingsDto,
   ) {
     const period = await this.periods.get(companyId, taxPeriodId);
+    const company = await this.companies.findOneByOrFail({ id: companyId });
+    const sourceDocument = query.documentId
+      ? await this.documents.findOne({
+          where: { id: query.documentId, companyId, taxPeriodId },
+          relations: { storedFile: true },
+        })
+      : await this.documents.findOne({
+          where: { companyId, taxPeriodId, documentType: TaxDocumentType.BALANCE },
+          relations: { storedFile: true },
+          order: { versionNumber: "DESC" },
+        });
     const page = query.page ?? 1;
     const limit = query.limit ?? 25;
     const builder = this.createListQuery(companyId, taxPeriodId, query);
@@ -165,8 +184,31 @@ export class PeriodAccountMappingsService {
       total,
       page,
       limit,
+      context: {
+        company: {
+          id: company.id,
+          legalName: company.legalName,
+          taxId: company.rut,
+        },
+        taxPeriod: {
+          id: period.id,
+          commercialYear: period.commercialYear,
+          taxYear: period.taxYear,
+          status: period.status,
+        },
+        sourceDocument: sourceDocument
+          ? {
+              id: sourceDocument.id,
+              filename: sourceDocument.storedFile.originalName,
+              version: sourceDocument.versionNumber,
+              processedAt: sourceDocument.processedAt,
+            }
+          : null,
+      },
       summary: {
-        total: Number(metrics.total),
+        total:
+          (counts.get(CompanyAccountMappingStatus.CONFIRMED) ?? 0) +
+          (counts.get(CompanyAccountMappingStatus.PENDING) ?? 0),
         pending: counts.get(CompanyAccountMappingStatus.PENDING) ?? 0,
         suggested: Number(metrics.suggestedCount ?? 0),
         confirmed: counts.get(CompanyAccountMappingStatus.CONFIRMED) ?? 0,
@@ -174,7 +216,8 @@ export class PeriodAccountMappingsService {
         newInPeriod: Number(metrics.newInPeriod ?? 0),
         nameChanged: Number(metrics.nameChanged ?? 0),
         withoutSuggestion:
-          Number(metrics.total) - Number(metrics.suggestedCount ?? 0),
+          (counts.get(CompanyAccountMappingStatus.PENDING) ?? 0) -
+          Number(metrics.suggestedCount ?? 0),
         highConfidence: Number(metrics.highConfidence ?? 0),
         mediumConfidence: Number(metrics.mediumConfidence ?? 0),
         lowConfidence: Number(metrics.lowConfidence ?? 0),
@@ -191,8 +234,9 @@ export class PeriodAccountMappingsService {
       .leftJoin(
         CompanyAccountSuggestionEntity,
         "suggestion",
-        "suggestion.companyAccountId = account.id AND suggestion.status = :activeSuggestionStatus AND suggestion.suggestionRank = :primaryRank",
+        "suggestion.companyAccountId = account.id AND mapping.status = :pendingMappingStatus AND suggestion.status = :activeSuggestionStatus AND suggestion.suggestionRank = :primaryRank",
         {
+          pendingMappingStatus: CompanyAccountMappingStatus.PENDING,
           activeSuggestionStatus: CompanyAccountSuggestionStatus.ACTIVE,
           primaryRank: 1,
         },
@@ -212,7 +256,19 @@ export class PeriodAccountMappingsService {
       builder.andWhere("periodAccount.sourceDocumentId = :documentId", {
         documentId: query.documentId,
       });
-    if (query.status)
+    if (query.status === "suggested")
+      builder
+        .andWhere("mapping.status = :mappingStatus", {
+          mappingStatus: CompanyAccountMappingStatus.PENDING,
+        })
+        .andWhere("suggestion.id IS NOT NULL");
+    else if (query.status === "withoutSuggestion")
+      builder
+        .andWhere("mapping.status = :mappingStatus", {
+          mappingStatus: CompanyAccountMappingStatus.PENDING,
+        })
+        .andWhere("suggestion.id IS NULL");
+    else if (query.status)
       builder.andWhere("mapping.status = :mappingStatus", {
         mappingStatus: query.status,
       });
@@ -288,79 +344,185 @@ export class PeriodAccountMappingsService {
     dto: UpdatePeriodAccountMappingDto,
   ) {
     return this.dataSource.transaction(async (manager) => {
-      const mappings = manager.getRepository(CompanyAccountMappingEntity);
-      const mapping = await mappings.findOne({
-        where: { companyAccountId: accountId, companyAccount: { companyId } },
-        relations: { companyAccount: true },
-      });
-      if (!mapping) throw new NotFoundException("Homologación no encontrada.");
-      const siiAccounts = manager.getRepository(SiiAccountEntity);
-      if (
-        dto.action === "confirm" &&
-        !(await siiAccounts.findOne({ where: { id: dto.siiAccountId } }))
-      )
-        throw new BadRequestException("La cuenta SII seleccionada no existe.");
-
-      const nextStatus =
-        dto.action === "confirm"
-          ? CompanyAccountMappingStatus.CONFIRMED
-          : CompanyAccountMappingStatus.REJECTED;
-      const nextSiiAccountId =
-        dto.action === "confirm" ? dto.siiAccountId! : mapping.siiAccountId;
-      const historyRepository = manager.getRepository(
-        CompanyAccountMappingHistoryEntity,
+      return this.applyMappingDecision(
+        manager,
+        companyId,
+        accountId,
+        userId,
+        dto,
       );
-      await historyRepository.save(
-        historyRepository.create({
-          companyAccountId: accountId,
-          previousSiiAccountId: mapping.siiAccountId,
-          newSiiAccountId: nextSiiAccountId,
-          previousStatus: mapping.status,
-          newStatus: nextStatus,
-          changedByUserId: userId,
-          reason:
-            dto.action === "confirm"
-              ? "Confirmación manual"
-              : "Sugerencia rechazada",
-        }),
-      );
+    });
+  }
 
-      mapping.siiAccountId = nextSiiAccountId;
-      mapping.status = nextStatus;
-      mapping.mappingMethod = CompanyAccountMappingMethod.MANUAL;
-      mapping.confidence = null;
-      mapping.reviewedByUserId = userId;
-      mapping.reviewedAt = new Date();
-      await mappings.save(mapping);
+  private async applyMappingDecision(
+    manager: EntityManager,
+    companyId: string,
+    accountId: string,
+    userId: string,
+    dto: UpdatePeriodAccountMappingDto,
+  ) {
+    const mappings = manager.getRepository(CompanyAccountMappingEntity);
+    const mapping = await mappings.findOne({
+      where: { companyAccountId: accountId, companyAccount: { companyId } },
+      relations: { companyAccount: true },
+    });
+    if (!mapping) throw new NotFoundException("Homologación no encontrada.");
+    const siiAccounts = manager.getRepository(SiiAccountEntity);
+    if (
+      dto.action === "confirm" &&
+      !(await siiAccounts.findOne({ where: { id: dto.siiAccountId } }))
+    )
+      throw new BadRequestException("La cuenta SII seleccionada no existe.");
 
-      const suggestions = manager.getRepository(CompanyAccountSuggestionEntity);
-      const suggestion = await suggestions.findOne({
-        where: {
-          companyAccountId: accountId,
-          status: CompanyAccountSuggestionStatus.ACTIVE,
-          suggestionRank: 1,
-        },
-      });
-      if (suggestion) {
-        suggestion.status =
-          dto.action === "confirm" &&
-          dto.siiAccountId === suggestion.siiAccountId
-            ? CompanyAccountSuggestionStatus.ACCEPTED
-            : CompanyAccountSuggestionStatus.REJECTED;
-        suggestion.reviewedByUserId = userId;
-        suggestion.reviewedAt = new Date();
-        await suggestions.save(suggestion);
-      }
-      if (dto.action === "confirm")
-        await this.createCompanyAlias(
-          manager.getRepository(SiiAccountTermEntity),
-          mapping.companyAccount,
-          dto.siiAccountId!,
+    const nextStatus =
+      dto.action === "confirm"
+        ? CompanyAccountMappingStatus.CONFIRMED
+        : CompanyAccountMappingStatus.REJECTED;
+    const nextSiiAccountId =
+      dto.action === "confirm" ? dto.siiAccountId! : mapping.siiAccountId;
+    const historyRepository = manager.getRepository(
+      CompanyAccountMappingHistoryEntity,
+    );
+    await historyRepository.save(
+      historyRepository.create({
+        companyAccountId: accountId,
+        previousSiiAccountId: mapping.siiAccountId,
+        newSiiAccountId: nextSiiAccountId,
+        previousStatus: mapping.status,
+        newStatus: nextStatus,
+        changedByUserId: userId,
+        reason:
+          dto.action === "confirm"
+            ? "Confirmación manual"
+            : "Sugerencia rechazada",
+      }),
+    );
+
+    mapping.siiAccountId = nextSiiAccountId;
+    mapping.status = nextStatus;
+    mapping.mappingMethod = CompanyAccountMappingMethod.MANUAL;
+    mapping.confidence = null;
+    mapping.reviewedByUserId = userId;
+    mapping.reviewedAt = new Date();
+    await mappings.save(mapping);
+
+    const suggestions = manager.getRepository(CompanyAccountSuggestionEntity);
+    const suggestion = await suggestions.findOne({
+      where: {
+        companyAccountId: accountId,
+        status: CompanyAccountSuggestionStatus.ACTIVE,
+        suggestionRank: 1,
+      },
+    });
+    if (suggestion) {
+      suggestion.status =
+        dto.action === "confirm" && dto.siiAccountId === suggestion.siiAccountId
+          ? CompanyAccountSuggestionStatus.ACCEPTED
+          : CompanyAccountSuggestionStatus.REJECTED;
+      suggestion.reviewedByUserId = userId;
+      suggestion.reviewedAt = new Date();
+      await suggestions.save(suggestion);
+      if (suggestion.status === CompanyAccountSuggestionStatus.ACCEPTED) {
+        await suggestions.update(
+          {
+            companyAccountId: accountId,
+            status: CompanyAccountSuggestionStatus.ACTIVE,
+          },
+          {
+            status: CompanyAccountSuggestionStatus.SUPERSEDED,
+            reviewedByUserId: userId,
+            reviewedAt: suggestion.reviewedAt,
+          },
         );
+      }
+    }
+    if (dto.action === "confirm")
+      await this.createCompanyAlias(
+        manager.getRepository(SiiAccountTermEntity),
+        mapping.companyAccount,
+        dto.siiAccountId!,
+      );
+    return {
+      id: mapping.id,
+      status: nextStatus,
+      siiAccountId: nextSiiAccountId,
+    };
+  }
+
+  async approveBatch(
+    companyId: string,
+    taxPeriodId: string,
+    userId: string,
+    companyAccountIds: string[],
+  ) {
+    await this.periods.get(companyId, taxPeriodId);
+    const ids = [...new Set(companyAccountIds)].slice(0, 100);
+    return this.dataSource.transaction(async (manager) => {
+      const results = [];
+      for (const companyAccountId of ids) {
+        const belongs = await manager
+          .getRepository(TaxPeriodCompanyAccountEntity)
+          .existsBy({
+            companyId,
+            taxPeriodId,
+            companyAccountId,
+          });
+        if (!belongs) {
+          results.push({
+            companyAccountId,
+            status: "skipped",
+            reason: "account_not_in_company_period",
+          });
+          continue;
+        }
+        const mapping = await manager
+          .getRepository(CompanyAccountMappingEntity)
+          .findOneBy({ companyAccountId });
+        if (mapping?.status !== CompanyAccountMappingStatus.PENDING) {
+          results.push({
+            companyAccountId,
+            status: "skipped",
+            reason: "mapping_not_pending",
+          });
+          continue;
+        }
+        const suggestion = await manager
+          .getRepository(CompanyAccountSuggestionEntity)
+          .findOneBy({
+            companyAccountId,
+            status: CompanyAccountSuggestionStatus.ACTIVE,
+            suggestionRank: 1,
+          });
+        if (!suggestion) {
+          results.push({
+            companyAccountId,
+            status: "skipped",
+            reason: "active_primary_suggestion_not_found",
+          });
+          continue;
+        }
+        await this.applyMappingDecision(
+          manager,
+          companyId,
+          companyAccountId,
+          userId,
+          {
+            action: "confirm",
+            siiAccountId: suggestion.siiAccountId,
+          },
+        );
+        results.push({
+          companyAccountId,
+          status: "approved",
+          siiAccountId: suggestion.siiAccountId,
+        });
+      }
       return {
-        id: mapping.id,
-        status: nextStatus,
-        siiAccountId: nextSiiAccountId,
+        requested: ids.length,
+        approved: results.filter((result) => result.status === "approved")
+          .length,
+        skipped: results.filter((result) => result.status === "skipped").length,
+        results,
       };
     });
   }

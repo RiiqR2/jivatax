@@ -93,6 +93,21 @@ export type AccountMappingItem = {
 };
 
 export type AccountMappingsResponse = {
+  context: {
+    company: { id: string; legalName: string; taxId: string | null };
+    taxPeriod: {
+      id: string;
+      commercialYear: number;
+      taxYear: number;
+      status: string;
+    };
+    sourceDocument: {
+      id: string;
+      filename: string;
+      version: number;
+      processedAt: string | null;
+    } | null;
+  };
   items: AccountMappingItem[];
   total: number;
   page: number;
@@ -110,4 +125,16 @@ export type AccountMappingsResponse = {
     mediumConfidence: number;
     lowConfidence: number;
   };
+};
+
+export type ApproveSuggestionsBatchResponse = {
+  requested: number;
+  approved: number;
+  skipped: number;
+  results: Array<{
+    companyAccountId: string;
+    status: "approved" | "skipped";
+    reason?: string;
+    siiAccountId?: string;
+  }>;
 };
