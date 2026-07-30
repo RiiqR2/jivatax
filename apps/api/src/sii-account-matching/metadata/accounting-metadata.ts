@@ -9,11 +9,11 @@ import type {
 
 const FAMILY_RULES: ReadonlyArray<[RegExp, string, StatementSection]> = [
   [/depreciacion|amortizacion/, "depreciation", "asset"],
+  [/deuda|obligacion|prestamo|leasing/, "financial_liabilities", "liability"],
   [/caja|banco|disponible|efectivo/, "cash", "asset"],
   [/cliente|deudor|cobrar/, "receivables", "asset"],
   [/maquinaria|equipo|vehiculo|inmueble|activo fijo/, "fixed_assets", "asset"],
   [/proveedor|pagar/, "payables", "liability"],
-  [/deuda|obligacion|prestamo|leasing/, "financial_liabilities", "liability"],
   [/iva|impuesto|ppm|retencion/, "taxes", "liability"],
   [/capital|patrimonio|utilidad acumulada/, "equity", "equity"],
   [/venta|ingreso|ganancia/, "income", "income"],

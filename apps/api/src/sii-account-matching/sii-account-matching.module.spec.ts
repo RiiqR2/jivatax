@@ -8,6 +8,8 @@ import { SiiAccountEntity } from "../sii-account-plan/entities/sii-account.entit
 import { SiiAccountPlanVersionEntity } from "../sii-account-plan/entities/sii-account-plan-version.entity";
 import { assertSyncEntitiesMetadata } from "./commands/sync-entities-metadata";
 import { SiiAccountTermEntity } from "./entities/sii-account-term.entity";
+import { SiiAccountConceptEntity } from "./entities/sii-account-concept.entity";
+import { SiiAccountConceptsSyncService } from "./services/sii-account-concepts-sync.service";
 import { SiiAccountTermsSyncService } from "./services/sii-account-terms-sync.service";
 import { SiiAccountMatchingModule } from "./sii-account-matching.module";
 
@@ -16,6 +18,7 @@ test("el contexto del módulo registra las entidades requeridas por el sync", as
     SiiAccountEntity,
     SiiAccountPlanVersionEntity,
     SiiAccountTermEntity,
+    SiiAccountConceptEntity,
   ]);
   const repositories = new Map<object, object>();
   const dataSource = {
@@ -42,12 +45,14 @@ test("el contexto del módulo registra las entidades requeridas por el sync", as
   try {
     assertSyncEntitiesMetadata(context.get(DataSource));
     assert.equal(dataSource.hasMetadata(SiiAccountTermEntity), true);
+    assert.equal(dataSource.hasMetadata(SiiAccountConceptEntity), true);
     assert.ok(
       context.get<Repository<SiiAccountTermEntity>>(
         getRepositoryToken(SiiAccountTermEntity),
       ),
     );
     assert.ok(context.get(SiiAccountTermsSyncService));
+    assert.ok(context.get(SiiAccountConceptsSyncService));
   } finally {
     await context.close();
   }

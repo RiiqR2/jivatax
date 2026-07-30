@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import type { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
 import type { SiiAccountTermEntity } from "../entities/sii-account-term.entity";
+import type { SiiAccountConceptEntity } from "../entities/sii-account-concept.entity";
 import { accountingMetadata } from "../metadata/accounting-metadata";
 import type { GeneratedCandidate } from "../account-matching.types";
 
@@ -10,6 +11,7 @@ export class AccountCandidateGeneratorService {
   generate(
     accounts: SiiAccountEntity[],
     terms: SiiAccountTermEntity[],
+    concepts: SiiAccountConceptEntity[] = [],
   ): GeneratedCandidate[] {
     const byAccount = new Map<string, SiiAccountTermEntity[]>();
     for (const term of terms) {
@@ -20,12 +22,21 @@ export class AccountCandidateGeneratorService {
         term,
       ]);
     }
+    const conceptsByAccount = new Map<string, SiiAccountConceptEntity[]>();
+    for (const concept of concepts) {
+      if (!concept.active || concept.deletedAt) continue;
+      conceptsByAccount.set(concept.siiAccountId, [
+        ...(conceptsByAccount.get(concept.siiAccountId) ?? []),
+        concept,
+      ]);
+    }
     return accounts
       .filter((account) => !account.deletedAt)
       .map((account) => ({
         account,
         metadata: accountingMetadata(account.name),
         terms: byAccount.get(account.id) ?? [],
+        concepts: conceptsByAccount.get(account.id) ?? [],
       }));
   }
 }

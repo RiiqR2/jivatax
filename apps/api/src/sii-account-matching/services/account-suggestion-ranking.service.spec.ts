@@ -6,6 +6,7 @@ import { accountingMetadata } from "../metadata/accounting-metadata";
 import { AccountAttributeParserService } from "./account-attribute-parser.service";
 import { AccountCandidateGeneratorService } from "./account-candidate-generator.service";
 import { AccountSuggestionRankingService } from "./account-suggestion-ranking.service";
+import type { SiiAccountConceptEntity } from "../entities/sii-account-concept.entity";
 
 const account = (id: string, code: string, name: string) =>
   ({ id, code, name, deletedAt: null }) as SiiAccountEntity;
@@ -124,5 +125,84 @@ describe("deterministic candidate retrieval and ranking", () => {
     assert.equal(metrics.coverageAt1, 0.5);
     assert.equal(metrics.coverageAt3, 1);
     assert.equal(metrics.noCandidateRate, 1 / 3);
+  });
+
+  it("retrieves and explains candidates using curated accounting concepts", () => {
+    const concept = (
+      siiAccountId: string,
+      value: string,
+      conceptType: SiiAccountConceptEntity["conceptType"],
+    ) =>
+      ({
+        siiAccountId,
+        concept: value,
+        normalizedConcept: value,
+        conceptType,
+        active: true,
+        deletedAt: null,
+        weight: 90,
+      }) as SiiAccountConceptEntity;
+    const concepts = [
+      concept("debt", "deuda financiera", "economic_concept"),
+      concept("debt", "corto plazo", "temporal_classification"),
+      concept("dep", "depreciacion acumulada", "economic_concept"),
+      concept(
+        "dep",
+        "cuenta complementaria de activo",
+        "contra_account_indicator",
+      ),
+      concept("cash", "liquidez", "economic_concept"),
+    ];
+    const bank = ranking.rank(
+      "deuda financiera corto plazo",
+      generator.generate(catalogue, [], concepts),
+    );
+    assert.equal(bank.candidates[0].account.id, "debt");
+    assert.ok(
+      bank.candidates[0].reasons.some(
+        (reason) => reason.signal === "exact_concept",
+      ),
+    );
+    assert.ok(
+      bank.candidates[0].reasons.some(
+        (reason) => reason.signal === "temporal_classification_match",
+      ),
+    );
+    assert.notEqual(bank.candidates[0].account.id, "cash");
+
+    const depreciation = ranking.rank(
+      "depreciacion acumulada maquinarias",
+      generator.generate(catalogue, [], concepts),
+    );
+    assert.equal(depreciation.candidates[0].account.id, "dep");
+    assert.ok(
+      depreciation.candidates[0].reasons.some(
+        (reason) => reason.signal === "contra_account_match",
+      ),
+    );
+  });
+
+  it("does not make a generic concept approvable by itself", () => {
+    const concepts = [
+      {
+        siiAccountId: "cash",
+        concept: "activo",
+        normalizedConcept: "activo",
+        conceptType: "statement_section",
+        active: true,
+        deletedAt: null,
+        weight: 100,
+      },
+    ] as SiiAccountConceptEntity[];
+    const result = ranking.rank(
+      "activo",
+      generator.generate(catalogue, [], concepts),
+    );
+    assert.equal(result.decision, "review");
+    assert.ok(
+      !result.candidates[0].reasons.some(
+        (reason) => reason.signal === "exact_concept",
+      ),
+    );
   });
 });

@@ -1,5 +1,6 @@
 import type { SiiAccountEntity } from "../sii-account-plan/entities/sii-account.entity";
 import type { SiiAccountTermEntity } from "./entities/sii-account-term.entity";
+import type { SiiAccountConceptEntity } from "./entities/sii-account-concept.entity";
 
 export type StatementSection =
   "asset" | "liability" | "equity" | "income" | "expense";
@@ -28,6 +29,7 @@ export interface GeneratedCandidate {
   account: SiiAccountEntity;
   metadata: AccountingMetadata;
   terms: SiiAccountTermEntity[];
+  concepts: SiiAccountConceptEntity[];
 }
 
 export interface RankedCandidate extends GeneratedCandidate {

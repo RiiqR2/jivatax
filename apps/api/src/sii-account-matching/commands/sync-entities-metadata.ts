@@ -2,9 +2,11 @@ import { DataSource, EntityTarget } from "typeorm";
 import { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
 import { SiiAccountPlanVersionEntity } from "../../sii-account-plan/entities/sii-account-plan-version.entity";
 import { SiiAccountTermEntity } from "../entities/sii-account-term.entity";
+import { SiiAccountConceptEntity } from "../entities/sii-account-concept.entity";
 
 export function assertSyncEntitiesMetadata(dataSource: DataSource): void {
   const required: Array<[string, EntityTarget<unknown>]> = [
+    ["SiiAccountConceptEntity", SiiAccountConceptEntity],
     ["SiiAccountTermEntity", SiiAccountTermEntity],
     ["SiiAccountEntity", SiiAccountEntity],
     ["SiiAccountPlanVersionEntity", SiiAccountPlanVersionEntity],
