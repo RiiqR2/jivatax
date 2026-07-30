@@ -11,13 +11,13 @@ import type { SiiAccountConceptEntity } from "../entities/sii-account-concept.en
 const account = (id: string, code: string, name: string) =>
   ({ id, code, name, deletedAt: null }) as SiiAccountEntity;
 const context = (
-  section: "asset" | "liability",
+  section: "asset" | "liability" | "expense" | "income",
   nature: "debit" | "credit",
 ) => ({
   assetAmount: section === "asset" ? "100" : "0",
   liabilityAmount: section === "liability" ? "100" : "0",
-  lossAmount: "0",
-  gainAmount: "0",
+  lossAmount: section === "expense" ? "100" : "0",
+  gainAmount: section === "income" ? "100" : "0",
   debitBalance: nature === "debit" ? "100" : "0",
   creditBalance: nature === "credit" ? "100" : "0",
 });
@@ -88,6 +88,92 @@ describe("deterministic candidate retrieval and ranking", () => {
       accountingMetadata("DEP ACUM MAQUINARIAS").expectedBalanceNature,
       "credit",
     );
+  });
+
+  describe("Balance corto de Limpiesito", () => {
+    const shortBalanceCatalogue = [
+      account("machinery", "1.02.03.00", "Maquinarias y equipos"),
+      account("prepaid", "1.01.11.00", "Gastos pagados por anticipado"),
+      account("admin", "expense-real", "Gastos de administración y ventas"),
+      account("cost", "cost-real", "Costo de ventas"),
+      account("retained", "equity-real", "Pérdidas acumuladas"),
+      account("sales", "income-real", "Ingresos por ventas"),
+    ];
+    const generated = generator.generate(shortBalanceCatalogue, []);
+
+    it("mantiene Maquinaria Industrial en Maquinarias y equipos", () => {
+      const result = ranking.rank(
+        "Maquinaria Industrial",
+        generated,
+        context("asset", "debit"),
+      );
+      assert.equal(result.candidates[0]?.account.code, "1.02.03.00");
+    });
+
+    for (const internalName of [
+      "Arriendo",
+      "Gastos de Honorarios",
+      "Electricidad",
+    ])
+      it(`${internalName} en Pérdidas excluye el activo anticipado`, () => {
+        const result = ranking.rank(
+          internalName,
+          generated,
+          context("expense", "debit"),
+        );
+        assert.equal(
+          result.candidates.some((item) => item.account.code === "1.01.11.00"),
+          false,
+        );
+        assert.equal(
+          result.candidates[0]?.account.name,
+          "Gastos de administración y ventas",
+        );
+        assert.ok(
+          result.candidates[0]?.reasons.some(
+            (reason) => reason.signal === "observed_expense_classification",
+          ),
+        );
+      });
+
+    it("permite el activo anticipado solo con señal explícita", () => {
+      const result = ranking.rank(
+        "Arriendo anticipado",
+        generated,
+        context("asset", "debit"),
+      );
+      assert.equal(result.candidates[0]?.account.code, "1.01.11.00");
+    });
+
+    it("separa costo de servicios de patrimonio", () => {
+      const result = ranking.rank(
+        "Costo de Servicios",
+        generated,
+        context("expense", "debit"),
+      );
+      assert.equal(result.candidates[0]?.account.name, "Costo de ventas");
+      assert.equal(
+        result.candidates.some(
+          (item) => item.account.name === "Pérdidas acumuladas",
+        ),
+        false,
+      );
+    });
+
+    it("separa Ventas de gastos aunque compartan el token ventas", () => {
+      const result = ranking.rank(
+        "Ventas",
+        generated,
+        context("income", "credit"),
+      );
+      assert.equal(result.candidates[0]?.account.name, "Ingresos por ventas");
+      assert.equal(
+        result.candidates.some(
+          (item) => item.account.name === "Gastos de administración y ventas",
+        ),
+        false,
+      );
+    });
   });
 
   it("marks close candidates as ambiguous", () => {

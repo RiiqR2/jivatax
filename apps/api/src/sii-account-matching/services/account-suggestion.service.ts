@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { InjectDataSource } from "@nestjs/typeorm";
-import { Brackets, DataSource, IsNull } from "typeorm";
+import { Brackets, DataSource, In, IsNull } from "typeorm";
 import {
   CompanyAccountSuggestionEntity,
   CompanyAccountSuggestionStatus,
@@ -121,6 +121,7 @@ export class AccountSuggestionService {
       candidatesGenerated: 0,
       candidatesDiscardedByScore: 0,
       candidatesDiscardedByAmbiguity: 0,
+      candidatesDiscardedByCompatibility: 0,
       suggestionsCreated: 0,
       withoutSuggestion: 0,
       withoutSuggestionReasons: {} as Record<DiscardReason, number>,
@@ -185,10 +186,19 @@ export class AccountSuggestionService {
               ? ("ambiguous_candidates" as const)
               : undefined,
         };
-        /* Retrieval and scoring intentionally happen before persistence. Every
-           catalogue account was evaluated and even review-only Top 5 survive. */
-        if (deterministic.decision === "review")
-          ranked.discardReason = undefined;
+        /* Retrieval, hard compatibility and scoring finish before persistence.
+           Review-only candidates remain diagnostics, never active approvals. */
+        if (deterministic.decision === "review") {
+          this.discard(
+            diagnostics.withoutSuggestionReasons,
+            "below_minimum_score",
+          );
+          diagnostics.candidatesDiscardedByScore += ranked.candidates.length;
+          diagnostics.candidatesDiscardedByCompatibility +=
+            deterministic.discardedCandidates.length;
+          diagnostics.withoutSuggestion++;
+          continue;
+        }
         diagnostics.exactMatches += ranked.exactMatches;
         diagnostics.aliasMatches += ranked.candidates.filter((candidate) =>
           candidate.reasons.some((reason) => reason.signal.includes("alias")),
@@ -199,6 +209,8 @@ export class AccountSuggestionService {
           ),
         ).length;
         diagnostics.candidatesGenerated += ranked.candidates.length;
+        diagnostics.candidatesDiscardedByCompatibility +=
+          deterministic.discardedCandidates.length;
         diagnostics.candidatesDiscardedByScore += ranked.discardedByScore;
 
         if (ranked.discardReason) {
@@ -209,29 +221,6 @@ export class AccountSuggestionService {
           if (ranked.discardReason === "ambiguous_candidates")
             diagnostics.candidatesDiscardedByAmbiguity +=
               ranked.candidates.length;
-          if (ranked.discardReason === "ambiguous_candidates") {
-            const generatedAt = new Date();
-            await suggestionRepository.save(
-              ranked.candidates
-                .slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates)
-                .map((candidate, index) =>
-                  suggestionRepository.create({
-                    companyAccountId: companyAccount.id,
-                    siiAccountId: candidate.account.id,
-                    suggestionRank: index + 1,
-                    score: candidate.score.toFixed(2),
-                    confidence: candidate.confidence.toFixed(4),
-                    algorithmVersion:
-                      ACCOUNT_SUGGESTION_CONFIG.algorithmVersion,
-                    reasons: candidate.reasons,
-                    status: CompanyAccountSuggestionStatus.ACTIVE,
-                    generatedAt,
-                    reviewedByUserId: null,
-                    reviewedAt: null,
-                  }),
-                ),
-            );
-          }
           diagnostics.withoutSuggestion++;
           continue;
         }
@@ -294,9 +283,12 @@ export class AccountSuggestionService {
       .getMany() as Promise<AccountWithContext[]>;
   }
 
-  private loadSiiAccounts() {
+  private loadSiiAccounts(ids?: string[]) {
     return this.dataSource.getRepository(SiiAccountEntity).find({
-      where: { deletedAt: IsNull() },
+      where: {
+        ...(ids ? { id: In(ids) } : {}),
+        deletedAt: IsNull(),
+      },
     });
   }
 

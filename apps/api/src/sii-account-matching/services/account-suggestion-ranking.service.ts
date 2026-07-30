@@ -37,8 +37,54 @@ export class AccountSuggestionRankingService {
       source.statementSection,
       context,
     );
+    const discardedCandidates = candidates.flatMap((candidate) => {
+      if (!this.isHomologable(candidate))
+        return [
+          {
+            accountId: candidate.account.id,
+            reasons: ["aggregate_account_excluded"],
+          },
+        ];
+      if (!this.hasRequiredPrepaidSignal(normalized, candidate))
+        return [
+          {
+            accountId: candidate.account.id,
+            reasons:
+              observed === "expense"
+                ? ["current_expense_vs_prepaid_asset", "missing_prepaid_signal"]
+                : ["missing_prepaid_signal"],
+          },
+        ];
+      if (
+        candidate.metadata.statementSection === "unknown" &&
+        observed !== "unknown"
+      )
+        return [
+          {
+            accountId: candidate.account.id,
+            reasons: ["unknown_candidate_classification"],
+          },
+        ];
+      if (
+        !this.isCompatible(
+          observed,
+          candidate.metadata.statementSection,
+          candidate.metadata.contraAccount,
+        )
+      )
+        return [
+          {
+            accountId: candidate.account.id,
+            reasons: ["incompatible_statement_section"],
+          },
+        ];
+      return [];
+    });
     const ranked = candidates
       .filter((candidate) => this.isHomologable(candidate))
+      .filter((candidate) =>
+        this.hasRequiredPrepaidSignal(normalized, candidate),
+      )
       .filter((candidate) =>
         this.isCompatible(
           observed,
@@ -64,6 +110,29 @@ export class AccountSuggestionRankingService {
             this.reason(
               "family_match",
               "Familia contable compatible",
+              ACCOUNT_SUGGESTION_CONFIG.weights.familyMatch,
+            ),
+          );
+        if (
+          observed === "expense" &&
+          source.family === "expenses" &&
+          candidate.metadata.family === "expenses" &&
+          (/^costo/.test(normalized)
+            ? /costo de venta|costo operacional/.test(
+                normalizeAccountTerm(candidate.account.name),
+              )
+            : /administracion|gasto operacional|servicios/.test(
+                normalizeAccountTerm(candidate.account.name),
+              ))
+        )
+          reasons.push(
+            this.reason(
+              /^costo/.test(normalized)
+                ? "cost_classification_match"
+                : "observed_expense_classification",
+              /^costo/.test(normalized)
+                ? "Costo del período compatible con costo operacional"
+                : "Gasto del período compatible con gasto operacional",
               ACCOUNT_SUGGESTION_CONFIG.weights.familyMatch,
             ),
           );
@@ -161,7 +230,7 @@ export class AccountSuggestionRankingService {
             0,
           ),
         );
-    return { candidates: top, decision };
+    return { candidates: top, decision, discardedCandidates };
   }
 
   private observedSection(
@@ -189,12 +258,25 @@ export class AccountSuggestionRankingService {
     );
   }
 
+  private hasRequiredPrepaidSignal(
+    normalizedSource: string,
+    candidate: GeneratedCandidate,
+  ): boolean {
+    if (candidate.metadata.family !== "prepaid_expenses") return true;
+    return /anticipad|prepag|prepago|pagado por adelantado/.test(
+      normalizedSource,
+    );
+  }
+
   private isCompatible(
     observed: ObservedAccountSection,
     target: string,
     targetContra: boolean,
   ): boolean {
-    if (observed === "unknown" || target === "unknown") return true;
+    if (observed === "unknown") return true;
+    // Unknown catalogue classification is review-only. It cannot occupy an
+    // active Top N for an account whose Balance section is explicit.
+    if (target === "unknown") return false;
     if (observed === "contra_asset") return target === "asset" && targetContra;
     if (observed === "contra_liability")
       return target === "liability" && targetContra;

@@ -8,6 +8,11 @@ import type {
 } from "../account-matching.types";
 
 const FAMILY_RULES: ReadonlyArray<[RegExp, string, StatementSection]> = [
+  [
+    /gastos? pagados? por anticipado|arriendo anticipado|seguro anticipado|prepago|prepagado|pagado por adelantado/,
+    "prepaid_expenses",
+    "asset",
+  ],
   [/depreciacion|amortizacion/, "depreciation", "asset"],
   [/deuda|obligacion|prestamo|leasing/, "financial_liabilities", "liability"],
   [/caja|banco|disponible|efectivo/, "cash", "asset"],
@@ -15,9 +20,17 @@ const FAMILY_RULES: ReadonlyArray<[RegExp, string, StatementSection]> = [
   [/maquinaria|equipo|vehiculo|inmueble|activo fijo/, "fixed_assets", "asset"],
   [/proveedor|pagar/, "payables", "liability"],
   [/iva|impuesto|ppm|retencion/, "taxes", "liability"],
-  [/capital|patrimonio|utilidad acumulada/, "equity", "equity"],
-  [/venta|ingreso|ganancia/, "income", "income"],
-  [/gasto|costo|perdida|remuneracion|honorario/, "expenses", "expense"],
+  [
+    /capital|patrimonio|utilidad acumulada|perdidas? acumuladas?|resultados? retenidos?/,
+    "equity",
+    "equity",
+  ],
+  [
+    /gasto|costo|perdida|remuneracion|honorario|arriendo|arrendamiento|alquiler|electricidad|energia electrica|servicios basicos/,
+    "expenses",
+    "expense",
+  ],
+  [/^ventas?$|ingreso|ganancia/, "income", "income"],
   [/existencia|inventario|mercaderia/, "inventory", "asset"],
 ];
 
