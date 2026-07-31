@@ -3,6 +3,11 @@ import type { SiiAccountTermEntity } from "./entities/sii-account-term.entity";
 import type { SiiAccountConceptEntity } from "./entities/sii-account-concept.entity";
 import type { SiiAccountKnowledgeEntity } from "./entities/sii-account-knowledge.entity";
 import type { AccountMatchingLearningEntity } from "./entities/account-matching-learning.entity";
+import type { AccountMatchingLearningIndustryEntity } from "./entities/account-matching-learning-industry.entity";
+
+export type AccountLearningEvidence = AccountMatchingLearningEntity & {
+  industryEvidence?: AccountMatchingLearningIndustryEntity;
+};
 
 export type StatementSection =
   "asset" | "liability" | "equity" | "income" | "expense" | "unknown";
@@ -42,7 +47,7 @@ export interface GeneratedCandidate {
   terms: SiiAccountTermEntity[];
   concepts: SiiAccountConceptEntity[];
   knowledge?: SiiAccountKnowledgeEntity;
-  learning?: AccountMatchingLearningEntity[];
+  learning?: AccountLearningEvidence[];
 }
 
 export type MatchingSignalKind = "evidence" | "penalty" | "rule";

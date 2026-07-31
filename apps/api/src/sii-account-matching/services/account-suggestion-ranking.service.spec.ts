@@ -7,6 +7,8 @@ import { AccountAttributeParserService } from "./account-attribute-parser.servic
 import { AccountCandidateGeneratorService } from "./account-candidate-generator.service";
 import { AccountSuggestionRankingService } from "./account-suggestion-ranking.service";
 import type { SiiAccountConceptEntity } from "../entities/sii-account-concept.entity";
+import type { AccountMatchingLearningEntity } from "../entities/account-matching-learning.entity";
+import type { AccountMatchingLearningIndustryEntity } from "../entities/account-matching-learning-industry.entity";
 
 const account = (id: string, code: string, name: string) =>
   ({ id, code, name, deletedAt: null }) as SiiAccountEntity;
@@ -272,6 +274,42 @@ describe("deterministic candidate retrieval and ranking", () => {
     assert.equal(metrics.coverageAt1, 0.5);
     assert.equal(metrics.coverageAt3, 1);
     assert.equal(metrics.noCandidateRate, 1 / 3);
+  });
+
+  it("combines global confidence and a smaller industry boost on one candidate", () => {
+    const industryEvidence = {
+      confirmationCount: 2,
+      confidence: "0.500000",
+    } as AccountMatchingLearningIndustryEntity;
+    const learning = {
+      normalizedName: "caja",
+      siiAccountId: "cash",
+      confirmationCount: 5,
+      confidence: "0.500000",
+      deletedAt: null,
+      industryEvidence,
+    } as AccountMatchingLearningEntity & {
+      industryEvidence: AccountMatchingLearningIndustryEntity;
+    };
+    const candidates = generator.generate(catalogue, [], [], [], [learning]);
+    const result = ranking.rank("caja", candidates);
+    const cash = result.allCandidates.find(
+      (item) => item.account.id === "cash",
+    );
+    const global = cash?.reasons.find(
+      (reason) => reason.signal === "supervised_learning_global",
+    );
+    const industry = cash?.reasons.find(
+      (reason) => reason.signal === "supervised_learning_industry",
+    );
+
+    assert.equal(
+      candidates.filter((item) => item.account.id === "cash").length,
+      1,
+    );
+    assert.equal(global?.points, 15);
+    assert.equal(industry?.points, 3.75);
+    assert.ok((industry?.points ?? 0) < (global?.points ?? 0));
   });
 
   it("retrieves and explains candidates using curated accounting concepts", () => {

@@ -6,7 +6,7 @@ import { accountingMetadata } from "../metadata/accounting-metadata";
 import type { GeneratedCandidate } from "../account-matching.types";
 import { resolveCatalogExpenseKnowledge } from "../data/catalog-expense-knowledge";
 import type { SiiAccountKnowledgeEntity } from "../entities/sii-account-knowledge.entity";
-import type { AccountMatchingLearningEntity } from "../entities/account-matching-learning.entity";
+import type { AccountLearningEvidence } from "../account-matching.types";
 
 /** Retrieval only: every active catalogue account enters the ranking pool. */
 @Injectable()
@@ -16,7 +16,7 @@ export class AccountCandidateGeneratorService {
     terms: SiiAccountTermEntity[] = [],
     concepts: SiiAccountConceptEntity[] = [],
     knowledge: SiiAccountKnowledgeEntity[] = [],
-    learning: AccountMatchingLearningEntity[] = [],
+    learning: AccountLearningEvidence[] = [],
   ): GeneratedCandidate[] {
     const catalogKnowledge = resolveCatalogExpenseKnowledge(accounts);
     const byAccount = new Map<string, SiiAccountTermEntity[]>();
@@ -41,10 +41,7 @@ export class AccountCandidateGeneratorService {
         .filter((item) => item.active && !item.deletedAt)
         .map((item) => [item.siiAccountId, item]),
     );
-    const learningByAccount = new Map<
-      string,
-      AccountMatchingLearningEntity[]
-    >();
+    const learningByAccount = new Map<string, AccountLearningEvidence[]>();
     for (const item of learning.filter((item) => !item.deletedAt))
       learningByAccount.set(item.siiAccountId, [
         ...(learningByAccount.get(item.siiAccountId) ?? []),

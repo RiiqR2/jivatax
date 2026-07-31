@@ -39,5 +39,8 @@ export const ACCOUNT_SUGGESTION_CONFIG = Object.freeze({
     incompatibleFamily: -50,
     incompatibleStatementSection: -60,
     incompatibleContraAccount: -60,
+    /** Industry evidence complements (and never replaces) global evidence. */
+    industryLearningWeight: 0.25,
+    globalLearningMaximum: 30,
   },
 });
