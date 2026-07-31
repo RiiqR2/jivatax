@@ -1,10 +1,11 @@
 /** Single source of truth for deterministic suggestion scoring. */
 export const ACCOUNT_SUGGESTION_CONFIG = Object.freeze({
-  algorithmVersion: "deterministic-v6-concepts",
+  algorithmVersion: "deterministic-v7-inference",
   topCandidates: 5,
   minimumSuggestionScore: 45,
   minimumAbsoluteDifference: 8,
   minimumRelativeDifference: 0.12,
+  minimumAutomaticConfidence: 0.6,
   scoreForFullConfidence: 100,
   lexicalCandidateThreshold: 0.34,
   weights: {

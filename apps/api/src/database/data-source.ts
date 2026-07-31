@@ -20,6 +20,10 @@ import { CompanyAccountSuggestionEntity } from "../accounting/entities/company-a
 import { CompanyAccountMappingHistoryEntity } from "../accounting/entities/company-account-mapping-history.entity";
 import { AccountMatchingFeedbackEntity } from "../sii-account-matching/entities/account-matching-feedback.entity";
 import { SiiAccountConceptEntity } from "../sii-account-matching/entities/sii-account-concept.entity";
+import { SiiAccountKnowledgeEntity } from "../sii-account-matching/entities/sii-account-knowledge.entity";
+import { AccountMatchingRuleEntity } from "../sii-account-matching/entities/account-matching-rule.entity";
+import { AccountMatchingLearningEntity } from "../sii-account-matching/entities/account-matching-learning.entity";
+import { AccountMatchingDiagnosticEntity } from "../sii-account-matching/entities/account-matching-diagnostic.entity";
 
 loadEnv({ path: "../../.env" });
 
@@ -50,6 +54,10 @@ export default new DataSource({
     CompanyAccountMappingHistoryEntity,
     AccountMatchingFeedbackEntity,
     SiiAccountConceptEntity,
+    SiiAccountKnowledgeEntity,
+    AccountMatchingRuleEntity,
+    AccountMatchingLearningEntity,
+    AccountMatchingDiagnosticEntity,
   ],
   migrations: ["src/database/migrations/*.ts"],
   synchronize: false,
