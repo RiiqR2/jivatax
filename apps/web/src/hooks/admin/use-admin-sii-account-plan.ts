@@ -20,3 +20,11 @@ export function useAdminSiiAccounts(
     enabled: Boolean(versionId),
   });
 }
+
+export function useAdminAccountMatchingCoverage(versionId: string) {
+  return useQuery({
+    queryKey: ["admin", "sii-account-plan", versionId, "matching-coverage"],
+    queryFn: () => adminSiiAccountPlanService.getMatchingCoverage(versionId),
+    enabled: Boolean(versionId),
+  });
+}

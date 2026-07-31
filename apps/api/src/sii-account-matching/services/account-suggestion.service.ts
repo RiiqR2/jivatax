@@ -88,6 +88,7 @@ export class AccountSuggestionService {
   ) {}
 
   async generateForPeriod(companyId: string, taxPeriodId: string) {
+    const startedAt = Date.now();
     const company = await this.loadCompanyContext(companyId, taxPeriodId);
     const accounts = await this.loadCompanyAccounts(companyId, taxPeriodId);
     const loadedTerms = await this.loadTerms(companyId);
@@ -108,6 +109,46 @@ export class AccountSuggestionService {
     // Terms are synchronized against the selected active SII version. Resolving
     // by those real account ids prevents mixing candidates from older versions.
     const siiAccounts = await this.loadSiiAccounts(siiAccountIds);
+    const confirmedMappingCount = accounts.filter(
+      (account) =>
+        account.mapping?.status === CompanyAccountMappingStatus.CONFIRMED,
+    ).length;
+    const industryLearningCount = loadedLearning.filter(
+      (item) => item.industryEvidence,
+    ).length;
+    this.logger.log({
+      event: "account_suggestion_generation_started",
+      companyId,
+      taxPeriodId,
+      requestedAccountCount: accounts.length,
+      companyIndustryId: company.industryId,
+      algorithmVersion: ACCOUNT_SUGGESTION_CONFIG.algorithmVersion,
+    });
+    this.logger.debug({
+      event: "account_suggestion_evidence_loaded",
+      companyId,
+      taxPeriodId,
+      siiAccountCount: siiAccounts.length,
+      curatedTermCount: loadedTerms.filter((term) => term.scope === "global")
+        .length,
+      conceptCount: loadedConcepts.length,
+      companyAliasCount: loadedTerms.filter((term) => term.scope === "company")
+        .length,
+      knowledgeCount: loadedKnowledge.length,
+      ruleCount: loadedRules.length,
+      globalLearningConsulted: accounts.length > 0,
+      globalLearningCount: loadedLearning.length,
+      industryLearningConsulted: Boolean(
+        company.industryId && loadedLearning.length,
+      ),
+      industryLearningSkippedReason: !company.industryId
+        ? "company_without_industry"
+        : loadedLearning.length === 0
+          ? "no_global_learning_matches"
+          : null,
+      industryLearningCount,
+      confirmedMappingCount,
+    });
     const expenseKnowledge = resolveCatalogExpenseKnowledge(siiAccounts);
     const siiAccountsById = new Map(
       siiAccounts.map((account) => [account.id, account]),
@@ -123,8 +164,11 @@ export class AccountSuggestionService {
     };
     if (missingAccountIds.length) {
       this.logger.warn({
+        event: "account_suggestion_catalogue_references_missing",
         message: "No se encontraron todas las cuentas SII referenciadas",
-        ...accountResolution,
+        requestedAccountIds: accountResolution.requestedAccountIds,
+        foundAccountIds: accountResolution.foundAccountIds,
+        missingAccountIds: accountResolution.missingAccountIds,
       });
     }
 
@@ -166,6 +210,16 @@ export class AccountSuggestionService {
         },
       ),
     };
+    const executionCounts = {
+      highConfidence: 0,
+      mediumConfidence: 0,
+      lowConfidence: 0,
+      ambiguous: 0,
+      noCandidate: 0,
+      belowThreshold: 0,
+      globalLearningMatches: 0,
+      industryLearningMatches: 0,
+    };
 
     await this.dataSource.transaction(async (manager) => {
       const suggestionRepository = manager.getRepository(
@@ -179,6 +233,20 @@ export class AccountSuggestionService {
       if (diagnosticsEnabled)
         await diagnosticRepository.softDelete({ companyId, taxPeriodId });
       for (const companyAccount of accounts) {
+        const normalizedName = normalizeAccountTerm(companyAccount.name);
+        const normalizedNameHash = createHash("sha256")
+          .update(normalizedName, "utf8")
+          .digest("hex");
+        this.logger.debug({
+          event: "account_suggestion_account_started",
+          companyAccountId: companyAccount.id,
+          internalAccountCode: companyAccount.internalCode,
+          originalName: companyAccount.name,
+          normalizedName,
+          normalizedNameHash,
+          balanceSection: this.balanceSection(companyAccount.matchingContext),
+          existingMappingId: companyAccount.mapping?.id ?? null,
+        });
         if (
           companyAccount.mapping?.status ===
           CompanyAccountMappingStatus.CONFIRMED
@@ -188,13 +256,43 @@ export class AccountSuggestionService {
             "confirmed_mapping",
           );
           diagnostics.mappingsReused++;
+          this.logDecision(companyAccount.id, "skipped_confirmed_mapping");
           continue;
         }
+
+        const accountLearning = loadedLearning.filter(
+          (item) => item.normalizedNameHash === normalizedNameHash,
+        );
+        const industryMatches = accountLearning.filter(
+          (item) => item.industryEvidence,
+        );
+        if (accountLearning.length) executionCounts.globalLearningMatches++;
+        if (industryMatches.length) executionCounts.industryLearningMatches++;
+        this.logger.debug({
+          event: "account_suggestion_learning_lookup",
+          companyAccountId: companyAccount.id,
+          normalizedNameHash,
+          globalLearningConsulted: true,
+          globalLearningMatched: accountLearning.length > 0,
+          globalLearningCandidateCount: accountLearning.length,
+          industryLearningConsulted: Boolean(
+            company.industryId && loadedLearning.length,
+          ),
+          industryLearningMatched: industryMatches.length > 0,
+          industryLearningCandidateCount: industryMatches.length,
+          companyIndustryId: company.industryId,
+          globalCandidates: accountLearning
+            .slice(0, 5)
+            .map((item) => this.learningSummary(item)),
+          industryCandidates: industryMatches
+            .slice(0, 5)
+            .map((item) => this.industryLearningSummary(item)),
+        });
 
         // Retire the previous active generation inside the same transaction.
         // A failed transaction restores it, while a successful no-match cannot
         // leave a stale suggestion looking approvable.
-        await suggestionRepository.update(
+        const supersedeResult = await suggestionRepository.update(
           {
             companyAccountId: companyAccount.id,
             status: CompanyAccountSuggestionStatus.ACTIVE,
@@ -215,6 +313,14 @@ export class AccountSuggestionService {
           companyAccount.matchingContext,
           loadedRules,
         );
+        this.logCandidateRetrieval(
+          companyAccount.id,
+          siiAccounts.length,
+          generatedCandidates,
+          deterministic,
+        );
+        this.logRuleApplications(companyAccount.id, deterministic);
+        this.logRanking(companyAccount.id, deterministic);
         const generatedAt = new Date();
         if (diagnosticsEnabled)
           await diagnosticRepository.save(
@@ -283,6 +389,8 @@ export class AccountSuggestionService {
           diagnostics.candidatesDiscardedByCompatibility +=
             deterministic.discardedCandidates.length;
           diagnostics.withoutSuggestion++;
+          executionCounts.belowThreshold++;
+          this.logDecision(companyAccount.id, "below_threshold", deterministic);
           continue;
         }
         diagnostics.exactMatches += ranked.exactMatches;
@@ -305,10 +413,18 @@ export class AccountSuggestionService {
             ranked.discardReason,
           );
           if (ranked.discardReason === "ambiguous_candidates")
+            executionCounts.ambiguous++;
+          if (ranked.discardReason === "ambiguous_candidates")
             diagnostics.candidatesDiscardedByAmbiguity +=
               ranked.candidates.length;
           diagnostics.withoutSuggestion++;
+          this.logDecision(companyAccount.id, "ambiguous", deterministic);
           continue;
+        }
+
+        if (deterministic.decision === "no_candidate") {
+          executionCounts.noCandidate++;
+          this.logDecision(companyAccount.id, "no_candidate", deterministic);
         }
 
         const suggestions = ranked.candidates
@@ -328,13 +444,55 @@ export class AccountSuggestionService {
               reviewedAt: null,
             }),
           );
-        await suggestionRepository.save(suggestions);
+        const persistedSuggestions =
+          await suggestionRepository.save(suggestions);
         diagnostics.suggestionsCreated += suggestions.length;
         diagnostics.averageConfidence += suggestions.reduce(
           (sum, suggestion) => sum + Number(suggestion.confidence),
           0,
         );
+        for (const suggestion of suggestions) {
+          const confidence = Number(suggestion.confidence);
+          if (confidence >= 0.8) executionCounts.highConfidence++;
+          else if (confidence >= 0.55) executionCounts.mediumConfidence++;
+          else executionCounts.lowConfidence++;
+        }
+        if (suggestions.length)
+          this.logDecision(companyAccount.id, "persisted", deterministic);
+        persistedSuggestions.forEach((suggestion) =>
+          this.logger.debug({
+            event: "account_suggestion_persisted",
+            companyAccountId: companyAccount.id,
+            suggestionId: suggestion.id ?? null,
+            siiAccountId: suggestion.siiAccountId,
+            rank: suggestion.suggestionRank,
+            score: Number(suggestion.score),
+            confidence: Number(suggestion.confidence),
+            previousSuggestionSuperseded:
+              typeof supersedeResult?.affected === "number"
+                ? supersedeResult.affected > 0
+                : null,
+          }),
+        );
       }
+    });
+
+    this.logger.log({
+      event: "account_suggestion_generation_completed",
+      companyId,
+      taxPeriodId,
+      evaluatedCount: accounts.length - diagnostics.mappingsReused,
+      skippedConfirmedCount: diagnostics.mappingsReused,
+      persistedCount: diagnostics.suggestionsCreated,
+      highConfidenceCount: executionCounts.highConfidence,
+      mediumConfidenceCount: executionCounts.mediumConfidence,
+      lowConfidenceCount: executionCounts.lowConfidence,
+      ambiguousCount: executionCounts.ambiguous,
+      noCandidateCount: executionCounts.noCandidate,
+      belowThresholdCount: executionCounts.belowThreshold,
+      globalLearningMatchCount: executionCounts.globalLearningMatches,
+      industryLearningMatchCount: executionCounts.industryLearningMatches,
+      durationMs: Date.now() - startedAt,
     });
 
     return {
@@ -344,6 +502,225 @@ export class AccountSuggestionService {
         : 0,
       suggested: diagnostics.suggestionsCreated,
     };
+  }
+
+  private learningSummary(item: AccountLearningEvidence) {
+    return {
+      siiAccountId: item.siiAccountId,
+      confirmationCount: item.confirmationCount,
+      expertConfirmationCount: item.expertConfirmationCount,
+      distinctCompanyCount: item.distinctCompanyCount,
+      agreementRate: Number(item.agreementRate),
+      confidence: Number(item.confidence),
+    };
+  }
+
+  private industryLearningSummary(item: AccountLearningEvidence) {
+    const evidence = item.industryEvidence;
+    return {
+      siiAccountId: item.siiAccountId,
+      confirmationCount: evidence?.confirmationCount ?? 0,
+      expertConfirmationCount: evidence?.expertConfirmationCount ?? 0,
+      distinctCompanyCount: evidence?.distinctCompanyCount ?? 0,
+      agreementRate: Number(evidence?.agreementRate ?? 0),
+      confidence: Number(evidence?.confidence ?? 0),
+    };
+  }
+
+  private balanceSection(context?: BalanceContext) {
+    if (!context) return "unknown";
+    if (Number(context.assetAmount)) return "asset";
+    if (Number(context.liabilityAmount)) return "liability_or_equity";
+    if (Number(context.lossAmount)) return "expense";
+    if (Number(context.gainAmount)) return "income";
+    return "unknown";
+  }
+
+  private logCandidateRetrieval(
+    companyAccountId: string,
+    evaluatedCatalogueCount: number,
+    generated: ReturnType<AccountCandidateGeneratorService["generate"]>,
+    result: ReturnType<AccountSuggestionRankingService["rank"]>,
+  ) {
+    const signals = result.allCandidates.flatMap(
+      (candidate) => candidate.reasons,
+    );
+    this.logger.debug({
+      event: "account_suggestion_candidates_retrieved",
+      companyAccountId,
+      evaluatedCatalogueCount,
+      initialCandidateCount: generated.length,
+      rankedCandidateCount: result.allCandidates.length,
+      candidateSourceSummary: {
+        exactLexicalNameOrTerm: signals.filter(
+          (reason) => reason.signal === "exact_alias",
+        ).length,
+        curatedTerms: generated.filter((candidate) => candidate.terms.length)
+          .length,
+        accountingConcepts: generated.filter(
+          (candidate) => candidate.concepts.length,
+        ).length,
+        companyAliases: generated.filter((candidate) =>
+          candidate.terms.some((term) => term.scope === "company"),
+        ).length,
+        jaccard: signals.filter((reason) => reason.signal === "jaccard").length,
+        characterTrigrams: signals.filter(
+          (reason) => reason.signal === "character_trigrams",
+        ).length,
+        globalLearning: signals.filter(
+          (reason) => reason.signal === "supervised_learning_global",
+        ).length,
+        industryLearning: signals.filter(
+          (reason) => reason.signal === "supervised_learning_industry",
+        ).length,
+        configuredKnowledge: generated.filter(
+          (candidate) => candidate.knowledge,
+        ).length,
+      },
+    });
+  }
+
+  private logRuleApplications(
+    companyAccountId: string,
+    result: ReturnType<AccountSuggestionRankingService["rank"]>,
+  ) {
+    for (const evaluation of result.ruleEvaluations) {
+      for (const signal of evaluation.signals) {
+        const ranked = result.allCandidates.find(
+          (item) => item.account.id === evaluation.account.id,
+        );
+        const scoreAfter = ranked?.score ?? null;
+        this.logger.debug({
+          event: "account_suggestion_candidate_rule_applied",
+          companyAccountId,
+          siiAccountId: evaluation.account.id,
+          siiAccountCode: evaluation.account.code,
+          ruleCode: signal.ruleId ?? signal.signal,
+          action: evaluation.excluded
+            ? "excluded"
+            : evaluation.review
+              ? "forced_review"
+              : signal.points > 0
+                ? "boosted"
+                : signal.points < 0
+                  ? "penalized"
+                  : "observed",
+          scoreBefore:
+            scoreAfter == null || evaluation.excluded
+              ? null
+              : scoreAfter - signal.points,
+          scoreAfter,
+          explanation: signal.description,
+        });
+      }
+    }
+    for (const discarded of result.discardedCandidates) {
+      for (const reason of discarded.reasons) {
+        if (reason === "excluded_by_rule") continue;
+        const account = result.ruleEvaluations.find(
+          (item) => item.account.id === discarded.accountId,
+        )?.account;
+        this.logger.debug({
+          event: "account_suggestion_candidate_rule_applied",
+          companyAccountId,
+          siiAccountId: discarded.accountId,
+          siiAccountCode: account?.code ?? null,
+          ruleCode: reason,
+          action: "excluded",
+          scoreBefore: null,
+          scoreAfter: null,
+          explanation: reason,
+        });
+      }
+    }
+  }
+
+  private logRanking(
+    companyAccountId: string,
+    result: ReturnType<AccountSuggestionRankingService["rank"]>,
+  ) {
+    const first = result.candidates[0];
+    const second = result.candidates[1];
+    this.logger.debug({
+      event: "account_suggestion_ranking_completed",
+      companyAccountId,
+      candidateCount: result.allCandidates.length,
+      ambiguous: result.decision === "ambiguous",
+      scoreGap: first ? first.score - (second?.score ?? 0) : null,
+      candidates: result.candidates.slice(0, 5).map((candidate, index) => ({
+        rank: index + 1,
+        siiAccountId: candidate.account.id,
+        siiAccountCode: candidate.account.code,
+        score: candidate.score,
+        confidence: candidate.confidence,
+        evidence: candidate.reasons
+          .filter((reason) => reason.points >= 0)
+          .map((reason) => reason.signal),
+        penalties: candidate.reasons
+          .filter((reason) => reason.points < 0)
+          .map((reason) => reason.signal),
+        exclusions: [],
+        globalLearningConfidence: candidate.reasons.some(
+          (reason) => reason.signal === "supervised_learning_global",
+        )
+          ? (candidate.learning?.[0]?.confidence ?? null)
+          : null,
+        industryLearningConfidence:
+          candidate.learning?.find((item) => item.industryEvidence)
+            ?.industryEvidence?.confidence ?? null,
+      })),
+    });
+  }
+
+  private logDecision(
+    companyAccountId: string,
+    decision:
+      | "persisted"
+      | "skipped_confirmed_mapping"
+      | "below_threshold"
+      | "ambiguous"
+      | "no_candidate",
+    result?: ReturnType<AccountSuggestionRankingService["rank"]>,
+  ) {
+    const selected = result?.candidates[0];
+    const reasonCode =
+      decision !== "below_threshold"
+        ? decision
+        : result?.reviewRequiredByRule
+          ? "review_required_by_rule"
+          : selected?.metadata.statementSection === "unknown"
+            ? "unknown_candidate_classification"
+            : selected &&
+                selected.score <
+                  ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore
+              ? "below_minimum_score"
+              : "below_minimum_confidence";
+    this.logger.debug({
+      event: "account_suggestion_decision",
+      companyAccountId,
+      decision,
+      reasonCode,
+      selectedSiiAccountId: selected?.account.id ?? null,
+      selectedSiiAccountCode: selected?.account.code ?? null,
+      selectedScore: selected?.score ?? null,
+      selectedConfidence: selected?.confidence ?? null,
+      ambiguous: result?.decision === "ambiguous",
+      persistenceThreshold: {
+        minimumScore: ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore,
+        minimumConfidence: ACCOUNT_SUGGESTION_CONFIG.minimumAutomaticConfidence,
+        minimumAbsoluteDifference:
+          ACCOUNT_SUGGESTION_CONFIG.minimumAbsoluteDifference,
+        minimumRelativeDifference:
+          ACCOUNT_SUGGESTION_CONFIG.minimumRelativeDifference,
+      },
+      confidenceClassification: selected
+        ? selected.confidence >= 0.8
+          ? "high"
+          : selected.confidence >= 0.55
+            ? "medium"
+            : "low"
+        : null,
+    });
   }
 
   private loadCompanyAccounts(

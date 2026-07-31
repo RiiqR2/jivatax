@@ -15,6 +15,7 @@ import { SiiAccountEntity } from "../sii-account-plan/entities/sii-account.entit
 import { SiiAccountPlanVersionEntity } from "../sii-account-plan/entities/sii-account-plan-version.entity";
 import { AdminSiiAccountPlanController } from "./sii-account-plan/admin-sii-account-plan.controller";
 import { AdminSiiAccountPlanService } from "./sii-account-plan/admin-sii-account-plan.service";
+import { SiiAccountMatchingModule } from "../sii-account-matching/sii-account-matching.module";
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { AdminSiiAccountPlanService } from "./sii-account-plan/admin-sii-account
       SiiAccountEntity,
     ]),
     CompaniesModule,
+    SiiAccountMatchingModule,
   ],
   controllers: [
     AdminUsersController,

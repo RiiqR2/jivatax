@@ -317,6 +317,15 @@ export class AccountSuggestionRankingService {
           ),
         ),
       ],
+      ruleEvaluations: candidates.map((candidate) => {
+        const evaluation = ruleEvaluations.get(candidate.account.id);
+        return {
+          account: candidate.account,
+          excluded: evaluation?.excluded ?? false,
+          review: evaluation?.review ?? false,
+          signals: evaluation?.signals ?? [],
+        };
+      }),
     };
   }
 
