@@ -11,6 +11,13 @@ export class AccountMatchingLearningIndustryEntity extends BaseEntity {
   industryId!: string;
   @Column({ name: "confirmation_count", type: "int", unsigned: true })
   confirmationCount!: number;
+  @Column({
+    name: "expert_confirmation_count",
+    type: "int",
+    unsigned: true,
+    default: 0,
+  })
+  expertConfirmationCount!: number;
   @Column({ name: "distinct_company_count", type: "int", unsigned: true })
   distinctCompanyCount!: number;
   @Column({ name: "agreement_rate", type: "decimal", precision: 8, scale: 6 })

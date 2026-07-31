@@ -1,18 +1,26 @@
 import { Injectable } from "@nestjs/common";
 import { DataSource, EntityManager, IsNull } from "typeorm";
-import { AccountMatchingConfirmationEntity } from "../entities/account-matching-confirmation.entity";
+import {
+  AccountMatchingConfirmationEntity,
+  ConfirmationSource,
+} from "../entities/account-matching-confirmation.entity";
 import { AccountMatchingLearningIndustryEntity } from "../entities/account-matching-learning-industry.entity";
 import { AccountMatchingLearningEntity } from "../entities/account-matching-learning.entity";
 
 @Injectable()
 export class LearningAggregatorService {
   constructor(private readonly dataSource: DataSource) {}
-  /** Consensus weighted by a transparent company sample factor, capped at five companies. */
+  /** Expert review starts strongly, but remains below five-company evidence. */
   calculateConfidence(
     agreementRate: number,
     distinctCompanies: number,
+    expertConfirmations = 0,
   ): number {
-    return agreementRate * Math.min(1, distinctCompanies / 5);
+    return calculateLearningConfidence(
+      agreementRate,
+      distinctCompanies,
+      expertConfirmations,
+    );
   }
   rebuild(): Promise<void> {
     return this.dataSource.transaction((manager) =>
@@ -45,6 +53,9 @@ export class LearningAggregatorService {
       const companies = new Set(
         rows.flatMap((row) => (row.companyId ? [row.companyId] : [])),
       );
+      const experts = rows.filter(
+        (row) => row.source === ConfirmationSource.EXPERT,
+      ).length;
       const learning = await manager.save(
         AccountMatchingLearningEntity,
         manager.create(AccountMatchingLearningEntity, {
@@ -52,11 +63,13 @@ export class LearningAggregatorService {
           normalizedNameHash: first.normalizedNameHash,
           siiAccountId: first.siiAccountId,
           confirmationCount: rows.length,
+          expertConfirmationCount: experts,
           distinctCompanyCount: companies.size,
           agreementRate: agreement.toFixed(6),
           confidence: this.calculateConfidence(
             agreement,
             companies.size,
+            experts,
           ).toFixed(6),
           lastConfirmedAt: new Date(
             Math.max(...rows.map((row) => row.confirmedAt.getTime())),
@@ -82,6 +95,9 @@ export class LearningAggregatorService {
         const industryCompanies = new Set(
           evidence.flatMap((row) => (row.companyId ? [row.companyId] : [])),
         );
+        const industryExperts = evidence.filter(
+          (row) => row.source === ConfirmationSource.EXPERT,
+        ).length;
         const rate = evidence.length / industryTotal;
         await manager.save(
           AccountMatchingLearningIndustryEntity,
@@ -89,11 +105,13 @@ export class LearningAggregatorService {
             learningId: learning.id,
             industryId,
             confirmationCount: evidence.length,
+            expertConfirmationCount: industryExperts,
             distinctCompanyCount: industryCompanies.size,
             agreementRate: rate.toFixed(6),
             confidence: this.calculateConfidence(
               rate,
               industryCompanies.size,
+              industryExperts,
             ).toFixed(6),
             lastConfirmedAt: new Date(
               Math.max(...evidence.map((row) => row.confirmedAt.getTime())),
@@ -103,4 +121,16 @@ export class LearningAggregatorService {
       }
     }
   }
+}
+
+/** An expert mapping is valuable evidence, without being treated as certainty. */
+export const EXPERT_BASE_WEIGHT = 0.8;
+export function calculateLearningConfidence(
+  agreementRate: number,
+  distinctCompanyCount: number,
+  expertConfirmationCount: number,
+): number {
+  const companyStrength = Math.min(1, Math.max(0, distinctCompanyCount) / 5);
+  const expertStrength = expertConfirmationCount > 0 ? EXPERT_BASE_WEIGHT : 0;
+  return agreementRate * Math.max(companyStrength, expertStrength);
 }

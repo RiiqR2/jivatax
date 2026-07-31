@@ -9,4 +9,9 @@ describe("LearningAggregatorService confidence", () => {
     assert.equal(service.calculateConfidence(0.8, 5), 0.8);
     assert.equal(service.calculateConfidence(0.8, 20), 0.8);
   });
+  it("da base 0.8 a evidencia experta sin rebajar evidencia colectiva", () => {
+    assert.equal(service.calculateConfidence(1, 0, 1), 0.8);
+    assert.equal(service.calculateConfidence(1, 5, 1), 1);
+    assert.equal(service.calculateConfidence(0.5, 1, 1), 0.4);
+  });
 });

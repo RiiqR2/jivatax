@@ -14,7 +14,15 @@ export enum ConfirmationSource {
   "siiAccountId",
   "invalidatedAt",
 ])
+@Index("uq_confirmations_source_ref", ["sourceReference"], { unique: true })
 export class AccountMatchingConfirmationEntity extends BaseEntity {
+  @Column({
+    name: "source_reference",
+    type: "char",
+    length: 64,
+    nullable: true,
+  })
+  sourceReference!: string | null;
   @Column({ name: "company_id", type: "char", length: 36, nullable: true })
   companyId!: string | null;
   @Column({ name: "industry_id", type: "char", length: 36, nullable: true })
