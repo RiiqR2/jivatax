@@ -15,4 +15,12 @@ export interface SiiAccountPlanImportReport {
   dryRun: boolean;
   alreadyImported: boolean;
   versionId: string | null;
+  previousActiveVersionId: string | null;
+  activated: boolean;
+  sections: {
+    balanceAssets: number;
+    balanceLiabilitiesAndEquity: number;
+    incomeStatement: number;
+    taxAdjustment: number;
+  };
 }

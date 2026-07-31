@@ -17,6 +17,7 @@
     "schema:drop": "typeorm-ts-node-commonjs schema:drop -d src/database/data-source.ts",
     "test": "node --test -r ts-node/register \"src/**/*.spec.ts\"",
     "sii:import-account-plan": "ts-node --files -r tsconfig-paths/register src/sii-account-plan/commands/import-sii-account-plan.ts",
+    "import:sii-account-catalog": "ts-node --files -r tsconfig-paths/register src/sii-account-plan/commands/import-sii-account-plan.ts",
     "sii-accounts:sync-terms": "ts-node --files -r tsconfig-paths/register src/sii-account-matching/commands/sync-sii-account-terms.ts",
     "sii-accounts:sync-concepts": "ts-node --files -r tsconfig-paths/register src/sii-account-matching/commands/sync-sii-account-concepts.ts",
     "import:expert-account-mappings": "ts-node --files -r tsconfig-paths/register src/sii-account-matching/commands/import-expert-account-mappings.ts"

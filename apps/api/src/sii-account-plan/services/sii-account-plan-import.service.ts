@@ -19,8 +19,9 @@ import type { ValidatedSiiAccountRow } from "../interfaces/normalized-sii-accoun
 
 export interface ImportSiiAccountPlanOptions {
   file: string;
-  code: string;
-  name: string;
+  sheet?: string;
+  code?: string;
+  name?: string;
   sourceReference?: string;
   dryRun: boolean;
 }
@@ -39,7 +40,7 @@ export class SiiAccountPlanImportService {
     const checksum = createHash("sha256")
       .update(workbookResult.checksumInput)
       .digest("hex");
-    const sheet = detectSheet(workbookResult);
+    const sheet = detectSheet(workbookResult, options.sheet);
     const rawRows = parseRows(sheet);
     const normalizedRows = normalizeRows(rawRows);
     const validation = validateRows(normalizedRows);
@@ -51,13 +52,20 @@ export class SiiAccountPlanImportService {
           sourceChecksum: checksum,
         },
       });
+    const previousActive = await this.dataSource
+      .getRepository(SiiAccountPlanVersionEntity)
+      .findOne({
+        where: { status: SiiAccountPlanVersionStatus.ACTIVE },
+      });
+    const sectionCount = (prefix: string) =>
+      hierarchy.rows.filter((row) => row.code.startsWith(prefix)).length;
 
     const report: SiiAccountPlanImportReport = {
       file: basename(options.file),
       checksum,
       sheets: workbookResult.sheets,
       selectedSheet: sheet.name,
-      headerRowNumber: sheet.headerRowIndex + 1,
+      headerRowNumber: 0,
       rowsRead: rawRows.length,
       validRows: hierarchy.rows.length,
       ignoredRows: validation.ignoredRows,
@@ -69,11 +77,18 @@ export class SiiAccountPlanImportService {
       dryRun: options.dryRun,
       alreadyImported: existing !== null,
       versionId: existing?.id ?? null,
+      previousActiveVersionId: previousActive?.id ?? null,
+      activated:
+        existing?.status === SiiAccountPlanVersionStatus.ACTIVE &&
+        !options.dryRun,
+      sections: {
+        balanceAssets: sectionCount("1."),
+        balanceLiabilitiesAndEquity: sectionCount("2."),
+        incomeStatement: sectionCount("3."),
+        taxAdjustment: sectionCount("5."),
+      },
     };
 
-    if (existing || options.dryRun) {
-      return report;
-    }
     if (report.errors.length > 0) {
       throw new Error(`Importación inválida: ${report.errors.join(" ")}`);
     }
@@ -81,12 +96,45 @@ export class SiiAccountPlanImportService {
       throw new Error("El archivo no contiene cuentas válidas.");
     }
 
+    this.assertOfficialCatalog(hierarchy.rows);
+
+    if (existing || options.dryRun) {
+      return report;
+    }
+
     report.versionId = await this.persistRows(
       options,
       checksum,
       hierarchy.rows,
     );
+    report.activated = true;
     return report;
+  }
+
+  private assertOfficialCatalog(rows: ValidatedSiiAccountRow[]): void {
+    const codes = new Set(rows.map((row) => row.code));
+    const controls = [
+      "1.01.01.00",
+      "1.01.25.00",
+      "1.01.59.00",
+      "2.01.10.00",
+      "2.03.06.00",
+      "3.01.01.00",
+      "3.05.15.00",
+      "3.06.01.00",
+      "5.01.05.06",
+      "5.03.05.02",
+      "5.04.01.01",
+    ];
+    const missing = controls.filter((code) => !codes.has(code));
+    for (const prefix of ["1.", "2.", "3.", "5."]) {
+      if (![...codes].some((code) => code.startsWith(prefix))) {
+        missing.push(`${prefix}*`);
+      }
+    }
+    if (missing.length > 0) {
+      throw new Error(`Catálogo incompleto; faltan: ${missing.join(", ")}.`);
+    }
   }
 
   private async persistRows(
@@ -109,8 +157,8 @@ export class SiiAccountPlanImportService {
 
       const version = await manager.save(
         manager.create(SiiAccountPlanVersionEntity, {
-          code: options.code,
-          name: options.name,
+          code: options.code ?? `sii-${checksum.slice(0, 12)}`,
+          name: options.name ?? "Anexo DJ 1847 y DJ 1926",
           sourceFileName: basename(options.file),
           sourceReference: options.sourceReference ?? null,
           sourceChecksum: checksum,
@@ -130,9 +178,7 @@ export class SiiAccountPlanImportService {
             name: row.name,
             description: row.description,
             level: row.level,
-            parentId: row.parentCode
-              ? (idsByCode.get(row.parentCode) ?? null)
-              : null,
+            parentId: null,
             sortOrder: row.sortOrder,
             sourceRowNumber: row.sourceRowNumber,
             rawData: {
@@ -142,6 +188,24 @@ export class SiiAccountPlanImportService {
         );
         idsByCode.set(row.code, account.id);
       }
+
+      for (const row of rows) {
+        if (row.parentCode) {
+          await manager.update(
+            SiiAccountEntity,
+            { id: idsByCode.get(row.code) },
+            { parentId: idsByCode.get(row.parentCode) ?? null },
+          );
+        }
+      }
+
+      await manager.update(
+        SiiAccountPlanVersionEntity,
+        { status: SiiAccountPlanVersionStatus.ACTIVE },
+        { status: SiiAccountPlanVersionStatus.ARCHIVED },
+      );
+      version.status = SiiAccountPlanVersionStatus.ACTIVE;
+      await manager.save(version);
 
       return version.id;
     });

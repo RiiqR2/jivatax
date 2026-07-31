@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Brackets, Repository } from "typeorm";
+import { SiiAccountPlanVersionStatus } from "../enums/sii-account-plan-version-status.enum";
 import type { ListSiiAccountsQueryDto } from "../dto/list-sii-accounts-query.dto";
 import { SiiAccountEntity } from "../entities/sii-account.entity";
 import { SiiAccountPlanVersionEntity } from "../entities/sii-account-plan-version.entity";
@@ -106,6 +107,21 @@ export class SiiAccountPlanService {
       throw new NotFoundException("Cuenta SII no encontrada.");
     }
     return this.presentAccount(account);
+  }
+
+  async findActiveByCode(code: string): Promise<SiiAccountEntity | null> {
+    const normalizedCode = code.trim();
+    if (!normalizedCode) return null;
+    return this.accounts
+      .createQueryBuilder("account")
+      .innerJoin("account.version", "version")
+      .where("account.code = :code", { code: normalizedCode })
+      .andWhere("account.deletedAt IS NULL")
+      .andWhere("version.deletedAt IS NULL")
+      .andWhere("version.status = :status", {
+        status: SiiAccountPlanVersionStatus.ACTIVE,
+      })
+      .getOne();
   }
 
   private presentAccount(account: SiiAccountEntity) {
