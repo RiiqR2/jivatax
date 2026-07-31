@@ -45,9 +45,7 @@ export class AccountCandidateGeneratorService {
       string,
       AccountMatchingLearningEntity[]
     >();
-    for (const item of learning.filter(
-      (item) => item.active && !item.deletedAt,
-    ))
+    for (const item of learning.filter((item) => !item.deletedAt))
       learningByAccount.set(item.siiAccountId, [
         ...(learningByAccount.get(item.siiAccountId) ?? []),
         item,

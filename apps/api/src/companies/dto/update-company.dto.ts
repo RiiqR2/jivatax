@@ -5,11 +5,13 @@ import {
   IsString,
   Length,
   MaxLength,
+  IsUUID,
 } from "class-validator";
 import { CompanyStatus } from "../enums/company-status.enum";
 import { IsChileanRut } from "../validators/is-chilean-rut.validator";
 
 export class UpdateCompanyDto {
+  @IsOptional() @IsUUID() industryId?: string | null;
   @IsOptional()
   @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @IsString()

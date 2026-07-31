@@ -15,9 +15,22 @@ export const companiesService = {
     return (await api.get<Company>(`/companies/${companyId}`)).data;
   },
   async create(input: CompanyInput) {
-    return (await api.post<Company>("/companies", input)).data;
+    const payload = {
+      legalName: input.legalName,
+      tradeName: input.tradeName,
+      taxId: input.taxId,
+      industryId: input.industryId ?? null,
+    };
+    return (await api.post<Company>("/companies", payload)).data;
   },
   async update(companyId: string, input: CompanyInput) {
-    return (await api.patch<Company>(`/companies/${companyId}`, input)).data;
+    const payload = {
+      legalName: input.legalName,
+      tradeName: input.tradeName,
+      taxId: input.taxId,
+      status: input.status,
+      industryId: input.industryId ?? null,
+    };
+    return (await api.patch<Company>(`/companies/${companyId}`, payload)).data;
   },
 };

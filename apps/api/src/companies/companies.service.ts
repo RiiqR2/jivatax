@@ -16,6 +16,7 @@ import { UpdateCompanyDto } from "./dto/update-company.dto";
 import { CompanyEntity } from "./entities/company.entity";
 import { CompanyStatus } from "./enums/company-status.enum";
 import { normalizeChileanRut } from "./utils/chilean-rut";
+import { IndustriesService } from "../industries/industries.service";
 
 export type CompanyResponse = {
   id: string;
@@ -26,6 +27,7 @@ export type CompanyResponse = {
   status: CompanyStatus;
   createdAt: Date;
   updatedAt: Date;
+  industry: { id: string; name: string } | null;
 };
 
 const READ_ROLES = [
@@ -43,6 +45,7 @@ export class CompaniesService {
     readonly companiesRepository: Repository<CompanyEntity>,
     @InjectRepository(OrganizationMemberEntity)
     private readonly membersRepository: Repository<OrganizationMemberEntity>,
+    private readonly industries: IndustriesService,
   ) {}
 
   async findAllForOrganization(
@@ -93,6 +96,7 @@ export class CompaniesService {
   ): Promise<CompanyResponse> {
     const rut = normalizeChileanRut(dto.taxId);
     await this.assertUniqueRut(organizationId, rut);
+    if (dto.industryId) await this.industries.requireActive(dto.industryId);
 
     try {
       const company = this.companiesRepository.create({
@@ -102,6 +106,7 @@ export class CompaniesService {
         tradeName: dto.tradeName?.trim() || null,
         businessActivity: null,
         status: CompanyStatus.ACTIVE,
+        industryId: dto.industryId ?? null,
         createdByUserId: actorId,
         updatedByUserId: actorId,
       });
@@ -140,6 +145,7 @@ export class CompaniesService {
   ): Promise<{ items: CompanyResponse[]; total: number }> {
     const builder = this.companiesRepository
       .createQueryBuilder("company")
+      .leftJoinAndSelect("company.industry", "industry")
       .where("company.deletedAt IS NULL");
 
     if (organizationId) {
@@ -200,6 +206,10 @@ export class CompaniesService {
     if (dto.status !== undefined) {
       company.status = dto.status;
     }
+    if (dto.industryId !== undefined) {
+      if (dto.industryId) await this.industries.requireActive(dto.industryId);
+      company.industryId = dto.industryId ?? null;
+    }
 
     company.updatedByUserId = actorId;
 
@@ -234,14 +244,17 @@ export class CompaniesService {
     companyId: string,
     organizationId?: string,
   ): Promise<CompanyEntity> {
-    const company = await this.companiesRepository.findOneBy({
-      id: companyId,
-      ...(organizationId
-        ? {
-            organizationId,
-          }
-        : {}),
-      deletedAt: IsNull(),
+    const company = await this.companiesRepository.findOne({
+      where: {
+        id: companyId,
+        ...(organizationId
+          ? {
+              organizationId,
+            }
+          : {}),
+        deletedAt: IsNull(),
+      },
+      relations: { industry: true },
     });
 
     if (!company) {
@@ -299,6 +312,9 @@ export class CompaniesService {
       status: company.status,
       createdAt: company.createdAt,
       updatedAt: company.updatedAt,
+      industry: company.industry
+        ? { id: company.industry.id, name: company.industry.name }
+        : null,
     };
   }
 }

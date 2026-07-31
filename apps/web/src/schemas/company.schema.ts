@@ -16,11 +16,14 @@ export const companySchema = z.object({
     .trim()
     .refine(isValidChileanRut, "Ingresa un RUT chileno válido."),
   status: z.enum(["active", "inactive"]).optional(),
+  industryId: z.string().uuid().nullable().optional(),
 });
 export type CompanyFormValues = z.infer<typeof companySchema>;
 export function companyPayload(values: CompanyFormValues) {
   return {
-    ...values,
+    legalName: values.legalName,
+    status: values.status,
+    industryId: values.industryId ?? null,
     taxId: normalizeChileanRut(values.taxId),
     tradeName: values.tradeName?.trim() || null,
   };

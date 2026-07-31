@@ -1,128 +1,26 @@
 import { Column, Entity, Index } from "typeorm";
 import { BaseEntity } from "../../common/entities/base.entity";
 
-export type LearningScope = "company" | "industry" | "global";
-
 @Entity({ name: "account_matching_learning" })
 @Index(
-  "uq_account_matching_learning_identity",
-  [
-    "scope",
-    "scopeCompanyKey",
-    "scopeIndustryKey",
-    "normalizedNameHash",
-    "siiAccountId",
-  ],
-  {
-    unique: true,
-  },
+  "uq_account_matching_learning_global",
+  ["normalizedNameHash", "siiAccountId"],
+  { unique: true },
 )
 export class AccountMatchingLearningEntity extends BaseEntity {
-  @Column({
-    type: "enum",
-    enum: ["company", "industry", "global"],
-  })
-  scope!: LearningScope;
-
-  @Column({
-    name: "company_id",
-    type: "char",
-    length: 36,
-    nullable: true,
-  })
-  companyId!: string | null;
-
-  @Column({
-    type: "varchar",
-    length: 255,
-    nullable: true,
-  })
-  industry!: string | null;
-
-  @Column({
-    name: "scope_company_key",
-    type: "char",
-    length: 36,
-    default: "",
-  })
-  scopeCompanyKey!: string;
-
-  @Column({
-    name: "scope_industry_key",
-    type: "varchar",
-    length: 255,
-    default: "",
-  })
-  scopeIndustryKey!: string;
-
-  @Column({
-    name: "internal_name",
-    type: "varchar",
-    length: 500,
-  })
-  internalName!: string;
-
-  @Column({
-    name: "normalized_name",
-    type: "varchar",
-    length: 500,
-  })
+  @Column({ name: "normalized_name", type: "varchar", length: 500 })
   normalizedName!: string;
-
-  @Column({
-    name: "normalized_name_hash",
-    type: "char",
-    length: 64,
-  })
+  @Column({ name: "normalized_name_hash", type: "char", length: 64 })
   normalizedNameHash!: string;
-
-  @Column({
-    name: "sii_account_id",
-    type: "char",
-    length: 36,
-  })
+  @Column({ name: "sii_account_id", type: "char", length: 36 })
   siiAccountId!: string;
-
-  @Column({
-    name: "confirmation_count",
-    type: "int",
-    unsigned: true,
-    default: 1,
-  })
+  @Column({ name: "confirmation_count", type: "int", unsigned: true })
   confirmationCount!: number;
-
-  @Column({
-    name: "distinct_company_count",
-    type: "int",
-    unsigned: true,
-    default: 1,
-  })
+  @Column({ name: "distinct_company_count", type: "int", unsigned: true })
   distinctCompanyCount!: number;
-
-  @Column({
-    name: "last_confirmed_at",
-    type: "datetime",
-    precision: 6,
-  })
+  @Column({ name: "agreement_rate", type: "decimal", precision: 8, scale: 6 })
+  agreementRate!: string;
+  @Column({ type: "decimal", precision: 8, scale: 6 }) confidence!: string;
+  @Column({ name: "last_confirmed_at", type: "datetime", precision: 6 })
   lastConfirmedAt!: Date;
-
-  @Column({
-    name: "last_confirmed_by_user_id",
-    type: "char",
-    length: 36,
-  })
-  lastConfirmedByUserId!: string;
-
-  @Column({
-    name: "promotion_eligible",
-    type: "boolean",
-    default: false,
-  })
-  promotionEligible!: boolean;
-
-  @Column({
-    type: "boolean",
-    default: true,
-  })
-  active!: boolean;
 }

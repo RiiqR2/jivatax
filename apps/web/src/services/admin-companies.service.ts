@@ -12,6 +12,7 @@ function companyPayload(input: CompanyInput) {
     tradeName: input.tradeName,
     taxId: input.taxId,
     status: input.status,
+    industryId: input.industryId ?? null,
   };
 }
 
@@ -34,6 +35,7 @@ export const adminCompaniesService = {
       legalName: input.legalName,
       tradeName: input.tradeName,
       taxId: input.taxId,
+      industryId: input.industryId ?? null,
     };
     const response = await api.post<Company>("/admin/companies", payload);
     return response.data;

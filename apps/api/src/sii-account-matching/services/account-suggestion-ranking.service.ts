@@ -134,11 +134,10 @@ export class AccountSuggestionRankingService {
             (item) => item.normalizedName === normalized,
           ) ?? [];
         for (const item of learned) {
-          const points =
-            item.scope === "company" ? 25 : item.scope === "industry" ? 15 : 10;
+          const points = 10;
           reasons.push({
-            signal: `supervised_learning_${item.scope}`,
-            description: `${item.confirmationCount} confirmación(es) supervisada(s) en alcance ${item.scope}`,
+            signal: "supervised_learning_global",
+            description: `${item.confirmationCount} confirmación(es) supervisada(s) globales`,
             points,
             kind: "evidence",
             source: "history",

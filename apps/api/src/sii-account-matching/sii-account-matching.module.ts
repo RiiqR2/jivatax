@@ -24,9 +24,15 @@ import { AccountKnowledgeService } from "./services/account-knowledge.service";
 import { AccountMatchingFeedbackEntity } from "./entities/account-matching-feedback.entity";
 import { CompanyEntity } from "../companies/entities/company.entity";
 import { OrganizationMemberEntity } from "../organizations/entities/organization-member.entity";
+import { IndustriesModule } from "../industries/industries.module";
+import { AccountMatchingConfirmationEntity } from "./entities/account-matching-confirmation.entity";
+import { AccountMatchingLearningIndustryEntity } from "./entities/account-matching-learning-industry.entity";
+import { AccountMatchingConfirmationService } from "./services/account-matching-confirmation.service";
+import { LearningAggregatorService } from "./services/learning-aggregator.service";
 
 @Module({
   imports: [
+    IndustriesModule,
     TypeOrmModule.forFeature([
       SiiAccountEntity,
       SiiAccountPlanVersionEntity,
@@ -40,6 +46,8 @@ import { OrganizationMemberEntity } from "../organizations/entities/organization
       AccountMatchingFeedbackEntity,
       CompanyEntity,
       OrganizationMemberEntity,
+      AccountMatchingConfirmationEntity,
+      AccountMatchingLearningIndustryEntity,
     ]),
   ],
   providers: [
@@ -54,6 +62,8 @@ import { OrganizationMemberEntity } from "../organizations/entities/organization
     SupervisedLearningService,
     AccountMatchingCoverageService,
     AccountKnowledgeService,
+    AccountMatchingConfirmationService,
+    LearningAggregatorService,
   ],
   controllers: [AccountMatchingDiagnosticsController],
   exports: [
@@ -64,6 +74,8 @@ import { OrganizationMemberEntity } from "../organizations/entities/organization
     AccountSuggestionRankingService,
     SupervisedLearningService,
     AccountKnowledgeService,
+    AccountMatchingConfirmationService,
+    LearningAggregatorService,
   ],
 })
 export class SiiAccountMatchingModule {}

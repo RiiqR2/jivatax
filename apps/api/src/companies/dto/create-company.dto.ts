@@ -1,8 +1,15 @@
 import { Transform } from "class-transformer";
-import { IsOptional, IsString, Length, MaxLength } from "class-validator";
+import {
+  IsOptional,
+  IsString,
+  IsUUID,
+  Length,
+  MaxLength,
+} from "class-validator";
 import { IsChileanRut } from "../validators/is-chilean-rut.validator";
 
 export class CreateCompanyDto {
+  @IsOptional() @IsUUID() industryId?: string | null;
   @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @IsString()
   @Length(2, 255)

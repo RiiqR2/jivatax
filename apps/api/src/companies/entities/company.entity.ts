@@ -13,6 +13,7 @@ import { CompanyStatus } from "../enums/company-status.enum";
 import { OneToMany } from "typeorm";
 import { StoredFileEntity } from "../../files/entities/stored-file.entity";
 import { normalizeChileanRut } from "../utils/chilean-rut";
+import { IndustryEntity } from "../../industries/entities/industry.entity";
 
 @Entity({ name: "companies" })
 @Index("uq_companies_organization_id_rut", ["organizationId", "rut"], {
@@ -20,6 +21,18 @@ import { normalizeChileanRut } from "../utils/chilean-rut";
 })
 @Index("idx_companies_organization_id", ["organizationId"])
 export class CompanyEntity extends AuditableEntity {
+  @Column({ name: "industry_id", type: "char", length: 36, nullable: true })
+  industryId!: string | null;
+
+  @ManyToOne(() => IndustryEntity, (industry) => industry.companies, {
+    nullable: true,
+    onDelete: "RESTRICT",
+  })
+  @JoinColumn({
+    name: "industry_id",
+    foreignKeyConstraintName: "fk_companies_industry_id",
+  })
+  industry!: IndustryEntity | null;
   @Column({ name: "organization_id", type: "char", length: 36 })
   organizationId!: string;
 

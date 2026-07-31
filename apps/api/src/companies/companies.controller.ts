@@ -15,6 +15,7 @@ import { CompaniesService } from "./companies.service";
 import { CreateCompanyDto } from "./dto/create-company.dto";
 import { ListCompaniesQueryDto } from "./dto/list-companies-query.dto";
 import { UpdateCompanyDto } from "./dto/update-company.dto";
+import { MetaUser } from "../admin/decorators/meta-user.decorator";
 
 @Controller("companies")
 export class CompaniesController {
@@ -29,7 +30,7 @@ export class CompaniesController {
       query,
     );
   }
-  @Post() create(
+  @MetaUser() @Post() create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateCompanyDto,
   ) {
@@ -49,7 +50,7 @@ export class CompaniesController {
       user.id,
     );
   }
-  @Patch(":companyId") update(
+  @MetaUser() @Patch(":companyId") update(
     @CurrentUser() user: AuthenticatedUser,
     @Param("companyId", new ParseUUIDPipe()) companyId: string,
     @Body() dto: UpdateCompanyDto,
