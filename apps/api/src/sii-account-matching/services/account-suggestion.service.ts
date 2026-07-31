@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { createHash } from "node:crypto";
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { InjectDataSource } from "@nestjs/typeorm";
 import { Brackets, DataSource, In, IsNull } from "typeorm";
 import {
@@ -26,7 +27,11 @@ import { resolveCatalogExpenseKnowledge } from "../data/catalog-expense-knowledg
 import { SiiAccountKnowledgeEntity } from "../entities/sii-account-knowledge.entity";
 import { AccountMatchingRuleEntity } from "../entities/account-matching-rule.entity";
 import { AccountMatchingLearningEntity } from "../entities/account-matching-learning.entity";
+import { AccountMatchingLearningIndustryEntity } from "../entities/account-matching-learning-industry.entity";
 import { AccountMatchingDiagnosticEntity } from "../entities/account-matching-diagnostic.entity";
+import { CompanyEntity } from "../../companies/entities/company.entity";
+import { TaxPeriodEntity } from "../../accounting/entities/tax-period.entity";
+import type { AccountLearningEvidence } from "../account-matching.types";
 export { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
 
 const POSITIVE_TERM_TYPES = new Set<SiiAccountTermType>([
@@ -83,14 +88,22 @@ export class AccountSuggestionService {
   ) {}
 
   async generateForPeriod(companyId: string, taxPeriodId: string) {
+    const company = await this.loadCompanyContext(companyId, taxPeriodId);
     const accounts = await this.loadCompanyAccounts(companyId, taxPeriodId);
     const loadedTerms = await this.loadTerms(companyId);
     const loadedConcepts = await this.loadConcepts();
     const loadedKnowledge = await this.loadKnowledge();
     const loadedRules = await this.loadRules();
-    const loadedLearning = await this.loadLearning(companyId);
+    const loadedLearning = await this.loadLearning(
+      accounts,
+      company.industryId,
+    );
     const siiAccountIds = Array.from(
-      new Set(loadedTerms.map((term) => term.siiAccountId)),
+      new Set([
+        ...loadedTerms.map((term) => term.siiAccountId),
+        ...loadedKnowledge.map((item) => item.siiAccountId),
+        ...loadedLearning.map((item) => item.siiAccountId),
+      ]),
     );
     // Terms are synchronized against the selected active SII version. Resolving
     // by those real account ids prevents mixing candidates from older versions.
@@ -406,24 +419,59 @@ export class AccountSuggestionService {
     });
   }
 
-  private loadLearning(companyId: string) {
+  private async loadCompanyContext(companyId: string, taxPeriodId: string) {
+    const company = await this.dataSource
+      .getRepository(CompanyEntity)
+      .findOne({ where: { id: companyId, deletedAt: IsNull() } });
+    if (!company) throw new NotFoundException("Empresa no encontrada.");
+    const period = await this.dataSource
+      .getRepository(TaxPeriodEntity)
+      .findOne({
+        where: { id: taxPeriodId, companyId, deletedAt: IsNull() },
+      });
+    if (!period)
+      throw new NotFoundException("Período tributario no encontrado.");
+    return company;
+  }
+
+  private async loadLearning(
+    accounts: AccountWithContext[],
+    industryId: string | null,
+  ): Promise<AccountLearningEvidence[]> {
     if (typeof this.dataSource.getRepository !== "function") return [];
-    return this.dataSource
-      .getRepository(AccountMatchingLearningEntity)
-      .createQueryBuilder("learning")
-      .where("learning.active = :active", { active: true })
-      .andWhere("learning.deletedAt IS NULL")
-      .andWhere(
-        new Brackets((query) =>
-          query
-            .where("learning.scope = :global", { global: "global" })
-            .orWhere(
-              "learning.scope = :company AND learning.companyId = :companyId",
-              { company: "company", companyId },
-            ),
+    const hashes = Array.from(
+      new Set(
+        accounts.map((account) =>
+          createHash("sha256")
+            .update(normalizeAccountTerm(account.name), "utf8")
+            .digest("hex"),
         ),
-      )
-      .getMany();
+      ),
+    );
+    if (!hashes.length) return [];
+    // Exact normalized-name hashes use the global unique index and keep the
+    // read bounded. Lexical similarity from terms remains an independent source.
+    const global = await this.dataSource
+      .getRepository(AccountMatchingLearningEntity)
+      .find({
+        where: { normalizedNameHash: In(hashes), deletedAt: IsNull() },
+      });
+    if (!industryId || !global.length) return global;
+    const industries = await this.dataSource
+      .getRepository(AccountMatchingLearningIndustryEntity)
+      .find({
+        where: {
+          learningId: In(global.map((item) => item.id)),
+          industryId,
+          deletedAt: IsNull(),
+        },
+      });
+    const byLearningId = new Map(
+      industries.map((item) => [item.learningId, item]),
+    );
+    return global.map((item) =>
+      Object.assign(item, { industryEvidence: byLearningId.get(item.id) }),
+    );
   }
 
   private rank(

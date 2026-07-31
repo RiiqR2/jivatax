@@ -6,6 +6,8 @@ import { CompanyAccountMappingStatus } from "../../company-account-plan/enums/co
 import type { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
 import type { SiiAccountTermEntity } from "../entities/sii-account-term.entity";
 import { normalizeAccountTerm } from "../normalization/account-term-normalizer";
+import { AccountMatchingLearningEntity } from "../entities/account-matching-learning.entity";
+import { AccountMatchingLearningIndustryEntity } from "../entities/account-matching-learning-industry.entity";
 import {
   ACCOUNT_SUGGESTION_CONFIG,
   AccountSuggestionService,
@@ -324,6 +326,7 @@ describe("AccountSuggestionService persistence", () => {
     }));
     const service = new AccountSuggestionService(dataSource);
     Object.assign(service as object, {
+      loadCompanyContext: async () => ({ industryId: null }),
       loadCompanyAccounts: async () => internalAccounts,
       loadSiiAccounts: async () => [expense],
       loadTerms: async () => [
@@ -410,6 +413,7 @@ describe("AccountSuggestionService persistence", () => {
     } as unknown as DataSource;
     const service = new AccountSuggestionService(dataSource);
     Object.assign(service as object, {
+      loadCompanyContext: async () => ({ industryId: null }),
       loadCompanyAccounts: async () => [
         {
           id: "internal-cash",
@@ -463,6 +467,7 @@ describe("AccountSuggestionService persistence", () => {
     } as unknown as DataSource;
     const service = new AccountSuggestionService(dataSource);
     Object.assign(service as object, {
+      loadCompanyContext: async () => ({ industryId: null }),
       loadCompanyAccounts: async () => [
         {
           id: "confirmed",
@@ -479,5 +484,83 @@ describe("AccountSuggestionService persistence", () => {
     const result = await service.generateForPeriod(companyId, "period-1");
     assert.equal(result.withoutSuggestionReasons.confirmed_mapping, 1);
     assert.equal(repositoryUsed, false);
+  });
+
+  it("reads bounded global and optional industry learning without legacy filters", async () => {
+    const global = {
+      id: "learning-1",
+      normalizedName: "caja",
+      normalizedNameHash: "hash",
+      siiAccountId: "available",
+      confirmationCount: 4,
+      distinctCompanyCount: 3,
+      agreementRate: "0.800000",
+      confidence: "0.480000",
+      deletedAt: null,
+    } as AccountMatchingLearningEntity;
+    const industry = {
+      learningId: global.id,
+      industryId: "retail",
+      confirmationCount: 2,
+      distinctCompanyCount: 2,
+      agreementRate: "1.000000",
+      confidence: "0.400000",
+      deletedAt: null,
+    } as AccountMatchingLearningIndustryEntity;
+    const calls: Array<{ entity: unknown; options: unknown }> = [];
+    const dataSource = {
+      getRepository: (entity: unknown) => ({
+        find: async (options: unknown) => {
+          calls.push({ entity, options });
+          return entity === AccountMatchingLearningEntity
+            ? [global]
+            : [industry];
+        },
+      }),
+    } as unknown as DataSource;
+    const service = new AccountSuggestionService(dataSource);
+    const result = await (
+      service as unknown as {
+        loadLearning: (
+          accounts: Array<{ name: string }>,
+          industryId: string | null,
+        ) => Promise<
+          Array<
+            AccountMatchingLearningEntity & {
+              industryEvidence?: AccountMatchingLearningIndustryEntity;
+            }
+          >
+        >;
+      }
+    ).loadLearning([{ name: "CAJA" }], "retail");
+
+    assert.equal(calls.length, 2);
+    assert.equal(result[0].industryEvidence, industry);
+    const serialized = JSON.stringify(calls.map((call) => call.options));
+    assert.doesNotMatch(serialized, /active|scope|companyId|promotionEligible/);
+  });
+
+  it("does not query industry learning when the company has no industry", async () => {
+    let calls = 0;
+    const dataSource = {
+      getRepository: () => ({
+        find: async () => {
+          calls++;
+          return [];
+        },
+      }),
+    } as unknown as DataSource;
+    const service = new AccountSuggestionService(dataSource);
+    const result = await (
+      service as unknown as {
+        loadLearning: (
+          accounts: Array<{ name: string }>,
+          industryId: string | null,
+        ) => Promise<AccountMatchingLearningEntity[]>;
+      }
+    ).loadLearning([{ name: "CAJA" }], null);
+
+    assert.deepEqual(result, []);
+    assert.equal(calls, 1);
   });
 });

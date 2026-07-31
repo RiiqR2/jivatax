@@ -10,6 +10,7 @@ import { singularize } from "../metadata/accounting-metadata";
 import {
   normalizeAccountTerm,
   relevantWords,
+  weightedTokenSimilarity,
 } from "../normalization/account-term-normalizer";
 import { AccountAttributeParserService } from "./account-attribute-parser.service";
 import { normalizeAccountConcept } from "../normalization/account-concept-normalizer";
@@ -134,7 +135,16 @@ export class AccountSuggestionRankingService {
             (item) => item.normalizedName === normalized,
           ) ?? [];
         for (const item of learned) {
-          const points = 10;
+          // Confidence already includes agreement rate. Multiplying it by the
+          // lexical similarity avoids counting agreement twice.
+          const similarity = weightedTokenSimilarity(
+            normalized,
+            item.normalizedName,
+          );
+          const points =
+            similarity *
+            Number(item.confidence) *
+            ACCOUNT_SUGGESTION_CONFIG.weights.globalLearningMaximum;
           reasons.push({
             signal: "supervised_learning_global",
             description: `${item.confirmationCount} confirmación(es) supervisada(s) globales`,
@@ -142,6 +152,19 @@ export class AccountSuggestionRankingService {
             kind: "evidence",
             source: "history",
           });
+          if (item.industryEvidence) {
+            reasons.push({
+              signal: "supervised_learning_industry",
+              description: `${item.industryEvidence.confirmationCount} confirmación(es) supervisada(s) del rubro`,
+              points:
+                similarity *
+                Number(item.industryEvidence.confidence) *
+                ACCOUNT_SUGGESTION_CONFIG.weights.globalLearningMaximum *
+                ACCOUNT_SUGGESTION_CONFIG.weights.industryLearningWeight,
+              kind: "evidence",
+              source: "history",
+            });
+          }
         }
         reasons.push(...this.conceptReasons(normalized, source, candidate));
         if (
