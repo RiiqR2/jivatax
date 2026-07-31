@@ -284,6 +284,102 @@ describe("AccountSuggestionService matching", () => {
 });
 
 describe("AccountSuggestionService persistence", () => {
+  it("emits bounded structured diagnostics without changing results", async () => {
+    const debugEvents: Array<Record<string, unknown>> = [];
+    const logEvents: Array<Record<string, unknown>> = [];
+    const saved: Array<Record<string, unknown>> = [];
+    const repository = {
+      update: async () => undefined,
+      create: (value: Record<string, unknown>) => value,
+      save: async (values: Array<Record<string, unknown>>) => {
+        saved.push(...values);
+        return values;
+      },
+    };
+    const dataSource = {
+      transaction: async (
+        callback: (manager: {
+          getRepository: () => typeof repository;
+        }) => unknown,
+      ) => callback({ getRepository: () => repository }),
+    } as unknown as DataSource;
+    const service = new AccountSuggestionService(dataSource);
+    const learning = {
+      id: "learning-1",
+      normalizedName: "caja",
+      normalizedNameHash:
+        "f88fa5ec367813bccb28321b56d55e05e1a2572d44c1f2c11354708309e5da9c",
+      siiAccountId: "available",
+      confirmationCount: 145,
+      expertConfirmationCount: 145,
+      distinctCompanyCount: 1,
+      agreementRate: "1.000000",
+      confidence: "0.900000",
+      deletedAt: null,
+    } as AccountMatchingLearningEntity;
+    Object.assign(service as object, {
+      logger: {
+        debug: (payload: Record<string, unknown>) => debugEvents.push(payload),
+        log: (payload: Record<string, unknown>) => logEvents.push(payload),
+        warn: () => undefined,
+      },
+      loadCompanyContext: async () => ({ industryId: null }),
+      loadCompanyAccounts: async () => [
+        {
+          id: "cash",
+          internalCode: "1",
+          name: "CAJA",
+          mapping: { status: CompanyAccountMappingStatus.UNMAPPED },
+        },
+        {
+          id: "unknown",
+          internalCode: "2",
+          name: "SIN COINCIDENCIA",
+          mapping: { status: CompanyAccountMappingStatus.UNMAPPED },
+        },
+      ],
+      loadSiiAccounts: async () => [
+        sii("available", "1.01.01.00", "Disponible"),
+      ],
+      loadTerms: async () => [term("available", "caja", "alias", 60)],
+      loadConcepts: async () => [],
+      loadLearning: async () => [learning],
+    });
+
+    const result = await service.generateForPeriod(companyId, "period-1");
+
+    assert.equal(result.suggestionsCreated, 1);
+    assert.equal(saved.length, 1);
+    assert.deepEqual(
+      logEvents.map((item) => item.event),
+      [
+        "account_suggestion_generation_started",
+        "account_suggestion_generation_completed",
+      ],
+    );
+    const lookups = debugEvents.filter(
+      (item) => item.event === "account_suggestion_learning_lookup",
+    );
+    assert.equal(lookups[0].globalLearningMatched, true);
+    assert.equal(lookups[0].industryLearningConsulted, false);
+    const rankings = debugEvents.filter(
+      (item) => item.event === "account_suggestion_ranking_completed",
+    );
+    assert.ok(
+      rankings.every((item) => (item.candidates as unknown[]).length <= 5),
+    );
+    assert.ok(
+      debugEvents.some(
+        (item) =>
+          item.event === "account_suggestion_decision" &&
+          item.decision === "below_threshold",
+      ),
+    );
+    assert.ok(
+      debugEvents.some((item) => item.event === "account_suggestion_persisted"),
+    );
+  });
+
   it("persists the three Limpiesito expenses against the real SII (menos) account", async () => {
     const saved: Array<Record<string, unknown>> = [];
     const repository = {
