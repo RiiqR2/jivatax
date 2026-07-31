@@ -7,6 +7,7 @@ export interface Company {
   status: CompanyStatus;
   createdAt: string;
   updatedAt: string;
+  industry: { id: string; name: string } | null;
 }
 export interface CompanyFilters {
   search?: string;
@@ -21,4 +22,5 @@ export interface CompanyInput {
   tradeName?: string | null;
   taxId: string;
   status?: CompanyStatus;
+  industryId?: string | null;
 }

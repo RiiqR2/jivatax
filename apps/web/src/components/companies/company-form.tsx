@@ -11,6 +11,8 @@ import {
   type CompanyFormValues,
 } from "@/schemas/company.schema";
 import type { Company, CompanyInput } from "@/types/company.types";
+import { IndustrySelector } from "./industry-selector";
+import { useSession } from "@/hooks/use-session";
 
 function apiMessage(error: unknown): string {
   if (!axios.isAxiosError(error)) return "No fue posible guardar la empresa.";
@@ -36,6 +38,7 @@ export function CompanyForm({
   onSubmit: (values: CompanyInput) => Promise<void>;
   cancelHref?: string;
 }) {
+  const session = useSession();
   const form = useForm<CompanyFormValues>({
     resolver: zodResolver(companySchema),
     defaultValues: {
@@ -43,6 +46,7 @@ export function CompanyForm({
       tradeName: company?.tradeName ?? "",
       taxId: company?.taxId ?? "",
       status: company?.status ?? "active",
+      industryId: company?.industry?.id ?? null,
     },
   });
   const submit = form.handleSubmit(async (values) => {
@@ -79,6 +83,20 @@ export function CompanyForm({
           </p>
         )}
       </div>
+      <IndustrySelector
+        value={form.watch("industryId") ?? null}
+        initial={
+          company?.industry
+            ? { ...company.industry, normalizedName: company.industry.name }
+            : null
+        }
+        canCreate={session.data?.user.platformRole === "metauser"}
+        onChange={(industry) =>
+          form.setValue("industryId", industry?.id ?? null, {
+            shouldDirty: true,
+          })
+        }
+      />
       <div>
         <label
           className="text-sm font-medium text-slate-800"

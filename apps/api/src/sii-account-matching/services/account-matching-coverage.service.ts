@@ -35,7 +35,7 @@ export class AccountMatchingCoverageService {
       await Promise.all([
         this.terms.find({ where: { active: true, deletedAt: IsNull() } }),
         this.concepts.find({ where: { active: true, deletedAt: IsNull() } }),
-        this.learning.find({ where: { active: true, deletedAt: IsNull() } }),
+        this.learning.find({ where: { deletedAt: IsNull() } }),
         this.diagnostics.countBy({
           decision: "ambiguous",
           deletedAt: IsNull(),

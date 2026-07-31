@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { IndustriesModule } from "../industries/industries.module";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { CompaniesService } from "./companies.service";
 import { CompaniesController } from "./companies.controller";
@@ -7,6 +8,7 @@ import { OrganizationMemberEntity } from "../organizations/entities/organization
 
 @Module({
   imports: [
+    IndustriesModule,
     TypeOrmModule.forFeature([CompanyEntity, OrganizationMemberEntity]),
   ],
   controllers: [CompaniesController],

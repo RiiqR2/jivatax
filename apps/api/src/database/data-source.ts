@@ -23,6 +23,9 @@ import { SiiAccountConceptEntity } from "../sii-account-matching/entities/sii-ac
 import { SiiAccountKnowledgeEntity } from "../sii-account-matching/entities/sii-account-knowledge.entity";
 import { AccountMatchingRuleEntity } from "../sii-account-matching/entities/account-matching-rule.entity";
 import { AccountMatchingLearningEntity } from "../sii-account-matching/entities/account-matching-learning.entity";
+import { IndustryEntity } from "../industries/entities/industry.entity";
+import { AccountMatchingConfirmationEntity } from "../sii-account-matching/entities/account-matching-confirmation.entity";
+import { AccountMatchingLearningIndustryEntity } from "../sii-account-matching/entities/account-matching-learning-industry.entity";
 import { AccountMatchingDiagnosticEntity } from "../sii-account-matching/entities/account-matching-diagnostic.entity";
 
 loadEnv({ path: "../../.env" });
@@ -57,6 +60,9 @@ export default new DataSource({
     SiiAccountKnowledgeEntity,
     AccountMatchingRuleEntity,
     AccountMatchingLearningEntity,
+    AccountMatchingConfirmationEntity,
+    AccountMatchingLearningIndustryEntity,
+    IndustryEntity,
     AccountMatchingDiagnosticEntity,
   ],
   migrations: ["src/database/migrations/*.ts"],

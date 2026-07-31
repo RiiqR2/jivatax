@@ -13,6 +13,7 @@ import { CompanyAccountPlanModule } from "./company-account-plan/company-account
 import { CompanyUsersModule } from "./company-users/company-users.module";
 import { AccountingModule } from "./accounting/accounting.module";
 import { SiiAccountMatchingModule } from "./sii-account-matching/sii-account-matching.module";
+import { IndustriesModule } from "./industries/industries.module";
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { SiiAccountMatchingModule } from "./sii-account-matching/sii-account-mat
     CompanyUsersModule,
     AccountingModule,
     SiiAccountMatchingModule,
+    IndustriesModule,
   ],
   controllers: [AppController],
 })
