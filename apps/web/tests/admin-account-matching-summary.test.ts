@@ -25,10 +25,19 @@ describe("resumen administrativo de homologación", () => {
   });
 
   it("presenta aprendizaje, aliases, conceptos y decisiones", () => {
+    assert.match(page, /Resumen global/);
+    assert.match(page, /Conflictos que requieren atención/);
+    assert.match(page, /Cobertura por rubro/);
+    assert.match(page, /Feedback del motor/);
+    assert.match(page, /Preparación del catálogo/);
     assert.match(page, /Usadas en aprendizaje/);
     assert.match(page, /Con aliases/);
     assert.match(page, /Con conceptos/);
-    assert.match(page, /Decisiones ambiguas/);
+  });
+
+  it("no replica la navegación completa del catálogo", () => {
+    assert.doesNotMatch(page, /Detalle del catálogo/);
+    assert.doesNotMatch(page, /Buscar por código o glosa/);
   });
 
   it("consume el endpoint administrativo protegido", () => {
