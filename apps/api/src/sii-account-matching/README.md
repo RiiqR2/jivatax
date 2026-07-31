@@ -25,3 +25,19 @@ La confidence se calibra separadamente del score usando cantidad de evidencias, 
 - `GET /companies/:companyId/account-matching/coverage/sii-versions/:versionId`
 
 Ambos endpoints son aditivos, protegidos por acceso a empresa y no alteran los contratos públicos existentes.
+
+## Importación de homologaciones expertas
+
+El CLI crea evidencia histórica `source=expert`; nunca crea empresas, cuentas internas ni mappings operacionales. `account_matching_learning` y su detalle por rubro son proyecciones reconstruibles y sólo las actualiza `LearningAggregatorService`.
+
+```bash
+pnpm --filter @jivatax/api import:expert-account-mappings --file ./data/expert-account-mappings.xlsx --dry-run
+pnpm --filter @jivatax/api import:expert-account-mappings --file ./data/expert-account-mappings.xlsx --confirmed-by-user-id <uuid>
+pnpm --filter @jivatax/api import:expert-account-mappings --file ./data/expert-account-mappings.xlsx --confirmed-by-user-id <uuid> --industry-id <uuid>
+```
+
+Se aceptan `.xlsx` y `.xls`, `--sheet` es opcional y el usuario confirmador también lo es porque la FK real es nullable. Los encabezados de nombre son `nombre_cuenta`, `nombre cuenta`, `cuenta`, `descripcion`, `descripción`, `internal_name` o `account_name`; los de código SII son `codigo_sii`, `código sii`, `cuenta_sii`, `cuenta sii`, `sii_code` o `sii_account_code`. El código interno opcional acepta `codigo_cuenta`, `código cuenta`, `codigo interno`, `código interno`, `internal_code` y `account_code`.
+
+La identidad idempotente es el SHA-256 de `expert + hash del nombre normalizado + siiAccountId + industryId`; por ello reordenar o volver a importar el archivo no aumenta evidencia. El reporte JSON separa filas importadas, duplicadas y rechazadas. Sin `industryId` la evidencia es global; con un rubro activo también participa en su proyección.
+
+La confianza es `agreementRate * max(min(1, distinctCompanyCount / 5), expertConfirmationCount > 0 ? 0.8 : 0)`: 0.8 reconoce la revisión experta sin equipararla a certeza colectiva. Las confirmaciones incorrectas deben invalidarse mediante `AccountMatchingConfirmationService.invalidate`; la siguiente reconstrucción excluye evidencia invalidada.

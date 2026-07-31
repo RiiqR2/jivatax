@@ -29,6 +29,7 @@ import { AccountMatchingConfirmationEntity } from "./entities/account-matching-c
 import { AccountMatchingLearningIndustryEntity } from "./entities/account-matching-learning-industry.entity";
 import { AccountMatchingConfirmationService } from "./services/account-matching-confirmation.service";
 import { LearningAggregatorService } from "./services/learning-aggregator.service";
+import { ExpertAccountMappingImportService } from "./expert-import/expert-account-mapping-import.service";
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { LearningAggregatorService } from "./services/learning-aggregator.servic
     AccountKnowledgeService,
     AccountMatchingConfirmationService,
     LearningAggregatorService,
+    ExpertAccountMappingImportService,
   ],
   controllers: [AccountMatchingDiagnosticsController],
   exports: [
@@ -76,6 +78,7 @@ import { LearningAggregatorService } from "./services/learning-aggregator.servic
     AccountKnowledgeService,
     AccountMatchingConfirmationService,
     LearningAggregatorService,
+    ExpertAccountMappingImportService,
   ],
 })
 export class SiiAccountMatchingModule {}
