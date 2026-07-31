@@ -19,3 +19,26 @@ export interface AdminSiiAccountsResponse {
   page: number;
   limit: number;
 }
+
+export interface AdminAccountMatchingCoverageAccount {
+  code: string;
+  name: string;
+  hasAliases: boolean;
+  hasConcepts: boolean;
+  usedInLearning: boolean;
+}
+
+export interface AdminAccountMatchingCoverage {
+  versionId: string;
+  total: number;
+  withAliases: number;
+  withoutAliases: number;
+  withConcepts: number;
+  withoutConcepts: number;
+  usedInLearning: number;
+  neverUsedInLearning: number;
+  ambiguous: number;
+  manuallyReviewed: number;
+  correctedAfterReview: number;
+  accounts: AdminAccountMatchingCoverageAccount[];
+}

@@ -2,6 +2,7 @@ import { api } from "@/lib/api";
 import type {
   AdminSiiAccountPlanVersion,
   AdminSiiAccountsResponse,
+  AdminAccountMatchingCoverage,
 } from "@/types/admin-sii-account-plan.types";
 
 export const adminSiiAccountPlanService = {
@@ -26,6 +27,13 @@ export const adminSiiAccountPlanService = {
     const response = await api.get<AdminSiiAccountsResponse>(
       `/admin/sii-account-plan/versions/${versionId}/accounts`,
       { params },
+    );
+    return response.data;
+  },
+
+  async getMatchingCoverage(versionId: string) {
+    const response = await api.get<AdminAccountMatchingCoverage>(
+      `/admin/sii-account-plan/versions/${versionId}/matching-coverage`,
     );
     return response.data;
   },

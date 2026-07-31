@@ -8,6 +8,7 @@ const items = [
   { label: "Usuarios", href: "/admin/users" },
   { label: "Empresas", href: "/admin/companies" },
   { label: "Plan de cuentas SII", href: "/admin/sii-account-plan" },
+  { label: "Resumen de homologación", href: "/admin/account-matching" },
 ];
 
 export function AdminNavigation() {

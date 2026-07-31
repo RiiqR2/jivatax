@@ -79,6 +79,7 @@ import { ExpertAccountMappingImportService } from "./expert-import/expert-accoun
     AccountMatchingConfirmationService,
     LearningAggregatorService,
     ExpertAccountMappingImportService,
+    AccountMatchingCoverageService,
   ],
 })
 export class SiiAccountMatchingModule {}
