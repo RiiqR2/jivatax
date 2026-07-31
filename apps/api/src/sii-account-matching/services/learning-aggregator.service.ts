@@ -27,38 +27,76 @@ export class LearningAggregatorService {
       this.rebuildWithManager(manager),
     );
   }
+
   async rebuildWithManager(manager: EntityManager): Promise<void> {
-    const confirmations = await manager
-      .getRepository(AccountMatchingConfirmationEntity)
-      .findBy({ invalidatedAt: IsNull() });
+    const confirmationRepository = manager.getRepository(
+      AccountMatchingConfirmationEntity,
+    );
+
+    const learningIndustryRepository = manager.getRepository(
+      AccountMatchingLearningIndustryEntity,
+    );
+
+    const learningRepository = manager.getRepository(
+      AccountMatchingLearningEntity,
+    );
+
+    const confirmations = await confirmationRepository.findBy({
+      invalidatedAt: IsNull(),
+    });
+
     const totals = new Map<string, number>();
-    for (const item of confirmations)
+
+    for (const item of confirmations) {
       totals.set(
         item.normalizedNameHash,
         (totals.get(item.normalizedNameHash) ?? 0) + 1,
       );
-    const groups = new Map<string, AccountMatchingConfirmationEntity[]>();
+    }
+
+    const groups = new Map<
+      string,
+      AccountMatchingConfirmationEntity[]
+    >();
+
     for (const item of confirmations) {
       const key = `${item.normalizedNameHash}:${item.siiAccountId}`;
-      groups.set(key, [...(groups.get(key) ?? []), item]);
+
+      groups.set(key, [
+        ...(groups.get(key) ?? []),
+        item,
+      ]);
     }
-    await manager
-      .getRepository(AccountMatchingLearningIndustryEntity)
-      .delete({});
-    await manager.getRepository(AccountMatchingLearningEntity).delete({});
+
+    await learningIndustryRepository
+      .createQueryBuilder()
+      .delete()
+      .execute();
+
+    await learningRepository
+      .createQueryBuilder()
+      .delete()
+      .execute();
+
     for (const rows of groups.values()) {
       const first = rows[0];
+
       const agreement =
-        rows.length / (totals.get(first.normalizedNameHash) ?? rows.length);
+        rows.length /
+        (totals.get(first.normalizedNameHash) ?? rows.length);
+
       const companies = new Set(
-        rows.flatMap((row) => (row.companyId ? [row.companyId] : [])),
+        rows.flatMap((row) =>
+          row.companyId ? [row.companyId] : [],
+        ),
       );
+
       const experts = rows.filter(
         (row) => row.source === ConfirmationSource.EXPERT,
       ).length;
-      const learning = await manager.save(
-        AccountMatchingLearningEntity,
-        manager.create(AccountMatchingLearningEntity, {
+
+      const learning = await learningRepository.save(
+        learningRepository.create({
           normalizedName: first.normalizedName,
           normalizedNameHash: first.normalizedNameHash,
           siiAccountId: first.siiAccountId,
@@ -72,36 +110,50 @@ export class LearningAggregatorService {
             experts,
           ).toFixed(6),
           lastConfirmedAt: new Date(
-            Math.max(...rows.map((row) => row.confirmedAt.getTime())),
+            Math.max(
+              ...rows.map((row) => row.confirmedAt.getTime()),
+            ),
           ),
         }),
       );
+
       const industryRows = new Map<
         string,
         AccountMatchingConfirmationEntity[]
       >();
-      for (const row of rows)
-        if (row.industryId)
-          industryRows.set(row.industryId, [
-            ...(industryRows.get(row.industryId) ?? []),
-            row,
-          ]);
+
+      for (const row of rows) {
+        if (!row.industryId) {
+          continue;
+        }
+
+        industryRows.set(row.industryId, [
+          ...(industryRows.get(row.industryId) ?? []),
+          row,
+        ]);
+      }
+
       for (const [industryId, evidence] of industryRows) {
         const industryTotal = confirmations.filter(
           (row) =>
             row.industryId === industryId &&
             row.normalizedNameHash === first.normalizedNameHash,
         ).length;
+
         const industryCompanies = new Set(
-          evidence.flatMap((row) => (row.companyId ? [row.companyId] : [])),
+          evidence.flatMap((row) =>
+            row.companyId ? [row.companyId] : [],
+          ),
         );
+
         const industryExperts = evidence.filter(
           (row) => row.source === ConfirmationSource.EXPERT,
         ).length;
+
         const rate = evidence.length / industryTotal;
-        await manager.save(
-          AccountMatchingLearningIndustryEntity,
-          manager.create(AccountMatchingLearningIndustryEntity, {
+
+        await learningIndustryRepository.save(
+          learningIndustryRepository.create({
             learningId: learning.id,
             industryId,
             confirmationCount: evidence.length,
@@ -114,7 +166,11 @@ export class LearningAggregatorService {
               industryExperts,
             ).toFixed(6),
             lastConfirmedAt: new Date(
-              Math.max(...evidence.map((row) => row.confirmedAt.getTime())),
+              Math.max(
+                ...evidence.map(
+                  (row) => row.confirmedAt.getTime(),
+                ),
+              ),
             ),
           }),
         );

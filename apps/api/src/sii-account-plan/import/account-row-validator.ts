@@ -2,6 +2,7 @@ import type {
   NormalizedSiiAccountRow,
   ValidatedSiiAccountRow,
 } from "../interfaces/normalized-sii-account-row.interface";
+import { ACCOUNT_CODE } from "./spreadsheet-reader";
 
 export interface ValidationResult {
   rows: ValidatedSiiAccountRow[];
@@ -32,6 +33,10 @@ export function validateRows(
       continue;
     }
     if (!row.code) {
+      ignoredRows += 1;
+      continue;
+    }
+    if (!ACCOUNT_CODE.test(row.code)) {
       ignoredRows += 1;
       continue;
     }

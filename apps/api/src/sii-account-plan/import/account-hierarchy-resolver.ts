@@ -6,50 +6,40 @@ export interface HierarchyResult {
   warnings: string[];
 }
 
+function levelAndCandidates(code: string): {
+  level: number;
+  candidates: string[];
+} {
+  const parts = code.split(".");
+  let last = parts.length - 1;
+  while (last > 0 && parts[last] === "00") last -= 1;
+  const level = last + 1;
+  const candidates: string[] = [];
+  for (let position = last; position > 0; position -= 1) {
+    candidates.push(
+      parts.map((part, index) => (index >= position ? "00" : part)).join("."),
+    );
+  }
+  return { level, candidates };
+}
+
 export function resolveHierarchy(
   rows: ValidatedSiiAccountRow[],
 ): HierarchyResult {
-  if (!rows.some((row) => row.level !== null)) {
-    return {
-      rows,
-      missingParents: [],
-      warnings: [
-        "El archivo no provee una señal explícita de jerarquía; level y parentId quedan nulos.",
-      ],
-    };
-  }
-
-  const stack = new Map<number, string>();
+  const codes = new Set(rows.map((row) => row.code));
   const missingParents: string[] = [];
   const resolved = rows.map((row) => {
-    if (row.level === null) {
-      return row;
-    }
+    const derived = levelAndCandidates(row.code);
     const parentCode =
-      row.level > 1 ? (stack.get(row.level - 1) ?? null) : null;
-    if (row.level > 1 && !parentCode) {
-      missingParents.push(row.code);
-    }
-    stack.set(row.level, row.code);
-    for (const level of [...stack.keys()]) {
-      if (level > row.level) {
-        stack.delete(level);
-      }
-    }
-    return {
-      ...row,
-      parentCode,
-    };
+      derived.candidates.find((candidate) => codes.has(candidate)) ?? null;
+    if (derived.level > 1 && !parentCode) missingParents.push(row.code);
+    return { ...row, level: derived.level, parentCode };
   });
-
   return {
     rows: resolved,
     missingParents,
-    warnings:
-      missingParents.length > 0
-        ? [
-            `${missingParents.length} cuentas no tienen padre explícito disponible.`,
-          ]
-        : [],
+    warnings: missingParents.map(
+      (code) => `Cuenta ${code}: no se encontró un ancestro existente.`,
+    ),
   };
 }

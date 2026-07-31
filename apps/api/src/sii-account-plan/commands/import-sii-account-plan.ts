@@ -4,8 +4,7 @@ import { SiiAccountPlanImportService } from "../services/sii-account-plan-import
 
 interface CliOptions {
   file: string;
-  code: string;
-  name: string;
+  sheet?: string;
   dryRun: boolean;
 }
 
@@ -15,17 +14,12 @@ function parseArguments(arguments_: string[]): CliOptions {
     return index >= 0 ? arguments_[index + 1] : undefined;
   };
   const file = value("--file");
-  const code = value("--code");
-  const name = value("--name");
-  if (!file || !code || !name) {
-    throw new Error(
-      "Uso: --file <archivo.xls> --code <código> --name <nombre> [--dry-run]",
-    );
+  if (!file) {
+    throw new Error("Uso: --file <archivo.xlsx> [--sheet <hoja>] [--dry-run]");
   }
   return {
     file,
-    code,
-    name,
+    sheet: value("--sheet"),
     dryRun: arguments_.includes("--dry-run"),
   };
 }

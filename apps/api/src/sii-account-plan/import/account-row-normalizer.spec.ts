@@ -1,81 +1,103 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { RawSiiAccountRow } from "../interfaces/raw-sii-account-row.interface";
+import type { ValidatedSiiAccountRow } from "../interfaces/normalized-sii-account-row.interface";
 import { normalizeRows } from "./account-row-normalizer";
-import { validateRows } from "./account-row-validator";
 import { resolveHierarchy } from "./account-hierarchy-resolver";
+import { validateRows } from "./account-row-validator";
+import { detectSheet } from "./spreadsheet-reader";
 
 function row(
-  sourceRowNumber: number,
+  number: number,
   code: string | null,
   name: string | null,
-  level: string | null = null,
 ): RawSiiAccountRow {
   return {
-    sourceRowNumber,
-    cells: [code, name, level],
-    sourceColumns: {
-      codigo: code,
-      descripcion: name,
-      nivel: level,
-    },
+    sourceRowNumber: number,
+    cells: [code, name],
+    sourceColumns: { codigo: code, descripcion: name },
   };
 }
 
-describe("SII account row pipeline", () => {
-  it("preserves codes as trimmed strings including leading zeroes", () => {
-    const [normalized] = normalizeRows([
-      row(3, " 001.02 ", " Caja   nacional "),
-    ]);
+function account(code: string): ValidatedSiiAccountRow {
+  return {
+    sourceRowNumber: 1,
+    code,
+    name: code,
+    description: null,
+    level: null,
+    sourceColumns: {},
+    sortOrder: 1,
+    parentCode: null,
+  };
+}
 
-    assert.equal(normalized.code, "001.02");
-    assert.equal(normalized.name, "Caja nacional");
-    assert.equal(typeof normalized.code, "string");
+describe("official SII account row pipeline", () => {
+  it("preserves a valid code as trimmed text", () => {
+    const result = validateRows(
+      normalizeRows([row(3, " 1.01.25.00 ", " Caja ")]),
+    );
+    assert.equal(result.rows[0].code, "1.01.25.00");
+    assert.equal(typeof result.rows[0].code, "string");
   });
 
-  it("removes empty rows and classifies title rows as ignored", () => {
-    const normalized = normalizeRows([
-      row(3, null, null),
-      row(4, null, "ACTIVOS"),
-      row(5, "100", "Caja"),
-    ]);
-    const result = validateRows(normalized);
-
-    assert.equal(normalized.length, 2);
-    assert.equal(result.rows.length, 1);
-    assert.equal(result.ignoredRows, 1);
-  });
-
-  it("rejects a missing account name and duplicate codes", () => {
+  it("ignores headings and rejects codes outside the official format", () => {
     const result = validateRows(
       normalizeRows([
-        row(3, "100", null),
-        row(4, "200", "Banco"),
-        row(5, "200", "Banco duplicado"),
+        row(3, null, "SECCIÓN I"),
+        row(4, "Código ID Partida", "Descripción"),
+        row(5, "101", "Caja"),
+        row(6, "1.01.01.00", "Caja"),
       ]),
     );
-
-    assert.ok(result.errors.some((error) => error.includes("nombre ausente")));
-    assert.deepEqual(result.duplicateCodes, ["200"]);
+    assert.deepEqual(
+      result.rows.map((item) => item.code),
+      ["1.01.01.00"],
+    );
+    assert.equal(result.ignoredRows, 3);
   });
 
-  it("uses only explicit levels to resolve hierarchy", () => {
-    const validated = validateRows(
-      normalizeRows([row(3, "1", "Activo", "1"), row(4, "101", "Caja", "2")]),
+  it("detects duplicate official codes", () => {
+    const result = validateRows(
+      normalizeRows([
+        row(3, "1.01.01.00", "Caja"),
+        row(4, "1.01.01.00", "Caja repetida"),
+      ]),
     );
-    const hierarchy = resolveHierarchy(validated.rows);
-
-    assert.equal(hierarchy.rows[1].parentCode, "1");
-    assert.deepEqual(hierarchy.missingParents, []);
+    assert.deepEqual(result.duplicateCodes, ["1.01.01.00"]);
   });
 
-  it("leaves hierarchy null when the workbook has no explicit level", () => {
-    const validated = validateRows(
-      normalizeRows([row(3, "1", "Activo"), row(4, "101", "Caja")]),
+  it("derives levels and nearest existing ancestors from codes", () => {
+    const result = resolveHierarchy([
+      account("1.00.00.00"),
+      account("1.01.00.00"),
+      account("1.01.25.00"),
+      account("5.01.05.06"),
+    ]);
+    assert.deepEqual(
+      result.rows.map(({ level, parentCode }) => ({ level, parentCode })),
+      [
+        { level: 1, parentCode: null },
+        { level: 2, parentCode: "1.00.00.00" },
+        { level: 3, parentCode: "1.01.00.00" },
+        { level: 4, parentCode: null },
+      ],
     );
-    const hierarchy = resolveHierarchy(validated.rows);
+    assert.deepEqual(result.missingParents, ["5.01.05.06"]);
+  });
 
-    assert.ok(hierarchy.rows.every((account) => account.parentCode === null));
-    assert.equal(hierarchy.warnings.length, 1);
+  it("refuses the visual F1926 sheet", () => {
+    assert.throws(
+      () =>
+        detectSheet(
+          {
+            workbook: { SheetNames: ["F1926"], Sheets: { F1926: {} } },
+            sheets: ["F1926"],
+            checksumInput: Buffer.alloc(1),
+          },
+          "F1926",
+        ),
+      /visual/,
+    );
   });
 });
