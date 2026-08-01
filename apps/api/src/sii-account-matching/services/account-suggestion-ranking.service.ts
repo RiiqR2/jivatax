@@ -23,6 +23,15 @@ const GENERIC_CONCEPTS = new Set(["activo", "pasivo", "impuesto", "gasto"]);
 export type RankingDecision =
   "automatic" | "ambiguous" | "review" | "no_candidate";
 
+type DiscardedCandidateAudit = {
+  accountId: string;
+  reasons: string[];
+  condition: string;
+  observedValue: unknown;
+  requiredValue: unknown;
+  discardedAt: string;
+};
+
 @Injectable()
 export class AccountSuggestionRankingService {
   constructor(
@@ -50,59 +59,99 @@ export class AccountSuggestionRankingService {
         this.rules.evaluate(name, source, observed, candidate, configuredRules),
       ]),
     );
-    const discardedCandidates = candidates.flatMap((candidate) => {
-      if (ruleEvaluations.get(candidate.account.id)?.excluded)
-        return [
-          { accountId: candidate.account.id, reasons: ["excluded_by_rule"] },
-        ];
-      if (!this.isHomologable(candidate))
-        return [
-          {
-            accountId: candidate.account.id,
-            reasons: ["aggregate_account_excluded"],
-          },
-        ];
-      if (!this.hasRequiredPrepaidSignal(normalized, candidate))
-        return [
-          {
-            accountId: candidate.account.id,
-            reasons:
-              observed === "expense"
-                ? ["current_expense_vs_prepaid_asset", "missing_prepaid_signal"]
-                : ["missing_prepaid_signal"],
-          },
-        ];
-      if (
-        candidate.metadata.statementSection === "unknown" &&
-        observed !== "unknown"
-      )
-        return [
-          {
-            accountId: candidate.account.id,
-            reasons: ["unknown_candidate_classification"],
-          },
-        ];
-      if (
-        !this.isCompatible(
-          observed,
-          candidate.metadata.statementSection,
-          candidate.metadata.contraAccount,
+    const discardedCandidates = candidates.flatMap<DiscardedCandidateAudit>(
+      (candidate) => {
+        if (ruleEvaluations.get(candidate.account.id)?.excluded)
+          return [
+            {
+              accountId: candidate.account.id,
+              reasons: ["excluded_by_rule"],
+              condition: "ruleEvaluation.excluded === true",
+              observedValue: true,
+              requiredValue: false,
+              discardedAt:
+                "account-suggestion-ranking.service.ts:rank:excluded_by_rule",
+            },
+          ];
+        if (!this.isHomologable(candidate))
+          return [
+            {
+              accountId: candidate.account.id,
+              reasons: ["aggregate_account_excluded"],
+              condition: "candidate account name is not total/subtotal/suma",
+              observedValue: candidate.account.name,
+              requiredValue: "non-aggregate account name",
+              discardedAt:
+                "account-suggestion-ranking.service.ts:rank:aggregate_account_excluded",
+            },
+          ];
+        if (!this.hasRequiredPrepaidSignal(normalized, candidate))
+          return [
+            {
+              accountId: candidate.account.id,
+              reasons:
+                observed === "expense"
+                  ? [
+                      "current_expense_vs_prepaid_asset",
+                      "missing_prepaid_signal",
+                    ]
+                  : ["missing_prepaid_signal"],
+              condition:
+                "prepaid-expense destination requires an explicit prepaid token",
+              observedValue: normalized,
+              requiredValue: "anticipad|prepag|prepago|pagado por adelantado",
+              discardedAt:
+                "account-suggestion-ranking.service.ts:rank:missing_prepaid_signal",
+            },
+          ];
+        if (
+          candidate.metadata.statementSection === "unknown" &&
+          observed !== "unknown"
         )
-      )
-        return [
-          {
-            accountId: candidate.account.id,
-            reasons: [
-              this.incompatibilityReason(
-                observed,
-                candidate.metadata.statementSection,
-                candidate.metadata.contraAccount,
-              ),
-            ],
-          },
-        ];
-      return [];
-    });
+          return [
+            {
+              accountId: candidate.account.id,
+              reasons: ["unknown_candidate_classification"],
+              condition:
+                "classified source cannot use an unknown destination section",
+              observedValue: candidate.metadata.statementSection,
+              requiredValue: observed,
+              discardedAt:
+                "account-suggestion-ranking.service.ts:rank:unknown_candidate_classification",
+            },
+          ];
+        if (
+          !this.isCompatible(
+            observed,
+            candidate.metadata.statementSection,
+            candidate.metadata.contraAccount,
+          )
+        )
+          return [
+            {
+              accountId: candidate.account.id,
+              reasons: [
+                this.incompatibilityReason(
+                  observed,
+                  candidate.metadata.statementSection,
+                  candidate.metadata.contraAccount,
+                ),
+              ],
+              condition:
+                "observed and destination statement sections compatible",
+              observedValue: {
+                source: observed,
+                destination: candidate.metadata.statementSection,
+                destinationContraAccount: candidate.metadata.contraAccount,
+              },
+              requiredValue: observed,
+              discardedAt:
+                "account-suggestion-ranking.service.ts:rank:isCompatible",
+            },
+          ];
+        return [];
+      },
+    );
     const ranked = candidates
       .filter(
         (candidate) => !ruleEvaluations.get(candidate.account.id)?.excluded,
@@ -292,6 +341,14 @@ export class AccountSuggestionRankingService {
                       ACCOUNT_SUGGESTION_CONFIG.minimumRelativeDifference)
                 ? "ambiguous"
                 : "automatic";
+    const decisionAudit = this.decisionAudit(
+      decision,
+      top,
+      gap,
+      top[0]
+        ? (ruleEvaluations.get(top[0].account.id)?.review ?? false)
+        : false,
+    );
     if (decision === "ambiguous")
       for (const item of top)
         item.reasons.push(
@@ -317,6 +374,40 @@ export class AccountSuggestionRankingService {
           ),
         ),
       ],
+      decisionAudit,
+    };
+  }
+
+  private decisionAudit(
+    decision: RankingDecision,
+    top: RankedCandidate[],
+    gap: number,
+    reviewByRule: boolean,
+  ) {
+    const winner = top[0];
+    const observed = {
+      candidateCount: top.length,
+      reviewByRule,
+      statementSection: winner?.metadata.statementSection,
+      score: winner?.score,
+      confidence: winner?.confidence,
+      absoluteGap: gap,
+      relativeGap: gap / Math.max(winner?.score ?? 0, 1),
+    };
+    const thresholds = {
+      minimumScore: ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore,
+      minimumConfidence: ACCOUNT_SUGGESTION_CONFIG.minimumAutomaticConfidence,
+      minimumAbsoluteGap: ACCOUNT_SUGGESTION_CONFIG.minimumAbsoluteDifference,
+      minimumRelativeGap: ACCOUNT_SUGGESTION_CONFIG.minimumRelativeDifference,
+    };
+    return {
+      decision,
+      observed,
+      thresholds,
+      discardedAt:
+        decision === "automatic"
+          ? null
+          : "account-suggestion-ranking.service.ts:rank:final-decision",
     };
   }
 

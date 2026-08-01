@@ -215,6 +215,16 @@ export class AccountSuggestionService {
           companyAccount.matchingContext,
           loadedRules,
         );
+        this.logSuggestionAudit({
+          companyAccount,
+          industryId: company.industryId,
+          loadedTerms,
+          loadedConcepts,
+          loadedLearning,
+          generatedCandidates,
+          ranking: deterministic,
+          siiAccountsById,
+        });
         const generatedAt = new Date();
         if (diagnosticsEnabled)
           await diagnosticRepository.save(
@@ -472,6 +482,140 @@ export class AccountSuggestionService {
     return global.map((item) =>
       Object.assign(item, { industryEvidence: byLearningId.get(item.id) }),
     );
+  }
+
+  /**
+   * Temporary, deliberately verbose audit trace. It only reports data already
+   * loaded by the production pipeline and therefore cannot affect retrieval,
+   * scoring or persistence.
+   */
+  private logSuggestionAudit(input: {
+    companyAccount: AccountWithContext;
+    industryId: string | null;
+    loadedTerms: SiiAccountTermEntity[];
+    loadedConcepts: SiiAccountConceptEntity[];
+    loadedLearning: AccountLearningEvidence[];
+    generatedCandidates: ReturnType<
+      AccountCandidateGeneratorService["generate"]
+    >;
+    ranking: ReturnType<AccountSuggestionRankingService["rank"]>;
+    siiAccountsById: Map<string, SiiAccountEntity>;
+  }) {
+    const normalized = normalizeAccountTerm(input.companyAccount.name);
+    const normalizedNameHash = createHash("sha256")
+      .update(normalized, "utf8")
+      .digest("hex");
+    const exactTerms = input.loadedTerms.filter(
+      (term) => term.normalizedTerm === normalized,
+    );
+    const exactLearning = input.loadedLearning.filter(
+      (item) => item.normalizedNameHash === normalizedNameHash,
+    );
+    const candidateById = new Map(
+      input.generatedCandidates.map((item) => [item.account.id, item]),
+    );
+    const describeTerm = (term: SiiAccountTermEntity) => ({
+      siiAccountId: term.siiAccountId,
+      code: input.siiAccountsById.get(term.siiAccountId)?.code,
+      destination: input.siiAccountsById.get(term.siiAccountId)?.name,
+      term: term.term,
+      normalizedTerm: term.normalizedTerm,
+      type: term.type,
+      scope: term.scope,
+      companyId: term.companyId,
+      weight: Number(term.weight),
+    });
+    const ranked = input.ranking.allCandidates.map((item) => ({
+      siiAccountId: item.account.id,
+      code: item.account.code,
+      destination: item.account.name,
+      score: item.score,
+      confidence: item.confidence,
+      signals: item.reasons,
+    }));
+    const discarded = input.ranking.discardedCandidates.map((item) => {
+      const candidate = candidateById.get(item.accountId);
+      return {
+        ...item,
+        code: candidate?.account.code,
+        destination: candidate?.account.name,
+      };
+    });
+    this.logger.debug({
+      message: "Auditoría temporal detallada de sugerencia de homologación",
+      account: input.companyAccount.name,
+      companyAccountId: input.companyAccount.id,
+      companyId: input.companyAccount.companyId,
+      industryId: input.industryId,
+      normalized,
+      normalizedNameHash,
+      balanceContext: input.companyAccount.matchingContext,
+      evidenceSources: {
+        exactOfficialNames: exactTerms
+          .filter((term) => term.type === "official_name")
+          .map(describeTerm),
+        exactAliases: exactTerms
+          .filter((term) => term.type !== "official_name")
+          .map(describeTerm),
+        concepts: input.loadedConcepts
+          .filter((concept) =>
+            normalized.includes(
+              normalizeAccountTerm(
+                concept.normalizedConcept || concept.concept,
+              ),
+            ),
+          )
+          .map((concept) => ({
+            siiAccountId: concept.siiAccountId,
+            code: input.siiAccountsById.get(concept.siiAccountId)?.code,
+            destination: input.siiAccountsById.get(concept.siiAccountId)?.name,
+            concept: concept.concept,
+            conceptType: concept.conceptType,
+          })),
+        learningGlobal: exactLearning.map((item) => ({
+          siiAccountId: item.siiAccountId,
+          code: input.siiAccountsById.get(item.siiAccountId)?.code,
+          destination: input.siiAccountsById.get(item.siiAccountId)?.name,
+          confirmationCount: item.confirmationCount,
+          expertConfirmationCount: item.expertConfirmationCount,
+          distinctCompanyCount: item.distinctCompanyCount,
+          agreementRate: Number(item.agreementRate),
+          confidence: Number(item.confidence),
+        })),
+        learningIndustry: exactLearning.flatMap((item) =>
+          item.industryEvidence
+            ? [
+                {
+                  siiAccountId: item.siiAccountId,
+                  code: input.siiAccountsById.get(item.siiAccountId)?.code,
+                  destination: input.siiAccountsById.get(item.siiAccountId)
+                    ?.name,
+                  industryId: item.industryEvidence.industryId,
+                  confirmationCount: item.industryEvidence.confirmationCount,
+                  expertConfirmationCount:
+                    item.industryEvidence.expertConfirmationCount,
+                  distinctCompanyCount:
+                    item.industryEvidence.distinctCompanyCount,
+                  agreementRate: Number(item.industryEvidence.agreementRate),
+                  confidence: Number(item.industryEvidence.confidence),
+                },
+              ]
+            : [],
+        ),
+        confirmationsDirectlyQueried: false,
+        deterministicRules: input.ranking.evaluatedRules,
+      },
+      candidatesEnteringPipeline: input.generatedCandidates.length,
+      rankingBeforeDecisionFilters: ranked,
+      rankingAfterHardFilters: ranked.slice(
+        0,
+        ACCOUNT_SUGGESTION_CONFIG.topCandidates,
+      ),
+      candidatesDiscardedByHardFilters: discarded,
+      finalDecision: input.ranking.decision,
+      winner: ranked[0] ?? null,
+      finalDecisionAudit: input.ranking.decisionAudit,
+    });
   }
 
   private rank(
