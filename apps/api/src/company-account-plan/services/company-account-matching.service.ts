@@ -1,8 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { EntityManager } from "typeorm";
 import { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
-import { SiiAccountPlanVersionEntity } from "../../sii-account-plan/entities/sii-account-plan-version.entity";
-import { SiiAccountPlanVersionStatus } from "../../sii-account-plan/enums/sii-account-plan-version-status.enum";
+import { CurrentSiiAccountCatalogService } from "../../sii-account-plan/services/current-sii-account-catalog.service";
 import { CompanyAccountEntity } from "../entities/company-account.entity";
 import { CompanyAccountMappingEntity } from "../entities/company-account-mapping.entity";
 import {
@@ -19,23 +18,15 @@ interface Candidate {
 
 @Injectable()
 export class CompanyAccountMatchingService {
+  constructor(
+    private readonly currentCatalog: CurrentSiiAccountCatalogService,
+  ) {}
+
   async generateMappingSuggestions(
     manager: EntityManager,
     companyAccounts: CompanyAccountEntity[],
   ): Promise<number> {
-    const activeVersion = await manager.findOne(SiiAccountPlanVersionEntity, {
-      where: {
-        status: SiiAccountPlanVersionStatus.ACTIVE,
-      },
-      order: {
-        importedAt: "DESC",
-      },
-    });
-    const siiAccounts = activeVersion
-      ? await manager.findBy(SiiAccountEntity, {
-          versionId: activeVersion.id,
-        })
-      : [];
+    const siiAccounts = await this.currentCatalog.findAccounts(manager);
     const codeIndex = this.indexBy(siiAccounts, (account) =>
       account.code.trim(),
     );

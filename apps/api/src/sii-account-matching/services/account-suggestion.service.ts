@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from "@nestjs/common";
 import { InjectDataSource } from "@nestjs/typeorm";
 import { Brackets, DataSource, In, IsNull } from "typeorm";
 import {
@@ -10,7 +15,7 @@ import { TaxPeriodCompanyAccountEntity } from "../../accounting/entities/tax-per
 import { CompanyAccountEntity } from "../../company-account-plan/entities/company-account.entity";
 import { CompanyAccountMappingStatus } from "../../company-account-plan/enums/company-account-plan.enums";
 import { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
-import { SiiAccountPlanVersionStatus } from "../../sii-account-plan/enums/sii-account-plan-version-status.enum";
+import { CurrentSiiAccountCatalogService } from "../../sii-account-plan/services/current-sii-account-catalog.service";
 import {
   SiiAccountTermEntity,
   type SiiAccountTermType,
@@ -91,6 +96,8 @@ export class AccountSuggestionService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly candidateGenerator: AccountCandidateGeneratorService = new AccountCandidateGeneratorService(),
     private readonly ranking: AccountSuggestionRankingService = new AccountSuggestionRankingService(),
+    @Optional()
+    private readonly currentCatalog?: CurrentSiiAccountCatalogService,
   ) {}
 
   async generateForPeriod(companyId: string, taxPeriodId: string) {
@@ -389,15 +396,10 @@ export class AccountSuggestionService {
   }
 
   private loadSiiAccounts() {
-    return this.dataSource
-      .getRepository(SiiAccountEntity)
-      .createQueryBuilder("account")
-      .innerJoin("account.version", "version")
-      .where("account.deletedAt IS NULL")
-      .andWhere("version.status = :status", {
-        status: SiiAccountPlanVersionStatus.ACTIVE,
-      })
-      .getMany();
+    return (
+      this.currentCatalog ??
+      new CurrentSiiAccountCatalogService(this.dataSource)
+    ).findAccounts();
   }
 
   private loadTerms(companyId: string) {

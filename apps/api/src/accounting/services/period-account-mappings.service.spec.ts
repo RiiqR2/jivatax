@@ -51,8 +51,9 @@ test("update usa repositorios transaccionales, relaciones e historial", () => {
   assert.match(source, /CompanyAccountSuggestionStatus\.REJECTED/);
   assert.match(
     source,
-    /BadRequestException\("La cuenta SII seleccionada no existe\."\)/,
+    /currentCatalog\.containsAccount\(dto\.siiAccountId!, manager\)/,
   );
+  assert.match(source, /no pertenece al catálogo vigente/);
 });
 
 test("aprobación masiva valida período, estado y sugerencia principal y reutiliza el dominio", () => {

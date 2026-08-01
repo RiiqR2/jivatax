@@ -40,6 +40,7 @@ import {
   CompanyAccountStatus,
 } from "../enums/company-account-plan.enums";
 import { CompanyAccountMatchingService } from "./company-account-matching.service";
+import { CurrentSiiAccountCatalogService } from "../../sii-account-plan/services/current-sii-account-catalog.service";
 import { CompanyAccountPlanParserService } from "./company-account-plan-parser.service";
 import { CompanyAccountPlanTemplateService } from "./company-account-plan-template.service";
 import { ACCOUNT_PLAN_FILE_CONTRACT } from "../company-account-plan.contract";
@@ -80,6 +81,7 @@ export class CompanyAccountPlanService {
     private readonly dataSource: DataSource,
     private readonly parser: CompanyAccountPlanParserService,
     private readonly matching: CompanyAccountMatchingService,
+    private readonly currentCatalog: CurrentSiiAccountCatalogService,
     private readonly template: CompanyAccountPlanTemplateService,
     @Inject(OBJECT_STORAGE)
     private readonly storage: ObjectStorageService,
@@ -375,12 +377,10 @@ export class CompanyAccountPlanService {
       organizationId,
       userId,
     );
-    if (
-      !(await this.dataSource
-        .getRepository(SiiAccountEntity)
-        .existsBy({ id: dto.siiAccountId }))
-    ) {
-      throw new BadRequestException("La cuenta SII seleccionada no existe.");
+    if (!(await this.currentCatalog.containsAccount(dto.siiAccountId))) {
+      throw new BadRequestException(
+        "La cuenta SII seleccionada no pertenece al catálogo vigente.",
+      );
     }
     mapping.siiAccountId = dto.siiAccountId;
     mapping.status = CompanyAccountMappingStatus.CONFIRMED;

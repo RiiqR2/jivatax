@@ -363,27 +363,21 @@ describe("AccountSuggestionService persistence", () => {
   });
 
   it("retrieves the complete active SII catalogue independently of terms and learning", async () => {
-    const clauses: string[] = [];
-    const repository = {
-      createQueryBuilder: () => ({
-        innerJoin: () => repository.createQueryBuilder(),
-        where: (clause: string) => {
-          clauses.push(clause);
-          return repository.createQueryBuilder();
+    let catalogueReads = 0;
+    const service = new AccountSuggestionService(
+      {} as DataSource,
+      undefined,
+      undefined,
+      {
+        findAccounts: async () => {
+          catalogueReads++;
+          return [
+            sii("available", "1.01.01.00", "Disponible"),
+            sii("unreferenced", "2.01.01.00", "Cuenta sin términos"),
+          ];
         },
-        andWhere: (clause: string) => {
-          clauses.push(clause);
-          return repository.createQueryBuilder();
-        },
-        getMany: async () => [
-          sii("available", "1.01.01.00", "Disponible"),
-          sii("unreferenced", "2.01.01.00", "Cuenta sin términos"),
-        ],
-      }),
-    };
-    const service = new AccountSuggestionService({
-      getRepository: () => repository,
-    } as unknown as DataSource);
+      } as never,
+    );
 
     const result = await (
       service as unknown as {
@@ -392,8 +386,7 @@ describe("AccountSuggestionService persistence", () => {
     ).loadSiiAccounts();
 
     assert.equal(result.length, 2);
-    assert.ok(clauses.includes("account.deletedAt IS NULL"));
-    assert.ok(clauses.includes("version.status = :status"));
+    assert.equal(catalogueReads, 1);
   });
 
   it("persists ranked suggestions and supersedes active rows without changing a mapping", async () => {

@@ -15,6 +15,7 @@ import { CompanyAccountMatchingService } from "./services/company-account-matchi
 import { CompanyAccountPlanParserService } from "./services/company-account-plan-parser.service";
 import { CompanyAccountPlanService } from "./services/company-account-plan.service";
 import { CompanyAccountPlanTemplateService } from "./services/company-account-plan-template.service";
+import { SiiAccountPlanModule } from "../sii-account-plan/sii-account-plan.module";
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { CompanyAccountPlanTemplateService } from "./services/company-account-pl
     ]),
     AuthModule,
     StorageModule,
+    SiiAccountPlanModule,
   ],
   controllers: [CompanyAccountPlanController],
   providers: [

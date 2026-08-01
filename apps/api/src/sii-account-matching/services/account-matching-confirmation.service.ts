@@ -6,7 +6,7 @@ import {
 import { EntityManager, IsNull } from "typeorm";
 import { NormalizationService } from "../../common/services/normalization.service";
 import { CompanyEntity } from "../../companies/entities/company.entity";
-import { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
+import { CurrentSiiAccountCatalogService } from "../../sii-account-plan/services/current-sii-account-catalog.service";
 import {
   AccountMatchingConfirmationEntity,
   ConfirmationSource,
@@ -14,7 +14,10 @@ import {
 
 @Injectable()
 export class AccountMatchingConfirmationService {
-  constructor(private readonly normalization: NormalizationService) {}
+  constructor(
+    private readonly normalization: NormalizationService,
+    private readonly currentCatalog: CurrentSiiAccountCatalogService,
+  ) {}
   async record(
     manager: EntityManager,
     input: {
@@ -35,11 +38,11 @@ export class AccountMatchingConfirmationService {
     if (input.companyId && !company)
       throw new NotFoundException("Empresa no encontrada.");
     if (
-      !(await manager
-        .getRepository(SiiAccountEntity)
-        .existsBy({ id: input.siiAccountId }))
+      !(await this.currentCatalog.containsAccount(input.siiAccountId, manager))
     )
-      throw new NotFoundException("Cuenta SII no encontrada.");
+      throw new NotFoundException(
+        "La cuenta SII no pertenece al catálogo vigente.",
+      );
     const normalizedName = this.normalization.normalizeAccountName(
       input.originalName,
     );
