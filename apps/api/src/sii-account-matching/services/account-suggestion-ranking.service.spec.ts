@@ -9,6 +9,7 @@ import { AccountSuggestionRankingService } from "./account-suggestion-ranking.se
 import type { SiiAccountConceptEntity } from "../entities/sii-account-concept.entity";
 import type { AccountMatchingLearningEntity } from "../entities/account-matching-learning.entity";
 import type { AccountMatchingLearningIndustryEntity } from "../entities/account-matching-learning-industry.entity";
+import type { SiiAccountTermEntity } from "../entities/sii-account-term.entity";
 
 const account = (id: string, code: string, name: string) =>
   ({ id, code, name, deletedAt: null }) as SiiAccountEntity;
@@ -107,6 +108,97 @@ describe("deterministic candidate retrieval and ranking", () => {
         (reason) => reason.signal === "supervised_learning_global",
       ),
     );
+  });
+
+  it("requires semantic evidence for review candidates instead of Balance compatibility alone", () => {
+    const result = ranking.rank(
+      {
+        observedAccountName: "Insumos de Lavandería",
+        canonicalAccountName: "Mercaderías",
+      },
+      generator.generate([
+        account("machinery", "1.02.03.00", "Maquinarias y equipos"),
+      ]),
+      context("asset", "debit"),
+    );
+    assert.equal(result.decision, "review");
+    assert.equal(result.candidates[0].semanticEvidenceSatisfied, false);
+    assert.deepEqual(result.candidates[0].semanticEvidenceReasons, []);
+  });
+
+  it("accepts specific rules and aliases as semantic review evidence", () => {
+    const capital = ranking.rank(
+      "Capital Social",
+      generator.generate([account("capital", "2.03.01.00", "Capital pagado")]),
+      context("liability", "credit"),
+    );
+    assert.ok(
+      capital.candidates[0].semanticEvidenceReasons.includes(
+        "rule:capital_is_equity",
+      ),
+    );
+
+    const income = account(
+      "operating-income",
+      "3.01.01.00",
+      "Ingresos de explotación",
+    );
+    const aliases = [
+      {
+        siiAccountId: income.id,
+        term: "ventas",
+        normalizedTerm: "ventas",
+        type: "alias",
+        scope: "global",
+        active: true,
+        deletedAt: null,
+      },
+    ] as SiiAccountTermEntity[];
+    const sales = ranking.rank(
+      "Ventas Servicios de Lavandería",
+      generator.generate([income], aliases),
+      context("income", "credit"),
+    );
+    assert.equal(sales.candidates[0].semanticEvidenceSatisfied, true);
+    assert.ok(
+      sales.candidates[0].semanticEvidenceReasons.includes(
+        "semantic_alias_hit",
+      ),
+    );
+  });
+
+  it("does not treat historical names or weak cost/payable overlap as semantic evidence", () => {
+    for (const [observedAccountName, canonicalAccountName, destination] of [
+      [
+        "Remuneraciones por Pagar",
+        "Retenciones Honorarios",
+        account("payable", "2.01.08.00", "Cuentas por pagar"),
+      ],
+      [
+        "Costo de Servicios",
+        "Costo de Ventas",
+        account("cost", "3.01.02.00", "Costos de explotación"),
+      ],
+    ] as const) {
+      const section = observedAccountName.startsWith("Costo")
+        ? context("expense", "debit")
+        : context("liability", "credit");
+      const result = ranking.rank(
+        { observedAccountName, canonicalAccountName },
+        generator.generate([destination]),
+        section,
+      );
+      assert.equal(
+        result.candidates[0].semanticEvidenceSatisfied,
+        false,
+        `${observedAccountName}: ${result.candidates[0].semanticEvidenceReasons.join(",")}`,
+      );
+      assert.ok(
+        !result.candidates[0].semanticEvidenceReasons.some((reason) =>
+          reason.startsWith("canonical_"),
+        ),
+      );
+    }
   });
 
   it("excludes candidates incompatible with the observed Balance section", () => {

@@ -8,6 +8,11 @@ export const ACCOUNT_SUGGESTION_CONFIG = Object.freeze({
   minimumAutomaticConfidence: 0.6,
   scoreForFullConfidence: 100,
   lexicalCandidateThreshold: 0.34,
+  semanticEvidence: {
+    minimumAliasTokenSimilarity: 0.3,
+    minimumJaccardSimilarity: 0.34,
+    minimumTrigramSimilarity: 0.5,
+  },
   weights: {
     historicalCompanyMapping: 100,
     exactCompanyAlias: 80,

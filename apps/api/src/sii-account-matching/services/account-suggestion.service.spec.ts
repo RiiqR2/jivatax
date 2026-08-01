@@ -497,6 +497,63 @@ describe("AccountSuggestionService persistence", () => {
     assert.equal(saved[0].status, CompanyAccountSuggestionStatus.REVIEW);
   });
 
+  it("does not persist a review candidate supported only by Balance structure", async () => {
+    const saved: Array<Record<string, unknown>> = [];
+    const repository = {
+      update: async () => undefined,
+      create: (value: Record<string, unknown>) => value,
+      save: async (values: Array<Record<string, unknown>>) => {
+        saved.push(...values);
+        return values;
+      },
+      softDelete: undefined,
+    };
+    const dataSource = {
+      transaction: async (
+        callback: (manager: {
+          getRepository: () => typeof repository;
+        }) => unknown,
+      ) => callback({ getRepository: () => repository }),
+    } as unknown as DataSource;
+    const service = new AccountSuggestionService(dataSource);
+    Object.assign(service as object, {
+      loadCompanyContext: async () => ({ industryId: null }),
+      loadCompanyAccounts: async () => [
+        {
+          id: "internal-laundry-supplies",
+          name: "Mercaderías",
+          matchingContext: {
+            accountNameSnapshot: "Insumos de Lavandería",
+            assetAmount: "100",
+            liabilityAmount: "0",
+            lossAmount: "0",
+            gainAmount: "0",
+            debitBalance: "100",
+            creditBalance: "0",
+          },
+          mapping: { status: CompanyAccountMappingStatus.UNMAPPED },
+        },
+      ],
+      loadSiiAccounts: async () => [
+        sii("machinery", "1.02.03.00", "Maquinarias y equipos"),
+      ],
+      loadTerms: async () => [],
+      loadConcepts: async () => [],
+      loadKnowledge: async () => [],
+      loadRules: async () => [],
+      loadLearning: async () => [],
+    });
+
+    const result = await service.generateForPeriod(companyId, "period-1");
+    assert.equal(saved.length, 0);
+    assert.equal(result.suggestionsCreated, 0);
+    assert.equal(result.withoutSuggestion, 1);
+    assert.equal(
+      result.withoutSuggestionReasons.insufficient_semantic_evidence,
+      1,
+    );
+  });
+
   it("does not persist or alter confirmed mappings", async () => {
     let repositoryUsed = false;
     const repository = {

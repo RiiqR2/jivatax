@@ -82,3 +82,13 @@ Ejecutar “Generar sugerencias” en el período afectado con logs DEBUG y cons
 ## Corrección implementada posteriormente
 
 La generación usa `account_name_snapshot` como nombre observado para hash de learning, reglas y similitud; el nombre canónico queda limitado a una señal secundaria. La clasificación del destino registra su fuente y prioriza metadata oficial, jerarquía inequívoca del código, knowledge y finalmente texto. En particular, `1.01.59.00` queda clasificada como Activo. Los candidatos `review` se persisten con estado propio y la interfaz los muestra como “Sugerencia pendiente de revisión”. No se modificaron pesos ni umbrales.
+
+## Auditoría residual de nombres y evidencia semántica
+
+`canonicalName` proviene de `company_accounts.name`; el listado lo selecciona como `account.name`. El importador de Balance sólo escribe ese nombre cuando crea por primera vez la identidad `(company_id, internal_code)`. En cargas posteriores actualiza exclusivamente `last_seen_tax_period_id`, `last_seen_at` y `updated_at`; cuando el nombre difiere emite `ACCOUNT_NAME_CHANGED`, pero no ejecuta un update de `name`. Por tanto, el valor mostrado como canónico era el primer nombre registrado para ese código interno, posiblemente en otro período, no una sobrescritura reciente.
+
+Cada fila importada conserva además `balance_entries.account_name` y el upsert de presencia conserva el nombre vigente en `tax_period_company_accounts.account_name_snapshot`. Esta combinación permite demostrar el nombre histórico de identidad y el observado por período sin modificar mappings ni crear cuentas duplicadas. La interfaz ahora denomina esos campos “Nombre del período” y “Nombre histórico”, evitando sugerir una acción de renombrado.
+
+La persistencia de sugerencias exige ahora evidencia semántica explícita, independientemente del score estructural. Califican igualdad oficial/alias, alias con similitud mínima configurada, concepto exacto, learning global/industria, regla determinística específica, Jaccard con token no genérico o trigramas sobre el umbral configurado. No califican por sí solos Balance, naturaleza deudora/acreedora, sección compatible, nombre canónico histórico, familia genérica ni coincidencias débiles de `costo`, `gasto`, `cuenta`, `pagar` o `servicio`.
+
+Así, `Insumos de Lavandería → Maquinarias y equipos` se conserva en diagnostics como candidato estructural pero no se persiste. IVA Crédito Fiscal conserva nombre oficial y learning; Capital Social puede superar la puerta por `capital_is_equity`; Ventas Servicios requiere alias u otra evidencia real; Remuneraciones por Pagar y Costo de Servicios quedan sin sugerencia si sólo comparten tokens genéricos o estructura del Balance.

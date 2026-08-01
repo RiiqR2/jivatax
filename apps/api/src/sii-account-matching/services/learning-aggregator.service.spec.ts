@@ -87,7 +87,7 @@ it("reconstruye evidencia global y por rubro excluyendo confirmaciones invalidad
         return repository(industries);
       throw new Error("Repositorio inesperado");
     },
-  } as EntityManager;
+  } as unknown as EntityManager;
   const service = new LearningAggregatorService({} as never);
 
   await service.rebuildWithManager(manager);

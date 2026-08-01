@@ -333,7 +333,7 @@ export function AccountMappingPage({
                       {item.periodName}
                       {item.nameChanged && (
                         <span className="mt-1 block text-xs text-amber-700">
-                          Nombre modificado · Canónico: {item.canonicalName}
+                          Nombre histórico: {item.canonicalName}
                         </span>
                       )}
                     </td>
@@ -534,7 +534,9 @@ function MappingDialog({
           Revisar cuenta {item.code}
         </h2>
         <p id="mapping-description" className="mt-1 text-slate-600">
-          {item.canonicalName} · La selección no se guarda automáticamente.
+          Nombre del período: {item.periodName}
+          {item.nameChanged ? ` · Nombre histórico: ${item.canonicalName}` : ""}
+          . La selección no se guarda automáticamente.
         </p>
         {item.suggestions.length ? (
           <section className="mt-4 space-y-2 text-sm">

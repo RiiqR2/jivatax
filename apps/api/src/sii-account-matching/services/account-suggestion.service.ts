@@ -79,7 +79,8 @@ type DiscardReason =
   | "no_positive_terms"
   | "all_candidates_penalized"
   | "confirmed_mapping"
-  | "unsupported_term_type";
+  | "unsupported_term_type"
+  | "insufficient_semantic_evidence";
 
 @Injectable()
 export class AccountSuggestionService {
@@ -276,8 +277,11 @@ export class AccountSuggestionService {
               generatedAt,
             }),
           );
+        const semanticCandidates = deterministic.candidates.filter(
+          (candidate) => candidate.semanticEvidenceSatisfied,
+        );
         const ranked = {
-          candidates: deterministic.candidates.map((candidate) => ({
+          candidates: semanticCandidates.map((candidate) => ({
             ...candidate,
             exact: candidate.reasons.some(
               (reason) => reason.signal === "exact_alias",
@@ -293,7 +297,9 @@ export class AccountSuggestionService {
           discardReason:
             deterministic.decision === "ambiguous"
               ? ("ambiguous_candidates" as const)
-              : undefined,
+              : semanticCandidates.length === 0
+                ? ("insufficient_semantic_evidence" as const)
+                : undefined,
         };
         /* Retrieval, hard compatibility and scoring finish before persistence.
            Review candidates stay visible but are never marked as active. */
@@ -539,22 +545,67 @@ export class AccountSuggestionService {
       companyId: term.companyId,
       weight: Number(term.weight),
     });
-    const ranked = input.ranking.allCandidates.map((item) => ({
+    const structuralSignals = new Set([
+      "balance_match",
+      "balance_nature_match",
+      "debit_balance",
+      "credit_balance",
+      "compatible_statement_section",
+    ]);
+    const describeCandidate = (
+      item: (typeof input.ranking.allCandidates)[number],
+    ) => ({
       siiAccountId: item.account.id,
       code: item.account.code,
       destination: item.account.name,
+      statementSection: item.metadata.statementSection,
+      statementSectionSource: item.metadata.statementSectionSource,
       score: item.score,
       confidence: item.confidence,
-      signals: item.reasons,
-    }));
-    const discarded = input.ranking.discardedCandidates.map((item) => {
-      const candidate = candidateById.get(item.accountId);
-      return {
-        ...item,
-        code: candidate?.account.code,
-        destination: candidate?.account.name,
-      };
+      semanticEvidenceSatisfied: item.semanticEvidenceSatisfied,
+      semanticEvidenceReasons: item.semanticEvidenceReasons,
+      learningHits: (item.learning ?? []).filter(
+        (learning) => learning.normalizedNameHash === normalizedNameHash,
+      ).length,
+      officialNameHits: [item.account.name, ...item.terms]
+        .map((value) =>
+          typeof value === "string"
+            ? value
+            : value.type === "official_name"
+              ? value.term
+              : "",
+        )
+        .filter((value) => normalizeAccountTerm(value) === normalized).length,
+      aliasHits: item.terms.filter(
+        (term) =>
+          term.type !== "official_name" && term.normalizedTerm === normalized,
+      ).length,
+      semanticEvidence: item.reasons.filter(
+        (reason) =>
+          item.semanticEvidenceReasons.includes(reason.signal) &&
+          !structuralSignals.has(reason.signal),
+      ),
+      structuralEvidence: item.reasons.filter((reason) =>
+        structuralSignals.has(reason.signal),
+      ),
     });
+    const beforeSemanticFilter = input.ranking.allCandidates
+      .slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates)
+      .map(describeCandidate);
+    const afterSemanticFilter = input.ranking.allCandidates
+      .filter((candidate) => candidate.semanticEvidenceSatisfied)
+      .slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates)
+      .map(describeCandidate);
+    const discarded = input.ranking.discardedCandidates
+      .slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates)
+      .map((item) => {
+        const candidate = candidateById.get(item.accountId);
+        return {
+          ...item,
+          code: candidate?.account.code,
+          destination: candidate?.account.name,
+        };
+      });
     this.logger.debug({
       message: "Auditoría temporal detallada de sugerencia de homologación",
       account: observedName,
@@ -565,7 +616,7 @@ export class AccountSuggestionService {
       industryId: input.industryId,
       normalized,
       normalizedNameHash,
-      balanceContext: input.companyAccount.matchingContext,
+      observedSection: input.ranking.observedSection,
       evidenceSources: {
         exactOfficialNames: [
           ...input.generatedCandidates
@@ -640,37 +691,17 @@ export class AccountSuggestionService {
         deterministicRules: input.ranking.evaluatedRules,
       },
       candidatesEnteringPipeline: input.generatedCandidates.length,
-      candidateEvidence: input.generatedCandidates.map((candidate) => ({
-        siiAccountId: candidate.account.id,
-        code: candidate.account.code,
-        destination: candidate.account.name,
-        statementSection: candidate.metadata.statementSection,
-        statementSectionSource: candidate.metadata.statementSectionSource,
-        learningHits: (candidate.learning ?? []).filter(
-          (item) => item.normalizedNameHash === normalizedNameHash,
-        ).length,
-        officialNameHits: [candidate.account.name, ...candidate.terms]
-          .map((item) =>
-            typeof item === "string"
-              ? item
-              : item.type === "official_name"
-                ? item.term
-                : "",
-          )
-          .filter((name) => normalizeAccountTerm(name) === normalized).length,
-        aliasHits: candidate.terms.filter(
-          (term) =>
-            term.type !== "official_name" && term.normalizedTerm === normalized,
-        ).length,
-      })),
-      rankingBeforeDecisionFilters: ranked,
-      rankingAfterHardFilters: ranked.slice(
-        0,
-        ACCOUNT_SUGGESTION_CONFIG.topCandidates,
-      ),
+      topCandidatesBeforeSemanticFilter: beforeSemanticFilter,
+      topCandidatesAfterSemanticFilter: afterSemanticFilter,
       candidatesDiscardedByHardFilters: discarded,
+      hardDiscardedCandidateCount: input.ranking.discardedCandidates.length,
       finalDecision: input.ranking.decision,
-      winner: ranked[0] ?? null,
+      reviewPersistence: afterSemanticFilter.length
+        ? input.ranking.decision === "review"
+          ? "persisted_review_semantic_evidence_satisfied"
+          : "persisted_semantic_evidence_satisfied"
+        : "discarded_insufficient_semantic_evidence",
+      winner: afterSemanticFilter[0] ?? null,
       finalDecisionAudit: input.ranking.decisionAudit,
     });
   }
