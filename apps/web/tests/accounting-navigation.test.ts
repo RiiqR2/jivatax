@@ -6,6 +6,7 @@ import {
   companyEntryPath,
   explorerDocumentPath,
   isAccountingExplorerPath,
+  isValidTaxPeriodId,
   periodSelectionPath,
   selectPreferredPeriod,
 } from "../src/lib/accounting-navigation.ts";
@@ -77,6 +78,24 @@ test("el explorador genera rutas contextuales y permanece activo en Balance y Ma
   assert.equal(
     isAccountingExplorerPath("/companies/company-1/periods/period-1/documents"),
     false,
+  );
+});
+
+test("setup nunca se interpreta como identificador de período", () => {
+  assert.equal(isValidTaxPeriodId("setup"), false);
+  assert.equal(isValidTaxPeriodId(undefined), false);
+  assert.equal(
+    isValidTaxPeriodId("52402e39-0ebd-4484-a5fe-db2f512ac72d"),
+    true,
+  );
+
+  const sidebar = readFileSync(
+    new URL("../src/components/layout/app-sidebar.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    sidebar,
+    /accountingExplorerPath\(companyId, taxPeriodId\)/,
   );
 });
 

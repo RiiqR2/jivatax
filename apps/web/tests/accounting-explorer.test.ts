@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import {
   balancePath,
+  buildBalanceExplorerParams,
   formatAccountingAmount,
   ledgerPath,
 } from "../src/lib/accounting-explorer.ts";
@@ -20,6 +21,36 @@ test("builds the Balance to Libro Mayor navigation preserving company and period
 
 test("formats accounting values for presentation", () => {
   assert.match(formatAccountingAmount("1234"), /1[.\s]234/);
+});
+
+test("omite filtros vacíos y conserva parámetros obligatorios del Balance", () => {
+  assert.deepEqual(
+    buildBalanceExplorerParams({
+      code: " ",
+      name: "",
+      mapping: "all",
+      section: "",
+      page: 1,
+    }),
+    { mapping: "all", page: 1, pageSize: 25 },
+  );
+  assert.deepEqual(
+    buildBalanceExplorerParams({
+      code: " 1101 ",
+      name: " Caja ",
+      mapping: "mapped",
+      section: "asset",
+      page: 2,
+    }),
+    {
+      mapping: "mapped",
+      page: 2,
+      pageSize: 25,
+      code: "1101",
+      name: "Caja",
+      section: "asset",
+    },
+  );
 });
 
 test("expone accesos contextuales y estados vacíos accionables", () => {
@@ -47,4 +78,20 @@ test("expone accesos contextuales y estados vacíos accionables", () => {
   assert.match(documents, /explorerDocumentPath/);
   assert.match(documents, /Ver en explorador contable/);
   assert.match(mappings, /Ver Balance/);
+});
+
+test("la ruta sin período muestra configuración sin montar el explorador", () => {
+  const page = readFileSync(
+    new URL(
+      "../src/app/companies/[companyId]/periods/[taxPeriodId]/balance/page.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(page, /isValidTaxPeriodId/);
+  assert.match(page, /Crear período tributario/);
+  assert.match(page, /periods\/setup/);
+  assert.ok(
+    page.indexOf("if (!isValidTaxPeriodId") < page.indexOf("<BalanceExplorer"),
+  );
 });

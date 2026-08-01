@@ -6,6 +6,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import {
   balancePath,
+  buildBalanceExplorerParams,
+  buildLedgerExplorerParams,
   formatAccountingAmount,
   ledgerPath,
 } from "@/lib/accounting-explorer";
@@ -70,10 +72,11 @@ export function BalanceExplorer({
   const query = useQuery({
     queryKey: ["explorer-balance", companyId, taxPeriodId, filters],
     queryFn: () =>
-      accountingService.explorerBalance(companyId, taxPeriodId, {
-        ...filters,
-        pageSize: 25,
-      }),
+      accountingService.explorerBalance(
+        companyId,
+        taxPeriodId,
+        buildBalanceExplorerParams(filters),
+      ),
   });
   const change = (key: string, value: string) =>
     setFilters((old) => ({ ...old, [key]: value, page: 1 }));
@@ -265,10 +268,12 @@ export function GeneralLedgerExplorer({
   const query = useQuery({
     queryKey: ["explorer-ledger", companyId, taxPeriodId, accountId, filters],
     queryFn: () =>
-      accountingService.explorerLedger(companyId, taxPeriodId, accountId, {
-        ...filters,
-        pageSize: 25,
-      }),
+      accountingService.explorerLedger(
+        companyId,
+        taxPeriodId,
+        accountId,
+        buildLedgerExplorerParams(filters),
+      ),
   });
   const change = (key: string, value: string) =>
     setFilters((old) => ({ ...old, [key]: value, page: 1 }));

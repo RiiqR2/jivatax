@@ -21,6 +21,7 @@ import { useActiveCompany } from "@/providers/active-company-provider";
 import {
   accountingExplorerPath,
   isAccountingExplorerPath,
+  isValidTaxPeriodId,
 } from "@/lib/accounting-navigation";
 
 export function AppSidebar() {
@@ -30,9 +31,10 @@ export function AppSidebar() {
   const { activeCompany } = useActiveCompany();
   const companyId = activeCompany?.id;
   const taxPeriodId = pathname.match(/\/periods\/([^/]+)/)?.[1];
+  const validTaxPeriodId = isValidTaxPeriodId(taxPeriodId) ? taxPeriodId : null;
   const operationalBase =
-    companyId && taxPeriodId
-      ? `/companies/${companyId}/periods/${taxPeriodId}`
+    companyId && validTaxPeriodId
+      ? `/companies/${companyId}/periods/${validTaxPeriodId}`
       : null;
   const setupPath = companyId
     ? `/companies/${companyId}/periods/setup`
@@ -66,11 +68,13 @@ export function AppSidebar() {
           },
           {
             label: "Explorador contable",
-            href: taxPeriodId
-              ? accountingExplorerPath(companyId, taxPeriodId)
+            href: validTaxPeriodId
+              ? accountingExplorerPath(companyId, validTaxPeriodId)
               : setupPath,
             icon: LibraryBig,
-            active: taxPeriodId ? isAccountingExplorerPath(pathname) : false,
+            active: validTaxPeriodId
+              ? isAccountingExplorerPath(pathname)
+              : false,
             title: operationalBase
               ? undefined
               : "Selecciona un período tributario para explorar la contabilidad",

@@ -1,26 +1,38 @@
 import { Transform, Type } from "class-transformer";
 import { IsIn, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
 
+export const emptyToUndefined = ({ value }: { value: unknown }) => {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+};
+
 export class ExplorerPaginationDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page = 1;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) pageSize = 25;
 }
 
 export class BalanceExplorerQueryDto extends ExplorerPaginationDto {
-  @IsOptional() @IsString() code?: string;
-  @IsOptional() @IsString() name?: string;
+  @Transform(emptyToUndefined) @IsOptional() @IsString() code?: string;
+  @Transform(emptyToUndefined) @IsOptional() @IsString() name?: string;
   @IsOptional() @IsIn(["all", "mapped", "pending"]) mapping = "all";
-  @IsOptional() @IsIn(["asset", "liability", "loss", "gain"]) section?: string;
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsIn(["asset", "liability", "loss", "gain"])
+  section?: string;
   @IsOptional() @IsIn(["code", "name", "debit", "credit"]) sort = "code";
   @IsOptional() @IsIn(["asc", "desc"]) direction = "asc";
 }
 
 export class GeneralLedgerQueryDto extends ExplorerPaginationDto {
-  @IsOptional() @IsString() from?: string;
-  @IsOptional() @IsString() to?: string;
-  @IsOptional() @IsString() documentType?: string;
-  @IsOptional() @IsString() documentNumber?: string;
-  @IsOptional() @IsString() search?: string;
+  @Transform(emptyToUndefined) @IsOptional() @IsString() from?: string;
+  @Transform(emptyToUndefined) @IsOptional() @IsString() to?: string;
+  @Transform(emptyToUndefined) @IsOptional() @IsString() documentType?: string;
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  documentNumber?: string;
+  @Transform(emptyToUndefined) @IsOptional() @IsString() search?: string;
   @IsOptional()
   @IsIn([
     "date",

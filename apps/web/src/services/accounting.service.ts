@@ -16,7 +16,7 @@ export const accountingService = {
   async explorerBalance(
     companyId: string,
     periodId: string,
-    params: Record<string, string | number | undefined>,
+    params: Record<string, string | number>,
   ): Promise<Paginated<BalanceAccount>> {
     return (
       await api.get(
@@ -29,7 +29,7 @@ export const accountingService = {
     companyId: string,
     periodId: string,
     accountId: string,
-    params: Record<string, string | number | undefined>,
+    params: Record<string, string | number>,
   ): Promise<LedgerResponse> {
     return (
       await api.get(
