@@ -31,4 +31,8 @@ declare module "xlsx" {
     book_new(): WorkBook;
     book_append_sheet(workbook: WorkBook, sheet: WorkSheet, name: string): void;
   };
+
+  export const SSF: {
+    parse_date_code(value: number): { y: number; m: number; d: number } | null;
+  };
 }

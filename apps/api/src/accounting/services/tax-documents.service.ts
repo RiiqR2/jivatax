@@ -32,6 +32,9 @@ import {
   parseBalanceRows,
 } from "../balance/balance-parser";
 import { TaxPeriodsService } from "./tax-periods.service";
+import { TaxPeriodEntity } from "../entities/tax-period.entity";
+import { parseGeneralLedger } from "../movements/general-ledger-parser";
+import { parseJournal } from "../movements/journal-parser";
 
 type Issue = {
   sourceRowNumber: number;
@@ -64,6 +67,11 @@ type ImportReport = {
   systemTotals?: Record<string, number>;
   comparisons?: unknown[];
   parserVersion?: string;
+  voucherCount?: number;
+  balancedVoucherCount?: number;
+  unbalancedVoucherCount?: number;
+  duplicateSequences?: unknown[];
+  voucherBalances?: Record<string, unknown>;
 };
 
 @Injectable()
@@ -189,7 +197,15 @@ export class TaxDocumentsService {
         cellDates: true,
         raw: true,
       });
-      const parsed = this.parse(workbook, document.documentType, sheetName);
+      const period = await this.periods.get(companyId, periodId);
+      const parsed = this.parse(
+        workbook,
+        document.documentType,
+        period,
+        sheetName,
+      );
+      if (document.documentType !== TaxDocumentType.BALANCE)
+        await this.reconcileMovements(document, parsed.rows, parsed.report);
       if (parsed.report.errors.length > 0) {
         document.status = TaxDocumentStatus.INVALID;
         // Preserve the import, source rows, entries and report as evidence,
@@ -274,6 +290,7 @@ export class TaxDocumentsService {
   private parse(
     workbook: XLSX.WorkBook,
     type: TaxDocumentType,
+    period: Pick<TaxPeriodEntity, "commercialYear" | "startDate" | "endDate">,
     requestedSheet?: string,
   ) {
     const contract = DOCUMENT_CONTRACTS[type];
@@ -370,107 +387,168 @@ export class TaxDocumentsService {
         },
       };
     }
-    const errors: Issue[] = [];
-    const warnings: Issue[] = [];
-    const rows: Record<string, unknown>[] = [];
-    const seen = new Map<string, string>();
-    candidate.matrix.slice(candidate.row + 1).forEach((source, offset) => {
-      if (
-        source.every((value) => value === null || String(value).trim() === "")
-      )
-        return;
-      const row: Record<string, unknown> = {};
-      for (const [field, index] of Object.entries(candidate.map))
-        row[field] = source[index];
-      const sourceRowNumber = candidate.row + offset + 2;
-      row.sourceRowNumber = sourceRowNumber;
-      row.rawData = source;
-      for (const field of Object.keys(contract.required))
-        if (row[field] === null || String(row[field]).trim() === "")
-          errors.push({
-            sourceRowNumber,
-            field,
-            code: "REQUIRED_FIELD",
-            message: "Campo obligatorio vacío.",
-            rawValue: row[field],
+    const movement =
+      type === TaxDocumentType.GENERAL_LEDGER
+        ? parseGeneralLedger({
+            matrix: candidate.matrix,
+            headerRow: candidate.row,
+            columns: candidate.map,
+            sheetName: candidate.sheet,
+            period,
+          })
+        : parseJournal({
+            matrix: candidate.matrix,
+            headerRow: candidate.row,
+            columns: candidate.map,
+            sheetName: candidate.sheet,
+            period,
           });
-      if (row.accountCode !== undefined) {
-        row.accountCode = String(row.accountCode).trim();
-        const signature = JSON.stringify(row);
-        if (seen.has(String(row.accountCode)))
-          errors.push({
-            sourceRowNumber,
-            field: "accountCode",
-            code: "DUPLICATE_ACCOUNT",
-            message:
-              seen.get(String(row.accountCode)) === signature
-                ? "Cuenta duplicada."
-                : "Cuenta duplicada con valores diferentes.",
-            rawValue: row.accountCode,
-          });
-        seen.set(String(row.accountCode), signature);
-      }
-      for (const field of [
-        "debits",
-        "credits",
-        "debitBalance",
-        "creditBalance",
-        "assets",
-        "liabilities",
-        "losses",
-        "gains",
-        "debit",
-        "credit",
-      ]) {
-        if (!(field in row)) continue;
-        const value =
-          row[field] === null || row[field] === "" ? 0 : Number(row[field]);
-        if (!Number.isFinite(value) || value < 0)
-          errors.push({
-            sourceRowNumber,
-            field,
-            code: "INVALID_NUMBER",
-            message: "Debe ser un monto no negativo.",
-            rawValue: row[field],
-          });
-        row[field] = value;
-      }
-      if (Number(row.debit ?? 0) > 0 && Number(row.credit ?? 0) > 0)
-        errors.push({
-          sourceRowNumber,
-          field: "debit",
-          code: "BOTH_DEBIT_AND_CREDIT",
-          message: "Debe y Haber no pueden ser positivos simultáneamente.",
-          rawValue: null,
-        });
-      rows.push(row);
-    });
-    const totals = rows.reduce<{ debit: number; credit: number }>(
-      (sum, row) => ({
-        debit: sum.debit + Number(row.debits ?? row.debit ?? 0),
-        credit: sum.credit + Number(row.credits ?? row.credit ?? 0),
-      }),
-      { debit: 0, credit: 0 },
+    const invalidRows = new Set(
+      movement.errors
+        .filter((issue) => issue.sourceRowNumber > 0)
+        .map((issue) => issue.sourceRowNumber),
     );
     return {
-      rows,
+      rows: movement.rows,
       report: {
-        rowsRead: rows.length,
-        validRows:
-          rows.length -
-          new Set(errors.map((issue) => issue.sourceRowNumber)).size,
-        ignoredRows: candidate.matrix.length - candidate.row - 1 - rows.length,
-        errors,
-        warnings,
-        totals,
+        rowsRead: movement.rows.length,
+        validRows: movement.rows.length - invalidRows.size,
+        ignoredRows: movement.ignoredRows,
+        errors: movement.errors,
+        warnings: movement.warnings,
+        totals: movement.totals,
         reconciliation: {},
         detectedSheet: candidate.sheet,
         headerRowNumber: candidate.row + 1,
-        duplicateKeys: errors
-          .filter((issue) => issue.code.startsWith("DUPLICATE"))
-          .map((issue) => issue.rawValue),
+        duplicateKeys: [],
         detectedColumns: candidate.map,
+        parserVersion:
+          type === TaxDocumentType.GENERAL_LEDGER
+            ? "general-ledger-v1"
+            : "journal-v1",
+        ...movement.details,
       },
+    };
+  }
+
+  private async reconcileMovements(
+    document: TaxDocumentEntity,
+    rows: Record<string, unknown>[],
+    report: ImportReport,
+  ): Promise<void> {
+    const knownAccounts = (await this.dataSource.query(
+      "SELECT id, internal_code FROM company_accounts WHERE company_id = ? AND deleted_at IS NULL",
+      [document.companyId],
+    )) as Array<{ id: string; internal_code: string }>;
+    const knownCodes = new Set(
+      knownAccounts.map((account) => account.internal_code),
+    );
+    for (const row of rows)
+      if (!knownCodes.has(String(row.accountCode)))
+        report.warnings.push({
+          sourceRowNumber: Number(row.sourceRowNumber),
+          field: "accountCode",
+          code: "UNKNOWN_ACCOUNT",
+          message:
+            "La cuenta no existe en el catálogo generado por el Balance.",
+          rawValue: row.accountCode,
+        });
+    const sourceTable =
+      document.documentType === TaxDocumentType.GENERAL_LEDGER
+        ? "balance_entries"
+        : "general_ledger_entries";
+    const importTable =
+      document.documentType === TaxDocumentType.GENERAL_LEDGER
+        ? "balance_imports"
+        : "general_ledger_imports";
+    const debitColumn =
+      document.documentType === TaxDocumentType.GENERAL_LEDGER
+        ? "reported_debits"
+        : "debit";
+    const creditColumn =
+      document.documentType === TaxDocumentType.GENERAL_LEDGER
+        ? "reported_credits"
+        : "credit";
+    const importForeignKey =
+      document.documentType === TaxDocumentType.GENERAL_LEDGER
+        ? "balance_import_id"
+        : "general_ledger_import_id";
+    const comparison = (await this.dataSource.query(
+      `SELECT e.account_code, SUM(e.${debitColumn}) debit, SUM(e.${creditColumn}) credit
+       FROM ${sourceTable} e JOIN ${importTable} i ON i.id = e.${importForeignKey}
+       JOIN tax_documents d ON d.id = i.tax_document_id
+       WHERE e.company_id = ? AND e.tax_period_id = ? AND d.status = 'processed'
+       GROUP BY e.account_code`,
+      [document.companyId, document.taxPeriodId],
+    )) as Array<{ account_code: string; debit: string; credit: string }>;
+    if (comparison.length === 0) {
+      report.reconciliation = {
+        available: false,
+        comparedWith:
+          document.documentType === TaxDocumentType.GENERAL_LEDGER
+            ? "balance"
+            : "general_ledger",
+        message:
+          document.documentType === TaxDocumentType.GENERAL_LEDGER
+            ? "No existe un Balance procesado para conciliar."
+            : "No existe un Libro Mayor procesado para conciliar.",
+      };
+      return;
+    }
+    const imported = new Map<string, { debit: number; credit: number }>();
+    for (const row of this.validMovementRows(rows, report)) {
+      const code = String(row.accountCode);
+      const total = imported.get(code) ?? { debit: 0, credit: 0 };
+      total.debit += Number(row.debit);
+      total.credit += Number(row.credit);
+      imported.set(code, total);
+    }
+    const reference = new Map(
+      comparison.map((row) => [
+        row.account_code,
+        { debit: Number(row.debit), credit: Number(row.credit) },
+      ]),
+    );
+    const codes = new Set([...imported.keys(), ...reference.keys()]);
+    const accounts = [...codes].map((accountCode) => {
+      const current = imported.get(accountCode) ?? { debit: 0, credit: 0 };
+      const expected = reference.get(accountCode) ?? { debit: 0, credit: 0 };
+      return {
+        accountCode,
+        importedDebit: current.debit,
+        importedCredit: current.credit,
+        referenceDebit: expected.debit,
+        referenceCredit: expected.credit,
+        debitDifference: current.debit - expected.debit,
+        creditDifference: current.credit - expected.credit,
+        missingInImportedDocument: !imported.has(accountCode),
+        missingInReferenceDocument: !reference.has(accountCode),
+      };
+    });
+    for (const account of accounts)
+      if (
+        Math.abs(account.debitDifference) > 0.0001 ||
+        Math.abs(account.creditDifference) > 0.0001
+      )
+        report.warnings.push({
+          sourceRowNumber: 0,
+          field: "reconciliation",
+          code: "ACCOUNT_RECONCILIATION_DIFFERENCE",
+          message: `La cuenta ${account.accountCode} presenta diferencias en la conciliación.`,
+          rawValue: account,
+        });
+    report.reconciliation = {
+      available: true,
+      comparedWith:
+        document.documentType === TaxDocumentType.GENERAL_LEDGER
+          ? "balance"
+          : "general_ledger",
+      accounts,
+      differenceCount: accounts.filter(
+        (account) =>
+          Math.abs(account.debitDifference) > 0.0001 ||
+          Math.abs(account.creditDifference) > 0.0001,
+      ).length,
     };
   }
 
@@ -536,7 +614,30 @@ export class TaxDocumentsService {
           report,
           operational,
         );
+      } else if (document.documentType === TaxDocumentType.GENERAL_LEDGER) {
+        await this.persistGeneralLedger(
+          manager,
+          document,
+          importId,
+          rows,
+          report,
+        );
+      } else {
+        await manager.query(
+          "UPDATE journal_imports SET vouchers_read = ?, balanced_vouchers = ?, unbalanced_vouchers = ? WHERE id = ?",
+          [
+            report.voucherCount ?? 0,
+            report.balancedVoucherCount ?? 0,
+            report.unbalancedVoucherCount ?? 0,
+            importId,
+          ],
+        );
+        await this.persistJournal(manager, document, importId, rows, report);
       }
+      if (operational && report.validRows === 0)
+        throw new Error(
+          "No existen filas válidas para publicar la importación.",
+        );
       document.status = operational
         ? TaxDocumentStatus.PROCESSED
         : TaxDocumentStatus.INVALID;
@@ -565,6 +666,93 @@ export class TaxDocumentsService {
         await manager.save(document);
       }
     });
+  }
+
+  private validMovementRows(
+    rows: Record<string, unknown>[],
+    report: ImportReport,
+  ): Record<string, unknown>[] {
+    const invalid = new Set(
+      report.errors
+        .filter((error) => error.sourceRowNumber > 0)
+        .map((error) => error.sourceRowNumber),
+    );
+    return rows.filter((row) => !invalid.has(Number(row.sourceRowNumber)));
+  }
+
+  private async accountIds(
+    manager: EntityManager,
+    document: TaxDocumentEntity,
+  ): Promise<Map<string, string>> {
+    const accounts = (await manager.query(
+      "SELECT id, internal_code FROM company_accounts WHERE company_id = ? AND deleted_at IS NULL",
+      [document.companyId],
+    )) as Array<{ id: string; internal_code: string }>;
+    return new Map(
+      accounts.map((account) => [account.internal_code, account.id]),
+    );
+  }
+
+  private async persistGeneralLedger(
+    manager: EntityManager,
+    document: TaxDocumentEntity,
+    importId: string,
+    rows: Record<string, unknown>[],
+    report: ImportReport,
+  ): Promise<void> {
+    const accountIds = await this.accountIds(manager, document);
+    for (const row of this.validMovementRows(rows, report))
+      await manager.query(
+        "INSERT INTO general_ledger_entries (id, general_ledger_import_id, company_id, tax_period_id, company_account_id, account_code, account_name, transaction_date, document_type, document_number, description, debit, credit, source_row_number, raw_data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6))",
+        [
+          randomUUID(),
+          importId,
+          document.companyId,
+          document.taxPeriodId,
+          accountIds.get(String(row.accountCode)) ?? null,
+          row.accountCode,
+          row.accountName,
+          row.date,
+          row.documentType,
+          row.documentNumber,
+          row.description,
+          row.debit,
+          row.credit,
+          row.sourceRowNumber,
+          JSON.stringify(row.rawData),
+        ],
+      );
+  }
+
+  private async persistJournal(
+    manager: EntityManager,
+    document: TaxDocumentEntity,
+    importId: string,
+    rows: Record<string, unknown>[],
+    report: ImportReport,
+  ): Promise<void> {
+    const accountIds = await this.accountIds(manager, document);
+    for (const row of this.validMovementRows(rows, report))
+      await manager.query(
+        "INSERT INTO journal_entries (id, journal_import_id, company_id, tax_period_id, company_account_id, transaction_date, voucher_number, sequence_number, account_code, account_name, debit, credit, description, source_row_number, raw_data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6))",
+        [
+          randomUUID(),
+          importId,
+          document.companyId,
+          document.taxPeriodId,
+          accountIds.get(String(row.accountCode)) ?? null,
+          row.date,
+          row.voucherNumber,
+          row.sequence,
+          row.accountCode,
+          row.accountName || null,
+          row.debit,
+          row.credit,
+          row.description,
+          row.sourceRowNumber,
+          JSON.stringify(row.rawData),
+        ],
+      );
   }
 
   private async persistBalance(
