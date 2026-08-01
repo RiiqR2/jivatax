@@ -1,0 +1,73 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  accumulatedBalance,
+  AccountingExplorerService,
+} from "./accounting-explorer.service";
+
+test("calculates a chronological accumulated balance", () => {
+  assert.deepEqual(
+    accumulatedBalance([
+      { debit: 100, credit: 0 },
+      { debit: 0, credit: 35 },
+      { debit: 10, credit: 2 },
+    ]),
+    [100, 65, 73],
+  );
+});
+
+test("balance endpoint applies filters and pagination", async () => {
+  let captured: { sql: string; params: unknown[] } | undefined;
+  const db = {
+    query: async (sql: string, params: unknown[]) => {
+      captured = { sql, params };
+      return [{ accountId: "a", total: "12" }];
+    },
+  };
+  const periods = { get: async () => ({ id: "p" }) };
+  const service = new AccountingExplorerService(db as never, periods as never);
+  const result = await service.balance("c", "p", {
+    page: 2,
+    pageSize: 5,
+    code: "110",
+    name: "caja",
+    mapping: "mapped",
+    section: "asset",
+    sort: "code",
+    direction: "asc",
+  });
+  assert.equal(result.total, 12);
+  assert.match(captured!.sql, /m\.sii_account_id IS NOT NULL/);
+  assert.match(captured!.sql, /asset_amount <> 0/);
+  assert.deepEqual(captured!.params.slice(-2), [5, 5]);
+});
+
+test("ledger endpoint pages filtered movements and uses a chronological window", async () => {
+  const calls: string[] = [];
+  const db = {
+    query: async (sql: string) => {
+      calls.push(sql);
+      return calls.length === 1
+        ? [{ id: "a", code: "1101", name: "Caja" }]
+        : [{ id: "m", total: 1, runningBalance: "20" }];
+    },
+  };
+  const service = new AccountingExplorerService(
+    db as never,
+    { get: async () => ({}) } as never,
+  );
+  const result = await service.generalLedger("c", "p", "a", {
+    page: 1,
+    pageSize: 25,
+    search: "factura",
+    sort: "date",
+    direction: "asc",
+  });
+  assert.equal(result.total, 1);
+  assert.match(
+    calls[1],
+    /SUM\(filtered\.debit - filtered\.credit\) OVER \(ORDER BY filtered\.transactionDate/,
+  );
+  assert.match(calls[1], /e\.description LIKE/);
+  assert.match(calls[1], /LIMIT \? OFFSET \?/);
+});

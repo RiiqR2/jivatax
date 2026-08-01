@@ -37,7 +37,7 @@ export function periodSelectionPath(
   }
 
   const section = pathname.match(
-    /\/(dashboard|documents|account-mapping)\/?$/,
+    /\/(dashboard|documents|account-mapping|balance)\/?$/,
   )?.[1];
 
   return `/companies/${companyId}/periods/${taxPeriodId}/${section ?? "dashboard"}`;

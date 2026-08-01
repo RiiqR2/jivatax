@@ -23,6 +23,8 @@ import { PeriodAccountMappingsService } from "./services/period-account-mappings
 import { SiiAccountMatchingModule } from "../sii-account-matching/sii-account-matching.module";
 import { AccountMatchingFeedbackEntity } from "../sii-account-matching/entities/account-matching-feedback.entity";
 import { SiiAccountPlanModule } from "../sii-account-plan/sii-account-plan.module";
+import { AccountingExplorerController } from "./controllers/accounting-explorer.controller";
+import { AccountingExplorerService } from "./services/accounting-explorer.service";
 
 @Module({
   imports: [
@@ -49,12 +51,14 @@ import { SiiAccountPlanModule } from "../sii-account-plan/sii-account-plan.modul
     TaxDocumentsController,
     DocumentTemplatesController,
     PeriodAccountMappingsController,
+    AccountingExplorerController,
   ],
   providers: [
     TaxPeriodsService,
     TaxDocumentsService,
     DocumentTemplateService,
     PeriodAccountMappingsService,
+    AccountingExplorerService,
   ],
 })
 export class AccountingModule {}

@@ -6,8 +6,38 @@ import type {
   TaxPeriod,
   AccountMappingsResponse,
 } from "@/types/accounting.types";
+import type {
+  BalanceAccount,
+  LedgerResponse,
+  Paginated,
+} from "@/types/accounting-explorer.types";
 
 export const accountingService = {
+  async explorerBalance(
+    companyId: string,
+    periodId: string,
+    params: Record<string, string | number | undefined>,
+  ): Promise<Paginated<BalanceAccount>> {
+    return (
+      await api.get(
+        `/companies/${companyId}/tax-periods/${periodId}/accounting-explorer/balance`,
+        { params },
+      )
+    ).data;
+  },
+  async explorerLedger(
+    companyId: string,
+    periodId: string,
+    accountId: string,
+    params: Record<string, string | number | undefined>,
+  ): Promise<LedgerResponse> {
+    return (
+      await api.get(
+        `/companies/${companyId}/tax-periods/${periodId}/accounting-explorer/accounts/${accountId}/general-ledger`,
+        { params },
+      )
+    ).data;
+  },
   async periods(companyId: string): Promise<TaxPeriod[]> {
     const response = await api.get<TaxPeriod[]>(
       `/companies/${companyId}/tax-periods`,

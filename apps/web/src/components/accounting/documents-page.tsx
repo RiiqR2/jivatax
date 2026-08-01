@@ -299,6 +299,15 @@ export function AccountingDocumentsPage({
         ))}
       </div>
 
+      <History
+        companyId={companyId}
+        taxPeriodId={taxPeriodId}
+        type={type}
+        documents={history}
+        loading={documents.isLoading}
+        refresh={() => documents.refetch()}
+      />
+
       <section className="mt-5 rounded-xl border border-slate-200 bg-white">
         <button
           type="button"
@@ -494,14 +503,6 @@ export function AccountingDocumentsPage({
         />
       )}
 
-      <History
-        companyId={companyId}
-        taxPeriodId={taxPeriodId}
-        type={type}
-        documents={history}
-        loading={documents.isLoading}
-        refresh={() => documents.refetch()}
-      />
     </main>
   );
 }
