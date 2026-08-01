@@ -59,6 +59,56 @@ describe("deterministic candidate retrieval and ranking", () => {
     );
   });
 
+  it("uses the period snapshot as primary name and canonical history only as a secondary signal", () => {
+    const result = ranking.rank(
+      {
+        observedAccountName: "Insumos de Lavandería",
+        canonicalAccountName: "Mercaderías",
+      },
+      generator.generate([
+        account("laundry", "3.01.09.00", "Insumos de Lavandería"),
+        account("merchandise", "1.01.20.00", "Mercaderías"),
+      ]),
+    );
+
+    assert.equal(result.candidates[0].account.id, "laundry");
+    assert.ok(
+      result.candidates
+        .find((candidate) => candidate.account.id === "merchandise")
+        ?.reasons.some((reason) => reason.signal.startsWith("canonical_")),
+    );
+  });
+
+  it("classifies IVA Crédito Fiscal code 1.01.59.00 as asset and keeps exact learning", () => {
+    const iva = account("iva-credit", "1.01.59.00", "IVA Crédito Fiscal");
+    const learning = [
+      {
+        siiAccountId: iva.id,
+        normalizedName: "iva credito fiscal",
+        normalizedNameHash: "hash",
+        confidence: "0.800000",
+        confirmationCount: 1,
+        deletedAt: null,
+      },
+    ] as AccountMatchingLearningEntity[];
+    const candidate = generator.generate([iva], [], [], [], learning)[0];
+
+    assert.equal(candidate.metadata.statementSection, "asset");
+    assert.equal(candidate.metadata.statementSectionSource, "code_hierarchy");
+    assert.equal(candidate.metadata.expectedBalanceNature, "debit");
+    const result = ranking.rank(
+      { observedAccountName: "IVA Crédito Fiscal" },
+      [candidate],
+      context("asset", "debit"),
+    );
+    assert.equal(result.candidates[0].account.id, iva.id);
+    assert.ok(
+      result.candidates[0].reasons.some(
+        (reason) => reason.signal === "supervised_learning_global",
+      ),
+    );
+  });
+
   it("excludes candidates incompatible with the observed Balance section", () => {
     const result = ranking.rank(
       "bancos",

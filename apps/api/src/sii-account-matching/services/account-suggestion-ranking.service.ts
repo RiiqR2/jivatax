@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
 import type {
   BalanceContext,
+  AccountNameContext,
   GeneratedCandidate,
   RankedCandidate,
   ObservedAccountSection,
@@ -41,13 +42,20 @@ export class AccountSuggestionRankingService {
   ) {}
 
   rank(
-    name: string,
+    names: AccountNameContext | string,
     candidates: GeneratedCandidate[],
     context?: BalanceContext,
     configuredRules: AccountMatchingRuleEntity[] = [],
   ) {
-    const source = this.parser.parse(name);
-    const normalized = normalizeAccountTerm(name);
+    const { observedAccountName, canonicalAccountName } =
+      typeof names === "string"
+        ? { observedAccountName: names, canonicalAccountName: undefined }
+        : names;
+    const source = this.parser.parse(observedAccountName);
+    const normalized = normalizeAccountTerm(observedAccountName);
+    const normalizedCanonical = canonicalAccountName
+      ? normalizeAccountTerm(canonicalAccountName)
+      : undefined;
     const observed = this.observedSection(
       source.contraAccount,
       source.statementSection,
@@ -56,7 +64,13 @@ export class AccountSuggestionRankingService {
     const ruleEvaluations = new Map(
       candidates.map((candidate) => [
         candidate.account.id,
-        this.rules.evaluate(name, source, observed, candidate, configuredRules),
+        this.rules.evaluate(
+          observedAccountName,
+          source,
+          observed,
+          candidate,
+          configuredRules,
+        ),
       ]),
     );
     const discardedCandidates = candidates.flatMap<DiscardedCandidateAudit>(
@@ -176,6 +190,27 @@ export class AccountSuggestionRankingService {
           .map((term) => this.lexicalSignals(normalized, term))
           .sort((a, b) => b.points - a.points)[0];
         const reasons = [...(best?.reasons ?? [])];
+        if (normalizedCanonical && normalizedCanonical !== normalized) {
+          const canonicalBest = variants
+            .map((term) => this.lexicalSignals(normalizedCanonical, term))
+            .sort((a, b) => b.points - a.points)[0];
+          const canonicalTotal = canonicalBest?.points ?? 0;
+          const canonicalScale = canonicalTotal
+            ? Math.min(
+                1,
+                ACCOUNT_SUGGESTION_CONFIG.weights.prefixMaximum /
+                  canonicalTotal,
+              )
+            : 0;
+          reasons.push(
+            ...(canonicalBest?.reasons ?? []).map((reason) => ({
+              ...reason,
+              signal: `canonical_${reason.signal}`,
+              description: `Nombre canónico histórico: ${reason.description}`,
+              points: reason.points * canonicalScale,
+            })),
+          );
+        }
         reasons.push(
           ...(ruleEvaluations.get(candidate.account.id)?.signals ?? []),
         );

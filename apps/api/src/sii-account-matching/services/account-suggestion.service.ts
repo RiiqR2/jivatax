@@ -60,8 +60,12 @@ type BalanceContext = {
   creditBalance: string;
 };
 
+type PeriodMatchingContext = BalanceContext & {
+  accountNameSnapshot: string;
+};
+
 type AccountWithContext = CompanyAccountEntity & {
-  matchingContext?: BalanceContext;
+  matchingContext?: PeriodMatchingContext;
 };
 
 type TermIndexes = {
@@ -197,7 +201,10 @@ export class AccountSuggestionService {
         await suggestionRepository.update(
           {
             companyAccountId: companyAccount.id,
-            status: CompanyAccountSuggestionStatus.ACTIVE,
+            status: In([
+              CompanyAccountSuggestionStatus.ACTIVE,
+              CompanyAccountSuggestionStatus.REVIEW,
+            ]),
           },
           { status: CompanyAccountSuggestionStatus.SUPERSEDED },
         );
@@ -209,8 +216,14 @@ export class AccountSuggestionService {
           loadedKnowledge,
           loadedLearning,
         );
+        const observedAccountName =
+          companyAccount.matchingContext?.accountNameSnapshot ??
+          companyAccount.name;
         const deterministic = this.ranking.rank(
-          companyAccount.name,
+          {
+            observedAccountName,
+            canonicalAccountName: companyAccount.name,
+          },
           generatedCandidates,
           companyAccount.matchingContext,
           loadedRules,
@@ -232,8 +245,8 @@ export class AccountSuggestionService {
               companyId,
               taxPeriodId,
               companyAccountId: companyAccount.id,
-              accountName: companyAccount.name,
-              normalizedName: normalizeAccountTerm(companyAccount.name),
+              accountName: observedAccountName,
+              normalizedName: normalizeAccountTerm(observedAccountName),
               observedSection: deterministic.observedSection,
               decision: deterministic.decision,
               decisionReason: deterministic.reviewRequiredByRule
@@ -283,18 +296,7 @@ export class AccountSuggestionService {
               : undefined,
         };
         /* Retrieval, hard compatibility and scoring finish before persistence.
-           Review-only candidates remain diagnostics, never active approvals. */
-        if (deterministic.decision === "review") {
-          this.discard(
-            diagnostics.withoutSuggestionReasons,
-            "below_minimum_score",
-          );
-          diagnostics.candidatesDiscardedByScore += ranked.candidates.length;
-          diagnostics.candidatesDiscardedByCompatibility +=
-            deterministic.discardedCandidates.length;
-          diagnostics.withoutSuggestion++;
-          continue;
-        }
+           Review candidates stay visible but are never marked as active. */
         diagnostics.exactMatches += ranked.exactMatches;
         diagnostics.aliasMatches += ranked.candidates.filter((candidate) =>
           candidate.reasons.some((reason) => reason.signal.includes("alias")),
@@ -332,7 +334,10 @@ export class AccountSuggestionService {
               confidence: candidate.confidence.toFixed(4),
               algorithmVersion: ACCOUNT_SUGGESTION_CONFIG.algorithmVersion,
               reasons: candidate.reasons,
-              status: CompanyAccountSuggestionStatus.ACTIVE,
+              status:
+                deterministic.decision === "review"
+                  ? CompanyAccountSuggestionStatus.REVIEW
+                  : CompanyAccountSuggestionStatus.ACTIVE,
               generatedAt,
               reviewedByUserId: null,
               reviewedAt: null,
@@ -453,7 +458,12 @@ export class AccountSuggestionService {
       new Set(
         accounts.map((account) =>
           createHash("sha256")
-            .update(normalizeAccountTerm(account.name), "utf8")
+            .update(
+              normalizeAccountTerm(
+                account.matchingContext?.accountNameSnapshot ?? account.name,
+              ),
+              "utf8",
+            )
             .digest("hex"),
         ),
       ),
@@ -501,7 +511,11 @@ export class AccountSuggestionService {
     ranking: ReturnType<AccountSuggestionRankingService["rank"]>;
     siiAccountsById: Map<string, SiiAccountEntity>;
   }) {
-    const normalized = normalizeAccountTerm(input.companyAccount.name);
+    const observedName =
+      input.companyAccount.matchingContext?.accountNameSnapshot ??
+      input.companyAccount.name;
+    const canonicalName = input.companyAccount.name;
+    const normalized = normalizeAccountTerm(observedName);
     const normalizedNameHash = createHash("sha256")
       .update(normalized, "utf8")
       .digest("hex");
@@ -543,7 +557,9 @@ export class AccountSuggestionService {
     });
     this.logger.debug({
       message: "Auditoría temporal detallada de sugerencia de homologación",
-      account: input.companyAccount.name,
+      account: observedName,
+      observedName,
+      canonicalName,
       companyAccountId: input.companyAccount.id,
       companyId: input.companyAccount.companyId,
       industryId: input.industryId,
@@ -551,9 +567,27 @@ export class AccountSuggestionService {
       normalizedNameHash,
       balanceContext: input.companyAccount.matchingContext,
       evidenceSources: {
-        exactOfficialNames: exactTerms
-          .filter((term) => term.type === "official_name")
-          .map(describeTerm),
+        exactOfficialNames: [
+          ...input.generatedCandidates
+            .filter(
+              (candidate) =>
+                normalizeAccountTerm(candidate.account.name) === normalized,
+            )
+            .map((candidate) => ({
+              siiAccountId: candidate.account.id,
+              code: candidate.account.code,
+              destination: candidate.account.name,
+              term: candidate.account.name,
+              normalizedTerm: normalizeAccountTerm(candidate.account.name),
+              type: "official_name",
+              scope: "catalog",
+              companyId: null,
+              weight: ACCOUNT_SUGGESTION_CONFIG.weights.exactAlias,
+            })),
+          ...exactTerms
+            .filter((term) => term.type === "official_name")
+            .map(describeTerm),
+        ],
         exactAliases: exactTerms
           .filter((term) => term.type !== "official_name")
           .map(describeTerm),
@@ -606,6 +640,29 @@ export class AccountSuggestionService {
         deterministicRules: input.ranking.evaluatedRules,
       },
       candidatesEnteringPipeline: input.generatedCandidates.length,
+      candidateEvidence: input.generatedCandidates.map((candidate) => ({
+        siiAccountId: candidate.account.id,
+        code: candidate.account.code,
+        destination: candidate.account.name,
+        statementSection: candidate.metadata.statementSection,
+        statementSectionSource: candidate.metadata.statementSectionSource,
+        learningHits: (candidate.learning ?? []).filter(
+          (item) => item.normalizedNameHash === normalizedNameHash,
+        ).length,
+        officialNameHits: [candidate.account.name, ...candidate.terms]
+          .map((item) =>
+            typeof item === "string"
+              ? item
+              : item.type === "official_name"
+                ? item.term
+                : "",
+          )
+          .filter((name) => normalizeAccountTerm(name) === normalized).length,
+        aliasHits: candidate.terms.filter(
+          (term) =>
+            term.type !== "official_name" && term.normalizedTerm === normalized,
+        ).length,
+      })),
       rankingBeforeDecisionFilters: ranked,
       rankingAfterHardFilters: ranked.slice(
         0,

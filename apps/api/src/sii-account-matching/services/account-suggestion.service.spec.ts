@@ -441,6 +441,62 @@ describe("AccountSuggestionService persistence", () => {
     );
   });
 
+  it("persists review candidates and ranks with the observed period snapshot", async () => {
+    const saved: Array<Record<string, unknown>> = [];
+    const repository = {
+      update: async () => undefined,
+      create: (value: Record<string, unknown>) => value,
+      save: async (values: Array<Record<string, unknown>>) => {
+        saved.push(...values);
+        return values;
+      },
+      softDelete: undefined,
+    };
+    const dataSource = {
+      transaction: async (
+        callback: (manager: {
+          getRepository: () => typeof repository;
+        }) => unknown,
+      ) => callback({ getRepository: () => repository }),
+    } as unknown as DataSource;
+    const service = new AccountSuggestionService(dataSource);
+    Object.assign(service as object, {
+      loadCompanyContext: async () => ({ industryId: null }),
+      loadCompanyAccounts: async () => [
+        {
+          id: "internal-laundry",
+          name: "Mercaderías",
+          matchingContext: { accountNameSnapshot: "Insumos de Lavandería" },
+          mapping: { status: CompanyAccountMappingStatus.UNMAPPED },
+        },
+      ],
+      loadSiiAccounts: async () => [
+        sii("laundry", "3.01.09.00", "Insumos de Lavandería"),
+      ],
+      loadTerms: async () => [],
+      loadConcepts: async () => [],
+      loadKnowledge: async () => [],
+      loadRules: async () => [
+        {
+          id: "force-review",
+          ruleKey: "force-review",
+          priority: 100,
+          condition: { sourcePattern: "lavanderia" },
+          action: { type: "review" },
+          explanation: "Revisión de prueba",
+          active: true,
+          deletedAt: null,
+        },
+      ],
+      loadLearning: async () => [],
+    });
+
+    const result = await service.generateForPeriod(companyId, "period-1");
+    assert.equal(result.suggestionsCreated, 1);
+    assert.equal(saved[0].siiAccountId, "laundry");
+    assert.equal(saved[0].status, CompanyAccountSuggestionStatus.REVIEW);
+  });
+
   it("does not persist or alter confirmed mappings", async () => {
     let repositoryUsed = false;
     const repository = {

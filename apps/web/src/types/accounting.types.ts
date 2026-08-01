@@ -103,6 +103,7 @@ export type AccountMappingItem = {
     score: number;
     confidence: number;
     algorithmVersion: string;
+    status: "active" | "review";
     reasons: Array<{ signal: string; description: string; points: number }>;
   }>;
 };

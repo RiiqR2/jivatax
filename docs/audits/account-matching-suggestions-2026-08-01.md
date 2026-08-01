@@ -1,6 +1,6 @@
 # Auditoría técnica del motor de sugerencias de homologación
 
-Fecha: 2026-08-01. Alcance: diagnóstico y trazabilidad; **no se modificaron fórmulas, pesos, umbrales, aliases, conceptos ni decisiones**.
+Fecha: 2026-08-01. Alcance inicial: diagnóstico y trazabilidad. La corrección posterior conserva fórmulas, pesos y umbrales, pero usa el nombre observado, corrige la fuente de clasificación y conserva candidatos revisables.
 
 ## Límite de la evidencia disponible
 
@@ -17,7 +17,7 @@ El checkout no incluye una base MySQL ni un volcado de los datos mencionados y `
 7. El ranking calcula metadata del nombre interno, sección observada desde el Balance y reglas. Antes de puntuar elimina: reglas `exclude`, totales/subtotales, activos prepagados sin señal explícita, clasificación desconocida frente a sección observada y secciones/contracuentas incompatibles.
 8. Para los supervivientes selecciona la mejor variante entre nombre oficial y términos; suma igualdad normalizada, Jaccard de tokens singularizados, trigramas, prefijos, aprendizaje exacto, conceptos, familia, plazo, contracuenta y Balance. No hay stemming lingüístico: sólo `singularize`; no hay búsqueda fuzzy del aprendizaje.
 9. Calibra confidence, toma Top 5 y decide: `review` por regla, clasificación desconocida, score menor a 45 o confidence menor a 0,60; `ambiguous` si el gap es menor a 8 o 12%; en otro caso `automatic`.
-10. **Sólo `automatic` se persiste.** Tanto `review` como `ambiguous` terminan visibles como “Sin sugerencias”, aunque `review` sí pueda contener candidatos puntuados en diagnostics.
+10. Los candidatos `automatic` se persisten como `active`; los candidatos `review` se persisten como `review` y quedan visibles para revisión. Los resultados ambiguos continúan sin persistirse.
 
 ## Tablas que realmente consulta la generación
 
@@ -65,7 +65,7 @@ Los cuatro entran al pipeline si son cuentas no confirmadas y no descartadas del
 Hay dos problemas demostrables:
 
 1. El comentario del generador dice que “every active catalogue account” entra, pero el caller carga sólo destinos referenciados por terms/knowledge/learning exacto. Las coincidencias léxicas no pueden descubrir cuentas activas fuera de ese subconjunto.
-2. La evidencia experta no es una garantía de candidato: se aplica después de filtros duros y sólo vale 24 puntos con confidence 0,8. Además, candidatos `review` no se persisten, por lo que la UI los presenta igual que ausencia total.
+2. La evidencia experta no es una garantía de decisión automática: se aplica después de filtros duros y vale 24 puntos con confidence 0,8. La corrección conserva ahora los candidatos que resultan `review`, sin convertirlos en automáticos.
 
 El filtro por rubro no elimina aprendizaje global: primero se carga global y luego se adjunta el rubro correspondiente. `companyId` sólo filtra términos de empresa; no filtra learning. `confirmationCount`, `expertConfirmationCount`, `distinctCompanyCount` y `agreementRate` no son filtros en generación; ya fueron condensados en `confidence` durante rebuild.
 
@@ -79,6 +79,6 @@ El ranking adjunta a cada descarte duro la condición observada y el identificad
 
 Ejecutar “Generar sugerencias” en el período afectado con logs DEBUG y consultar el endpoint de diagnostics. Buscar cada nombre y comparar su hash con learning. La traza permitirá distinguir sin inferencias: (a) no recuperado por hash; (b) ID SII no resuelto; (c) descartado por compatibilidad/regla; (d) rankeado bajo 45/0,60; (e) ambiguo; o (f) automático persistido.
 
-## Cambio mínimo recomendado (no implementado)
+## Corrección implementada posteriormente
 
-Primero corregir metadata estructurada faltante/errónea de los destinos concretos que la traza demuestre eliminados por compatibilidad, porque es el cambio más localizado y no toca score global. Si la traza demuestra que los cuatro sobreviven pero quedan en `review`, el cambio mínimo de producto sería persistir candidatos `review` como sugerencias revisables (sin hacerlos automáticos), en vez de alterar pesos o umbrales. Si demuestra que el destino ni entra al pool, cargar el catálogo activo completo —como promete el generador— es la corrección mínima de retrieval. No se recomienda cambiar aliases, conceptos, fórmula ni umbrales antes de capturar esa evidencia.
+La generación usa `account_name_snapshot` como nombre observado para hash de learning, reglas y similitud; el nombre canónico queda limitado a una señal secundaria. La clasificación del destino registra su fuente y prioriza metadata oficial, jerarquía inequívoca del código, knowledge y finalmente texto. En particular, `1.01.59.00` queda clasificada como Activo. Los candidatos `review` se persisten con estado propio y la interfaz los muestra como “Sugerencia pendiente de revisión”. No se modificaron pesos ni umbrales.
