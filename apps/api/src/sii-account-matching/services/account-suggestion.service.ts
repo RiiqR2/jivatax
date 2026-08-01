@@ -10,6 +10,7 @@ import { TaxPeriodCompanyAccountEntity } from "../../accounting/entities/tax-per
 import { CompanyAccountEntity } from "../../company-account-plan/entities/company-account.entity";
 import { CompanyAccountMappingStatus } from "../../company-account-plan/enums/company-account-plan.enums";
 import { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
+import { SiiAccountPlanVersionStatus } from "../../sii-account-plan/enums/sii-account-plan-version-status.enum";
 import {
   SiiAccountTermEntity,
   type SiiAccountTermType,
@@ -60,8 +61,12 @@ type BalanceContext = {
   creditBalance: string;
 };
 
+type PeriodMatchingContext = BalanceContext & {
+  accountNameSnapshot: string;
+};
+
 type AccountWithContext = CompanyAccountEntity & {
-  matchingContext?: BalanceContext;
+  matchingContext?: PeriodMatchingContext;
 };
 
 type TermIndexes = {
@@ -75,7 +80,8 @@ type DiscardReason =
   | "no_positive_terms"
   | "all_candidates_penalized"
   | "confirmed_mapping"
-  | "unsupported_term_type";
+  | "unsupported_term_type"
+  | "insufficient_semantic_evidence";
 
 @Injectable()
 export class AccountSuggestionService {
@@ -107,7 +113,7 @@ export class AccountSuggestionService {
     );
     // Terms are synchronized against the selected active SII version. Resolving
     // by those real account ids prevents mixing candidates from older versions.
-    const siiAccounts = await this.loadSiiAccounts(siiAccountIds);
+    const siiAccounts = await this.loadSiiAccounts();
     const expenseKnowledge = resolveCatalogExpenseKnowledge(siiAccounts);
     const siiAccountsById = new Map(
       siiAccounts.map((account) => [account.id, account]),
@@ -197,7 +203,10 @@ export class AccountSuggestionService {
         await suggestionRepository.update(
           {
             companyAccountId: companyAccount.id,
-            status: CompanyAccountSuggestionStatus.ACTIVE,
+            status: In([
+              CompanyAccountSuggestionStatus.ACTIVE,
+              CompanyAccountSuggestionStatus.REVIEW,
+            ]),
           },
           { status: CompanyAccountSuggestionStatus.SUPERSEDED },
         );
@@ -209,12 +218,28 @@ export class AccountSuggestionService {
           loadedKnowledge,
           loadedLearning,
         );
+        const observedAccountName =
+          companyAccount.matchingContext?.accountNameSnapshot ??
+          companyAccount.name;
         const deterministic = this.ranking.rank(
-          companyAccount.name,
+          {
+            observedAccountName,
+            canonicalAccountName: companyAccount.name,
+          },
           generatedCandidates,
           companyAccount.matchingContext,
           loadedRules,
         );
+        this.logSuggestionAudit({
+          companyAccount,
+          industryId: company.industryId,
+          loadedTerms,
+          loadedConcepts,
+          loadedLearning,
+          generatedCandidates,
+          ranking: deterministic,
+          siiAccountsById,
+        });
         const generatedAt = new Date();
         if (diagnosticsEnabled)
           await diagnosticRepository.save(
@@ -222,8 +247,8 @@ export class AccountSuggestionService {
               companyId,
               taxPeriodId,
               companyAccountId: companyAccount.id,
-              accountName: companyAccount.name,
-              normalizedName: normalizeAccountTerm(companyAccount.name),
+              accountName: observedAccountName,
+              normalizedName: normalizeAccountTerm(observedAccountName),
               observedSection: deterministic.observedSection,
               decision: deterministic.decision,
               decisionReason: deterministic.reviewRequiredByRule
@@ -270,21 +295,13 @@ export class AccountSuggestionService {
           discardReason:
             deterministic.decision === "ambiguous"
               ? ("ambiguous_candidates" as const)
-              : undefined,
+              : deterministic.candidates.length === 0 &&
+                  deterministic.semanticRejectedCandidates.length > 0
+                ? ("insufficient_semantic_evidence" as const)
+                : undefined,
         };
         /* Retrieval, hard compatibility and scoring finish before persistence.
-           Review-only candidates remain diagnostics, never active approvals. */
-        if (deterministic.decision === "review") {
-          this.discard(
-            diagnostics.withoutSuggestionReasons,
-            "below_minimum_score",
-          );
-          diagnostics.candidatesDiscardedByScore += ranked.candidates.length;
-          diagnostics.candidatesDiscardedByCompatibility +=
-            deterministic.discardedCandidates.length;
-          diagnostics.withoutSuggestion++;
-          continue;
-        }
+           Review candidates stay visible but are never marked as active. */
         diagnostics.exactMatches += ranked.exactMatches;
         diagnostics.aliasMatches += ranked.candidates.filter((candidate) =>
           candidate.reasons.some((reason) => reason.signal.includes("alias")),
@@ -322,7 +339,10 @@ export class AccountSuggestionService {
               confidence: candidate.confidence.toFixed(4),
               algorithmVersion: ACCOUNT_SUGGESTION_CONFIG.algorithmVersion,
               reasons: candidate.reasons,
-              status: CompanyAccountSuggestionStatus.ACTIVE,
+              status:
+                deterministic.decision === "review"
+                  ? CompanyAccountSuggestionStatus.REVIEW
+                  : CompanyAccountSuggestionStatus.ACTIVE,
               generatedAt,
               reviewedByUserId: null,
               reviewedAt: null,
@@ -368,13 +388,16 @@ export class AccountSuggestionService {
       .getMany() as Promise<AccountWithContext[]>;
   }
 
-  private loadSiiAccounts(ids?: string[]) {
-    return this.dataSource.getRepository(SiiAccountEntity).find({
-      where: {
-        ...(ids ? { id: In(ids) } : {}),
-        deletedAt: IsNull(),
-      },
-    });
+  private loadSiiAccounts() {
+    return this.dataSource
+      .getRepository(SiiAccountEntity)
+      .createQueryBuilder("account")
+      .innerJoin("account.version", "version")
+      .where("account.deletedAt IS NULL")
+      .andWhere("version.status = :status", {
+        status: SiiAccountPlanVersionStatus.ACTIVE,
+      })
+      .getMany();
   }
 
   private loadTerms(companyId: string) {
@@ -443,7 +466,12 @@ export class AccountSuggestionService {
       new Set(
         accounts.map((account) =>
           createHash("sha256")
-            .update(normalizeAccountTerm(account.name), "utf8")
+            .update(
+              normalizeAccountTerm(
+                account.matchingContext?.accountNameSnapshot ?? account.name,
+              ),
+              "utf8",
+            )
             .digest("hex"),
         ),
       ),
@@ -472,6 +500,230 @@ export class AccountSuggestionService {
     return global.map((item) =>
       Object.assign(item, { industryEvidence: byLearningId.get(item.id) }),
     );
+  }
+
+  /**
+   * Temporary, deliberately verbose audit trace. It only reports data already
+   * loaded by the production pipeline and therefore cannot affect retrieval,
+   * scoring or persistence.
+   */
+  private logSuggestionAudit(input: {
+    companyAccount: AccountWithContext;
+    industryId: string | null;
+    loadedTerms: SiiAccountTermEntity[];
+    loadedConcepts: SiiAccountConceptEntity[];
+    loadedLearning: AccountLearningEvidence[];
+    generatedCandidates: ReturnType<
+      AccountCandidateGeneratorService["generate"]
+    >;
+    ranking: ReturnType<AccountSuggestionRankingService["rank"]>;
+    siiAccountsById: Map<string, SiiAccountEntity>;
+  }) {
+    const observedName =
+      input.companyAccount.matchingContext?.accountNameSnapshot ??
+      input.companyAccount.name;
+    const canonicalName = input.companyAccount.name;
+    const normalized = normalizeAccountTerm(observedName);
+    const normalizedNameHash = createHash("sha256")
+      .update(normalized, "utf8")
+      .digest("hex");
+    const exactTerms = input.loadedTerms.filter(
+      (term) => term.normalizedTerm === normalized,
+    );
+    const exactLearning = input.loadedLearning.filter(
+      (item) => item.normalizedNameHash === normalizedNameHash,
+    );
+    const candidateById = new Map(
+      input.generatedCandidates.map((item) => [item.account.id, item]),
+    );
+    const describeTerm = (term: SiiAccountTermEntity) => ({
+      siiAccountId: term.siiAccountId,
+      code: input.siiAccountsById.get(term.siiAccountId)?.code,
+      destination: input.siiAccountsById.get(term.siiAccountId)?.name,
+      term: term.term,
+      normalizedTerm: term.normalizedTerm,
+      type: term.type,
+      scope: term.scope,
+      companyId: term.companyId,
+      weight: Number(term.weight),
+    });
+    const structuralSignals = new Set([
+      "balance_match",
+      "balance_nature_match",
+      "debit_balance",
+      "credit_balance",
+      "compatible_statement_section",
+    ]);
+    const describeCandidate = (
+      item: (typeof input.ranking.allCandidates)[number],
+    ) => ({
+      siiAccountId: item.account.id,
+      code: item.account.code,
+      destination: item.account.name,
+      statementSection: item.metadata.statementSection,
+      statementSectionSource: item.metadata.statementSectionSource,
+      score: item.score,
+      confidence: item.confidence,
+      semanticEvidenceSatisfied: item.semanticEvidenceSatisfied,
+      semanticEvidenceStrong: item.semanticEvidenceStrong,
+      semanticEvidenceReasons: item.semanticEvidenceReasons,
+      learningHits: (item.learning ?? []).filter(
+        (learning) => learning.normalizedNameHash === normalizedNameHash,
+      ).length,
+      officialNameHits: [item.account.name, ...item.terms]
+        .map((value) =>
+          typeof value === "string"
+            ? value
+            : value.type === "official_name"
+              ? value.term
+              : "",
+        )
+        .filter((value) => normalizeAccountTerm(value) === normalized).length,
+      aliasHits: item.terms.filter(
+        (term) =>
+          term.type !== "official_name" && term.normalizedTerm === normalized,
+      ).length,
+      semanticEvidence: item.reasons.filter(
+        (reason) =>
+          item.semanticEvidenceReasons.includes(reason.signal) &&
+          !structuralSignals.has(reason.signal),
+      ),
+      structuralEvidence: item.reasons.filter((reason) =>
+        structuralSignals.has(reason.signal),
+      ),
+    });
+    const beforeSemanticFilter = input.ranking.allCandidates
+      .slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates)
+      .map(describeCandidate);
+    const afterSemanticFilter = input.ranking.candidates
+      .slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates)
+      .map(describeCandidate);
+    const discarded = input.ranking.discardedCandidates
+      .slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates)
+      .map((item) => {
+        const candidate = candidateById.get(item.accountId);
+        return {
+          ...item,
+          code: candidate?.account.code,
+          destination: candidate?.account.name,
+        };
+      });
+    this.logger.debug({
+      message: "Auditoría temporal detallada de sugerencia de homologación",
+      account: observedName,
+      observedName,
+      canonicalName,
+      companyAccountId: input.companyAccount.id,
+      companyId: input.companyAccount.companyId,
+      industryId: input.industryId,
+      normalized,
+      normalizedNameHash,
+      observedSection: input.ranking.observedSection,
+      evidenceSources: {
+        exactOfficialNames: [
+          ...input.generatedCandidates
+            .filter(
+              (candidate) =>
+                normalizeAccountTerm(candidate.account.name) === normalized,
+            )
+            .map((candidate) => ({
+              siiAccountId: candidate.account.id,
+              code: candidate.account.code,
+              destination: candidate.account.name,
+              term: candidate.account.name,
+              normalizedTerm: normalizeAccountTerm(candidate.account.name),
+              type: "official_name",
+              scope: "catalog",
+              companyId: null,
+              weight: ACCOUNT_SUGGESTION_CONFIG.weights.exactAlias,
+            })),
+          ...exactTerms
+            .filter((term) => term.type === "official_name")
+            .map(describeTerm),
+        ],
+        exactAliases: exactTerms
+          .filter((term) => term.type !== "official_name")
+          .map(describeTerm),
+        concepts: input.loadedConcepts
+          .filter((concept) =>
+            normalized.includes(
+              normalizeAccountTerm(
+                concept.normalizedConcept || concept.concept,
+              ),
+            ),
+          )
+          .map((concept) => ({
+            siiAccountId: concept.siiAccountId,
+            code: input.siiAccountsById.get(concept.siiAccountId)?.code,
+            destination: input.siiAccountsById.get(concept.siiAccountId)?.name,
+            concept: concept.concept,
+            conceptType: concept.conceptType,
+          })),
+        learningGlobal: exactLearning.map((item) => ({
+          siiAccountId: item.siiAccountId,
+          code: input.siiAccountsById.get(item.siiAccountId)?.code,
+          destination: input.siiAccountsById.get(item.siiAccountId)?.name,
+          confirmationCount: item.confirmationCount,
+          expertConfirmationCount: item.expertConfirmationCount,
+          distinctCompanyCount: item.distinctCompanyCount,
+          agreementRate: Number(item.agreementRate),
+          confidence: Number(item.confidence),
+        })),
+        learningIndustry: exactLearning.flatMap((item) =>
+          item.industryEvidence
+            ? [
+                {
+                  siiAccountId: item.siiAccountId,
+                  code: input.siiAccountsById.get(item.siiAccountId)?.code,
+                  destination: input.siiAccountsById.get(item.siiAccountId)
+                    ?.name,
+                  industryId: item.industryEvidence.industryId,
+                  confirmationCount: item.industryEvidence.confirmationCount,
+                  expertConfirmationCount:
+                    item.industryEvidence.expertConfirmationCount,
+                  distinctCompanyCount:
+                    item.industryEvidence.distinctCompanyCount,
+                  agreementRate: Number(item.industryEvidence.agreementRate),
+                  confidence: Number(item.industryEvidence.confidence),
+                },
+              ]
+            : [],
+        ),
+        confirmationsDirectlyQueried: false,
+        deterministicRules: input.ranking.evaluatedRules,
+      },
+      candidatesEnteringPipeline: input.generatedCandidates.length,
+      pipelineCounts: {
+        catalogueAccountsEvaluated: input.generatedCandidates.length,
+        discardedByRetrieval: 0,
+        discardedByHardFilters: input.ranking.discardedCandidates.length,
+        discardedByScore: input.ranking.allCandidates.filter(
+          (candidate) =>
+            candidate.score < ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore,
+        ).length,
+        discardedByConfidence: input.ranking.allCandidates.filter(
+          (candidate) =>
+            candidate.score >=
+              ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore &&
+            candidate.confidence <
+              ACCOUNT_SUGGESTION_CONFIG.minimumAutomaticConfidence,
+        ).length,
+        discardedByInsufficientEvidence:
+          input.ranking.semanticRejectedCandidates.length,
+      },
+      topCandidatesBeforeSemanticFilter: beforeSemanticFilter,
+      topCandidatesAfterSemanticFilter: afterSemanticFilter,
+      candidatesDiscardedByHardFilters: discarded,
+      hardDiscardedCandidateCount: input.ranking.discardedCandidates.length,
+      finalDecision: input.ranking.decision,
+      reviewPersistence: afterSemanticFilter.length
+        ? input.ranking.decision === "review"
+          ? "persisted_review_semantic_evidence_satisfied"
+          : "persisted_semantic_evidence_satisfied"
+        : "discarded_insufficient_semantic_evidence",
+      winner: afterSemanticFilter[0] ?? null,
+      finalDecisionAudit: input.ranking.decisionAudit,
+    });
   }
 
   private rank(

@@ -55,7 +55,9 @@ export function AccountMappingPage({
   const summary = query.data?.summary;
   const visibleSuggested =
     query.data?.items.filter(
-      (item) => item.mapping.status === "pending" && item.suggestions[0],
+      (item) =>
+        item.mapping.status === "pending" &&
+        item.suggestions[0]?.status === "active",
     ) ?? [];
   const approve = async (items: AccountMappingItem[]) => {
     setApproving(true);
@@ -307,7 +309,7 @@ export function AccountMappingPage({
                   <tr key={item.companyAccountId} className="border-t">
                     <td className="px-3 py-3">
                       {item.mapping.status === "pending" &&
-                        item.suggestions[0] && (
+                        item.suggestions[0]?.status === "active" && (
                           <input
                             type="checkbox"
                             aria-label={`Seleccionar ${item.periodName}`}
@@ -327,19 +329,12 @@ export function AccountMappingPage({
                         )}
                     </td>
                     <td className="px-3 py-3 font-mono">{item.code}</td>
-                    <td className="px-3 py-3">
-                      {item.periodName}
-                      {item.nameChanged && (
-                        <span className="mt-1 block text-xs text-amber-700">
-                          Nombre modificado · Canónico: {item.canonicalName}
-                        </span>
-                      )}
-                    </td>
+                    <td className="px-3 py-3">{item.periodName}</td>
                     <td className="px-3 py-3">
                       {item.mapping.siiAccount
                         ? `${item.mapping.siiAccount.code} · ${item.mapping.siiAccount.name}`
                         : item.suggestions[0]
-                          ? `${item.suggestions[0].siiAccount.code} · ${item.suggestions[0].siiAccount.name} (sugerida)`
+                          ? `${item.suggestions[0].siiAccount.code} · ${item.suggestions[0].siiAccount.name} (${item.suggestions[0].status === "review" ? "pendiente de revisión" : "sugerida"})`
                           : "Sin sugerencias"}
                     </td>
                     <td className="px-3 py-3">
@@ -357,7 +352,7 @@ export function AccountMappingPage({
                     <td className="px-3 py-3">{item.lastSeenTaxYear ?? "—"}</td>
                     <td className="px-3 py-3">
                       {item.mapping.status === "pending" &&
-                        item.suggestions[0] && (
+                        item.suggestions[0]?.status === "active" && (
                           <button
                             type="button"
                             disabled={approving}
@@ -532,11 +527,20 @@ function MappingDialog({
           Revisar cuenta {item.code}
         </h2>
         <p id="mapping-description" className="mt-1 text-slate-600">
-          {item.canonicalName} · La selección no se guarda automáticamente.
+          Nombre observado: {item.periodName}
+          {item.nameChanged
+            ? ` · Nombre registrado inicialmente: ${item.canonicalName}`
+            : ""}
+          . La selección no se guarda automáticamente.
         </p>
         {item.suggestions.length ? (
           <section className="mt-4 space-y-2 text-sm">
             <h3 className="font-semibold">Top candidatos</h3>
+            {item.suggestions[0]?.status === "review" && (
+              <p className="rounded-md bg-amber-50 px-3 py-2 text-amber-800">
+                Sugerencia pendiente de revisión
+              </p>
+            )}
             {item.suggestions.slice(0, 5).map((suggestion, rank) => (
               <article
                 key={suggestion.id}

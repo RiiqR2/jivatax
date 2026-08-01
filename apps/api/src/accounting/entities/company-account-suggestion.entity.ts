@@ -14,6 +14,7 @@ import { UserEntity } from "../../users/entities/user.entity";
 
 export enum CompanyAccountSuggestionStatus {
   ACTIVE = "active",
+  REVIEW = "review",
   ACCEPTED = "accepted",
   REJECTED = "rejected",
   SUPERSEDED = "superseded",

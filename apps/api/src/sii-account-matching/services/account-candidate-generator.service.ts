@@ -52,7 +52,7 @@ export class AccountCandidateGeneratorService {
       .map((account) => ({
         account,
         metadata: this.resolveMetadata(
-          account.name,
+          account,
           knowledgeByAccount.get(account.id),
         ),
         knowledge: knowledgeByAccount.get(account.id),
@@ -68,14 +68,47 @@ export class AccountCandidateGeneratorService {
       }));
   }
 
-  private resolveMetadata(name: string, knowledge?: SiiAccountKnowledgeEntity) {
-    const inferred = accountingMetadata(name);
-    if (!knowledge) return inferred;
+  private resolveMetadata(
+    account: SiiAccountEntity,
+    knowledge?: SiiAccountKnowledgeEntity,
+  ) {
+    const inferred = accountingMetadata(account.name);
+    const official = this.officialStatementSection(account.rawData);
+    const hierarchy = account.code.startsWith("1.") ? "asset" : undefined;
+    const statementSection =
+      official ??
+      hierarchy ??
+      knowledge?.statementSection ??
+      inferred.statementSection;
+    const statementSectionSource = official
+      ? ("official_metadata" as const)
+      : hierarchy
+        ? ("code_hierarchy" as const)
+        : knowledge
+          ? ("knowledge" as const)
+          : ("text_heuristic" as const);
+    const expectedBalanceNature =
+      official || hierarchy
+        ? inferred.contraAccount ||
+          statementSection === "liability" ||
+          statementSection === "equity" ||
+          statementSection === "income"
+          ? ("credit" as const)
+          : ("debit" as const)
+        : (knowledge?.balanceNature ?? inferred.expectedBalanceNature);
+    if (!knowledge)
+      return {
+        ...inferred,
+        statementSection,
+        statementSectionSource,
+        expectedBalanceNature,
+      };
     return {
       ...inferred,
       family: knowledge.accountingFamily,
-      statementSection: knowledge.statementSection,
-      expectedBalanceNature: knowledge.balanceNature,
+      statementSection,
+      statementSectionSource,
+      expectedBalanceNature,
       term:
         knowledge.isCurrent == null
           ? inferred.term
@@ -84,5 +117,23 @@ export class AccountCandidateGeneratorService {
             : ("non_current" as const),
       contraAccount: knowledge.isContraAccount,
     };
+  }
+
+  private officialStatementSection(rawData: Record<string, unknown> | null) {
+    const source = rawData?.sourceColumns;
+    if (!source || typeof source !== "object") return undefined;
+    const values = Object.entries(source as Record<string, unknown>)
+      .filter(([key]) => /secci|clasific|estado|rubro|tipo/i.test(key))
+      .map(([, value]) => String(value).toLowerCase());
+    if (values.some((value) => /activo/.test(value))) return "asset" as const;
+    if (values.some((value) => /pasivo/.test(value)))
+      return "liability" as const;
+    if (values.some((value) => /patrimonio/.test(value)))
+      return "equity" as const;
+    if (values.some((value) => /ingreso|ganancia/.test(value)))
+      return "income" as const;
+    if (values.some((value) => /gasto|costo|perdida|resultado/.test(value)))
+      return "expense" as const;
+    return undefined;
   }
 }

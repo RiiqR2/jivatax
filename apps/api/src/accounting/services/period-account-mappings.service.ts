@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { InjectDataSource, InjectRepository } from "@nestjs/typeorm";
-import { DataSource, Repository, SelectQueryBuilder } from "typeorm";
+import { DataSource, In, Repository, SelectQueryBuilder } from "typeorm";
 import type { EntityManager } from "typeorm";
 import { CompanyEntity } from "../../companies/entities/company.entity";
 import { CompanyAccountEntity } from "../../company-account-plan/entities/company-account.entity";
@@ -59,6 +59,7 @@ type MappingListRow = {
     | string
     | null;
   suggestionAlgorithmVersion: string | null;
+  suggestionStatus: CompanyAccountSuggestionStatus | null;
 };
 
 type SummaryRow = {
@@ -138,6 +139,7 @@ export class PeriodAccountMappingsService {
       .addSelect("suggestion.confidence", "suggestionConfidence")
       .addSelect("suggestion.reasons", "suggestionReasons")
       .addSelect("suggestion.algorithmVersion", "suggestionAlgorithmVersion")
+      .addSelect("suggestion.status", "suggestionStatus")
       .orderBy("account.internalCode", "ASC")
       .skip((page - 1) * limit)
       .take(limit)
@@ -243,10 +245,13 @@ export class PeriodAccountMappingsService {
       .leftJoin(
         CompanyAccountSuggestionEntity,
         "suggestion",
-        "suggestion.companyAccountId = account.id AND mapping.status = :pendingMappingStatus AND suggestion.status = :activeSuggestionStatus AND suggestion.suggestionRank = :primaryRank",
+        "suggestion.companyAccountId = account.id AND mapping.status = :pendingMappingStatus AND suggestion.status IN (:...visibleSuggestionStatuses) AND suggestion.suggestionRank = :primaryRank",
         {
           pendingMappingStatus: CompanyAccountMappingStatus.PENDING,
-          activeSuggestionStatus: CompanyAccountSuggestionStatus.ACTIVE,
+          visibleSuggestionStatuses: [
+            CompanyAccountSuggestionStatus.ACTIVE,
+            CompanyAccountSuggestionStatus.REVIEW,
+          ],
           primaryRank: 1,
         },
       )
@@ -340,6 +345,7 @@ export class PeriodAccountMappingsService {
               score: Number(row.suggestionScore),
               confidence: Number(row.suggestionConfidence),
               algorithmVersion: row.suggestionAlgorithmVersion,
+              status: row.suggestionStatus,
               reasons: reasons ?? [],
             },
           ]
@@ -423,7 +429,10 @@ export class PeriodAccountMappingsService {
     const suggestion = await suggestions.findOne({
       where: {
         companyAccountId: accountId,
-        status: CompanyAccountSuggestionStatus.ACTIVE,
+        status: In([
+          CompanyAccountSuggestionStatus.ACTIVE,
+          CompanyAccountSuggestionStatus.REVIEW,
+        ]),
         suggestionRank: 1,
       },
     });
@@ -439,7 +448,10 @@ export class PeriodAccountMappingsService {
         await suggestions.update(
           {
             companyAccountId: accountId,
-            status: CompanyAccountSuggestionStatus.ACTIVE,
+            status: In([
+              CompanyAccountSuggestionStatus.ACTIVE,
+              CompanyAccountSuggestionStatus.REVIEW,
+            ]),
           },
           {
             status: CompanyAccountSuggestionStatus.SUPERSEDED,

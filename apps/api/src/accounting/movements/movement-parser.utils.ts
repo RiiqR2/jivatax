@@ -24,7 +24,7 @@ export function normalizeDate(value: unknown): string | null {
     if (parsed) date = new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d));
   } else if (typeof value === "string") {
     const text = value.trim();
-    const match = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+    const match = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
     if (match) {
       expectedParts = [Number(match[3]), Number(match[2]), Number(match[1])];
       date = new Date(

@@ -9,6 +9,7 @@ import { AccountSuggestionRankingService } from "./account-suggestion-ranking.se
 import type { SiiAccountConceptEntity } from "../entities/sii-account-concept.entity";
 import type { AccountMatchingLearningEntity } from "../entities/account-matching-learning.entity";
 import type { AccountMatchingLearningIndustryEntity } from "../entities/account-matching-learning-industry.entity";
+import type { SiiAccountTermEntity } from "../entities/sii-account-term.entity";
 
 const account = (id: string, code: string, name: string) =>
   ({ id, code, name, deletedAt: null }) as SiiAccountEntity;
@@ -36,13 +37,12 @@ describe("deterministic candidate retrieval and ranking", () => {
   const generator = new AccountCandidateGeneratorService();
   const ranking = new AccountSuggestionRankingService();
 
-  it("evaluates the full catalogue and always returns Top 5", () => {
+  it("evaluates the full catalogue before semantic eligibility", () => {
     const generated = generator.generate(catalogue, []);
     assert.equal(generated.length, 6);
-    assert.equal(
-      ranking.rank("cuenta desconocida", generated).candidates.length,
-      5,
-    );
+    const result = ranking.rank("cuenta desconocida", generated);
+    assert.equal(result.allCandidates.length, 6);
+    assert.equal(result.candidates.length, 0);
   });
 
   it("adds independent Jaccard, trigram and explainability signals", () => {
@@ -59,13 +59,151 @@ describe("deterministic candidate retrieval and ranking", () => {
     );
   });
 
+  it("uses the period snapshot as primary name and canonical history only as a secondary signal", () => {
+    const result = ranking.rank(
+      {
+        observedAccountName: "Insumos de Lavandería",
+        canonicalAccountName: "Mercaderías",
+      },
+      generator.generate([
+        account("laundry", "3.01.09.00", "Insumos de Lavandería"),
+        account("merchandise", "1.01.20.00", "Mercaderías"),
+      ]),
+    );
+
+    assert.equal(result.candidates[0].account.id, "laundry");
+    assert.ok(
+      result.allCandidates
+        .find((candidate) => candidate.account.id === "merchandise")
+        ?.reasons.some((reason) => reason.signal.startsWith("canonical_")),
+    );
+  });
+
+  it("classifies IVA Crédito Fiscal code 1.01.59.00 as asset and keeps exact learning", () => {
+    const iva = account("iva-credit", "1.01.59.00", "IVA Crédito Fiscal");
+    const learning = [
+      {
+        siiAccountId: iva.id,
+        normalizedName: "iva credito fiscal",
+        normalizedNameHash: "hash",
+        confidence: "0.800000",
+        confirmationCount: 1,
+        deletedAt: null,
+      },
+    ] as AccountMatchingLearningEntity[];
+    const candidate = generator.generate([iva], [], [], [], learning)[0];
+
+    assert.equal(candidate.metadata.statementSection, "asset");
+    assert.equal(candidate.metadata.statementSectionSource, "code_hierarchy");
+    assert.equal(candidate.metadata.expectedBalanceNature, "debit");
+    const result = ranking.rank(
+      { observedAccountName: "IVA Crédito Fiscal" },
+      [candidate],
+      context("asset", "debit"),
+    );
+    assert.equal(result.candidates[0].account.id, iva.id);
+    assert.ok(
+      result.candidates[0].reasons.some(
+        (reason) => reason.signal === "supervised_learning_global",
+      ),
+    );
+  });
+
+  it("requires semantic evidence for review candidates instead of Balance compatibility alone", () => {
+    const result = ranking.rank(
+      {
+        observedAccountName: "Insumos de Lavandería",
+        canonicalAccountName: "Mercaderías",
+      },
+      generator.generate([
+        account("machinery", "1.02.03.00", "Maquinarias y equipos"),
+      ]),
+      context("asset", "debit"),
+    );
+    assert.equal(result.decision, "no_candidate");
+    assert.equal(result.candidates.length, 0);
+    assert.equal(result.allCandidates[0].semanticEvidenceSatisfied, false);
+    assert.deepEqual(result.allCandidates[0].semanticEvidenceReasons, []);
+  });
+
+  it("accepts specific rules and aliases as semantic review evidence", () => {
+    const capital = ranking.rank(
+      "Capital Social",
+      generator.generate([account("capital", "2.03.01.00", "Capital pagado")]),
+      context("liability", "credit"),
+    );
+    assert.ok(
+      capital.candidates[0].semanticEvidenceReasons.includes(
+        "rule:capital_is_equity",
+      ),
+    );
+    assert.equal(capital.decision, "review");
+
+    const income = account(
+      "operating-income",
+      "3.01.01.00",
+      "Ingresos de explotación",
+    );
+    const aliases = [
+      {
+        siiAccountId: income.id,
+        term: "ventas",
+        normalizedTerm: "ventas",
+        type: "alias",
+        scope: "global",
+        active: true,
+        deletedAt: null,
+      },
+    ] as SiiAccountTermEntity[];
+    const sales = ranking.rank(
+      "Ventas Servicios de Lavandería",
+      generator.generate([income], aliases),
+      context("income", "credit"),
+    );
+    assert.equal(sales.candidates[0].semanticEvidenceSatisfied, true);
+    assert.ok(sales.candidates[0].semanticEvidenceReasons.length > 0);
+  });
+
+  it("combines medium lexical and structural evidence without using historical names", () => {
+    for (const [observedAccountName, canonicalAccountName, destination] of [
+      [
+        "Remuneraciones por Pagar",
+        "Retenciones Honorarios",
+        account("payable", "2.01.08.00", "Cuentas por pagar"),
+      ],
+      [
+        "Costo de Servicios",
+        "Costo de Ventas",
+        account("cost", "3.01.02.00", "Costos de explotación"),
+      ],
+    ] as const) {
+      const section = observedAccountName.startsWith("Costo")
+        ? context("expense", "debit")
+        : context("liability", "credit");
+      const result = ranking.rank(
+        { observedAccountName, canonicalAccountName },
+        generator.generate([destination]),
+        section,
+      );
+      assert.equal(result.decision, "review");
+      assert.equal(result.candidates[0].semanticEvidenceSatisfied, true);
+      assert.equal(result.candidates[0].semanticEvidenceStrong, false);
+      assert.ok(result.candidates[0].semanticEvidenceReasons.length > 1);
+      assert.ok(
+        !result.candidates[0].semanticEvidenceReasons.some((reason) =>
+          reason.startsWith("canonical_"),
+        ),
+      );
+    }
+  });
+
   it("excludes candidates incompatible with the observed Balance section", () => {
     const result = ranking.rank(
       "bancos",
       generator.generate(catalogue, []),
       context("liability", "credit"),
     );
-    const debt = result.candidates.find(
+    const debt = result.allCandidates.find(
       (candidate) => candidate.account.id === "debt",
     )!;
     const cash = result.candidates.find(
@@ -383,10 +521,13 @@ describe("deterministic candidate retrieval and ranking", () => {
       "activo",
       generator.generate(catalogue, [], concepts),
     );
-    assert.equal(result.decision, "review");
+    assert.equal(result.decision, "no_candidate");
     assert.ok(
-      !result.candidates[0].reasons.some(
-        (reason) => reason.signal === "exact_concept",
+      result.allCandidates.every(
+        (candidate) =>
+          !candidate.reasons.some(
+            (reason) => reason.signal === "exact_concept",
+          ),
       ),
     );
   });

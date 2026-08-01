@@ -948,8 +948,11 @@ export class TaxDocumentsService {
           .update(CompanyAccountSuggestionEntity)
           .set({ status: CompanyAccountSuggestionStatus.SUPERSEDED })
           .where("company_account_id IN (:...accountIds)", { accountIds })
-          .andWhere("status = :status", {
-            status: CompanyAccountSuggestionStatus.ACTIVE,
+          .andWhere("status IN (:...statuses)", {
+            statuses: [
+              CompanyAccountSuggestionStatus.ACTIVE,
+              CompanyAccountSuggestionStatus.REVIEW,
+            ],
           })
           .execute();
         supersededSuggestions = result.affected ?? 0;

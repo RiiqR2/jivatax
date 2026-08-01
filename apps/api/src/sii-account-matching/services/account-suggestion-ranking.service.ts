@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
 import type {
   BalanceContext,
+  AccountNameContext,
   GeneratedCandidate,
   RankedCandidate,
   ObservedAccountSection,
@@ -23,6 +24,15 @@ const GENERIC_CONCEPTS = new Set(["activo", "pasivo", "impuesto", "gasto"]);
 export type RankingDecision =
   "automatic" | "ambiguous" | "review" | "no_candidate";
 
+type DiscardedCandidateAudit = {
+  accountId: string;
+  reasons: string[];
+  condition: string;
+  observedValue: unknown;
+  requiredValue: unknown;
+  discardedAt: string;
+};
+
 @Injectable()
 export class AccountSuggestionRankingService {
   constructor(
@@ -32,13 +42,20 @@ export class AccountSuggestionRankingService {
   ) {}
 
   rank(
-    name: string,
+    names: AccountNameContext | string,
     candidates: GeneratedCandidate[],
     context?: BalanceContext,
     configuredRules: AccountMatchingRuleEntity[] = [],
   ) {
-    const source = this.parser.parse(name);
-    const normalized = normalizeAccountTerm(name);
+    const { observedAccountName, canonicalAccountName } =
+      typeof names === "string"
+        ? { observedAccountName: names, canonicalAccountName: undefined }
+        : names;
+    const source = this.parser.parse(observedAccountName);
+    const normalized = normalizeAccountTerm(observedAccountName);
+    const normalizedCanonical = canonicalAccountName
+      ? normalizeAccountTerm(canonicalAccountName)
+      : undefined;
     const observed = this.observedSection(
       source.contraAccount,
       source.statementSection,
@@ -47,62 +64,108 @@ export class AccountSuggestionRankingService {
     const ruleEvaluations = new Map(
       candidates.map((candidate) => [
         candidate.account.id,
-        this.rules.evaluate(name, source, observed, candidate, configuredRules),
+        this.rules.evaluate(
+          observedAccountName,
+          source,
+          observed,
+          candidate,
+          configuredRules,
+        ),
       ]),
     );
-    const discardedCandidates = candidates.flatMap((candidate) => {
-      if (ruleEvaluations.get(candidate.account.id)?.excluded)
-        return [
-          { accountId: candidate.account.id, reasons: ["excluded_by_rule"] },
-        ];
-      if (!this.isHomologable(candidate))
-        return [
-          {
-            accountId: candidate.account.id,
-            reasons: ["aggregate_account_excluded"],
-          },
-        ];
-      if (!this.hasRequiredPrepaidSignal(normalized, candidate))
-        return [
-          {
-            accountId: candidate.account.id,
-            reasons:
-              observed === "expense"
-                ? ["current_expense_vs_prepaid_asset", "missing_prepaid_signal"]
-                : ["missing_prepaid_signal"],
-          },
-        ];
-      if (
-        candidate.metadata.statementSection === "unknown" &&
-        observed !== "unknown"
-      )
-        return [
-          {
-            accountId: candidate.account.id,
-            reasons: ["unknown_candidate_classification"],
-          },
-        ];
-      if (
-        !this.isCompatible(
-          observed,
-          candidate.metadata.statementSection,
-          candidate.metadata.contraAccount,
+    const discardedCandidates = candidates.flatMap<DiscardedCandidateAudit>(
+      (candidate) => {
+        if (ruleEvaluations.get(candidate.account.id)?.excluded)
+          return [
+            {
+              accountId: candidate.account.id,
+              reasons: ["excluded_by_rule"],
+              condition: "ruleEvaluation.excluded === true",
+              observedValue: true,
+              requiredValue: false,
+              discardedAt:
+                "account-suggestion-ranking.service.ts:rank:excluded_by_rule",
+            },
+          ];
+        if (!this.isHomologable(candidate))
+          return [
+            {
+              accountId: candidate.account.id,
+              reasons: ["aggregate_account_excluded"],
+              condition: "candidate account name is not total/subtotal/suma",
+              observedValue: candidate.account.name,
+              requiredValue: "non-aggregate account name",
+              discardedAt:
+                "account-suggestion-ranking.service.ts:rank:aggregate_account_excluded",
+            },
+          ];
+        if (!this.hasRequiredPrepaidSignal(normalized, candidate))
+          return [
+            {
+              accountId: candidate.account.id,
+              reasons:
+                observed === "expense"
+                  ? [
+                      "current_expense_vs_prepaid_asset",
+                      "missing_prepaid_signal",
+                    ]
+                  : ["missing_prepaid_signal"],
+              condition:
+                "prepaid-expense destination requires an explicit prepaid token",
+              observedValue: normalized,
+              requiredValue: "anticipad|prepag|prepago|pagado por adelantado",
+              discardedAt:
+                "account-suggestion-ranking.service.ts:rank:missing_prepaid_signal",
+            },
+          ];
+        if (
+          candidate.metadata.statementSection === "unknown" &&
+          observed !== "unknown"
         )
-      )
-        return [
-          {
-            accountId: candidate.account.id,
-            reasons: [
-              this.incompatibilityReason(
-                observed,
-                candidate.metadata.statementSection,
-                candidate.metadata.contraAccount,
-              ),
-            ],
-          },
-        ];
-      return [];
-    });
+          return [
+            {
+              accountId: candidate.account.id,
+              reasons: ["unknown_candidate_classification"],
+              condition:
+                "classified source cannot use an unknown destination section",
+              observedValue: candidate.metadata.statementSection,
+              requiredValue: observed,
+              discardedAt:
+                "account-suggestion-ranking.service.ts:rank:unknown_candidate_classification",
+            },
+          ];
+        if (
+          !this.isCompatible(
+            observed,
+            candidate.metadata.statementSection,
+            candidate.metadata.contraAccount,
+          )
+        )
+          return [
+            {
+              accountId: candidate.account.id,
+              reasons: [
+                this.incompatibilityReason(
+                  observed,
+                  candidate.metadata.statementSection,
+                  candidate.metadata.contraAccount,
+                ),
+              ],
+              condition:
+                "observed and destination statement sections compatible",
+              observedValue: {
+                source: observed,
+                destination: candidate.metadata.statementSection,
+                destinationContraAccount: candidate.metadata.contraAccount,
+              },
+              requiredValue: observed,
+              discardedAt:
+                "account-suggestion-ranking.service.ts:rank:isCompatible",
+            },
+          ];
+        return [];
+      },
+    );
     const ranked = candidates
       .filter(
         (candidate) => !ruleEvaluations.get(candidate.account.id)?.excluded,
@@ -127,6 +190,45 @@ export class AccountSuggestionRankingService {
           .map((term) => this.lexicalSignals(normalized, term))
           .sort((a, b) => b.points - a.points)[0];
         const reasons = [...(best?.reasons ?? [])];
+        const aliasSimilarity = candidate.terms
+          .filter((term) => term.type !== "official_name")
+          .reduce(
+            (maximum, term) =>
+              Math.max(
+                maximum,
+                weightedTokenSimilarity(normalized, term.normalizedTerm),
+              ),
+            0,
+          );
+        if (aliasSimilarity > 0)
+          reasons.push(
+            this.reason(
+              "semantic_alias_hit",
+              `Alias contable relevante (${Math.round(aliasSimilarity * 100)}%)`,
+              0,
+            ),
+          );
+        if (normalizedCanonical && normalizedCanonical !== normalized) {
+          const canonicalBest = variants
+            .map((term) => this.lexicalSignals(normalizedCanonical, term))
+            .sort((a, b) => b.points - a.points)[0];
+          const canonicalTotal = canonicalBest?.points ?? 0;
+          const canonicalScale = canonicalTotal
+            ? Math.min(
+                1,
+                ACCOUNT_SUGGESTION_CONFIG.weights.prefixMaximum /
+                  canonicalTotal,
+              )
+            : 0;
+          reasons.push(
+            ...(canonicalBest?.reasons ?? []).map((reason) => ({
+              ...reason,
+              signal: `canonical_${reason.signal}`,
+              description: `Nombre canónico histórico: ${reason.description}`,
+              points: reason.points * canonicalScale,
+            })),
+          );
+        }
         reasons.push(
           ...(ruleEvaluations.get(candidate.account.id)?.signals ?? []),
         );
@@ -255,43 +357,68 @@ export class AccountSuggestionRankingService {
           (total, reason) => total + reason.points,
           0,
         );
+        const semanticEvidence = this.semanticEvidence(
+          reasons,
+          normalized,
+          candidate,
+        );
         return {
           ...candidate,
           score,
           confidence: 0,
           reasons,
+          semanticEvidenceSatisfied: semanticEvidence.satisfied,
+          semanticEvidenceStrong: semanticEvidence.strong,
+          semanticEvidenceReasons: semanticEvidence.reasons,
         };
       })
       .sort(
         (a, b) =>
           b.score - a.score || a.account.code.localeCompare(b.account.code),
       );
-    ranked.forEach((candidate, index) => {
+    const semanticallyEligible = ranked.filter(
+      (candidate) => candidate.semanticEvidenceSatisfied,
+    );
+    semanticallyEligible.forEach((candidate, index) => {
       candidate.confidence = this.calibrator.calibrate(
         candidate,
-        ranked[index + 1]?.score ?? 0,
-        ranked.length,
+        semanticallyEligible[index + 1]?.score ?? 0,
+        semanticallyEligible.length,
       );
     });
-    const top = ranked.slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates);
+    const top = semanticallyEligible.slice(
+      0,
+      ACCOUNT_SUGGESTION_CONFIG.topCandidates,
+    );
     const gap = (top[0]?.score ?? 0) - (top[1]?.score ?? 0);
     const decision: RankingDecision = !top.length
       ? "no_candidate"
       : ruleEvaluations.get(top[0].account.id)?.review
         ? "review"
-        : top[0].metadata.statementSection === "unknown"
+        : !top[0].semanticEvidenceStrong
           ? "review"
-          : top[0].score < ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore
+          : top[0].metadata.statementSection === "unknown"
             ? "review"
-            : top[0].confidence <
-                ACCOUNT_SUGGESTION_CONFIG.minimumAutomaticConfidence
+            : top[0].score < ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore
               ? "review"
-              : top.length > 1 &&
-                  (gap < ACCOUNT_SUGGESTION_CONFIG.minimumAbsoluteDifference ||
-                    gap / Math.max(top[0].score, 1) <
-                      ACCOUNT_SUGGESTION_CONFIG.minimumRelativeDifference)
-                ? "ambiguous"
-                : "automatic";
+              : top[0].confidence <
+                  ACCOUNT_SUGGESTION_CONFIG.minimumAutomaticConfidence
+                ? "review"
+                : top.length > 1 &&
+                    (gap <
+                      ACCOUNT_SUGGESTION_CONFIG.minimumAbsoluteDifference ||
+                      gap / Math.max(top[0].score, 1) <
+                        ACCOUNT_SUGGESTION_CONFIG.minimumRelativeDifference)
+                  ? "ambiguous"
+                  : "automatic";
+    const decisionAudit = this.decisionAudit(
+      decision,
+      top,
+      gap,
+      top[0]
+        ? (ruleEvaluations.get(top[0].account.id)?.review ?? false)
+        : false,
+    );
     if (decision === "ambiguous")
       for (const item of top)
         item.reasons.push(
@@ -304,6 +431,9 @@ export class AccountSuggestionRankingService {
     return {
       candidates: top,
       allCandidates: ranked,
+      semanticRejectedCandidates: ranked.filter(
+        (candidate) => !candidate.semanticEvidenceSatisfied,
+      ),
       decision,
       reviewRequiredByRule: Boolean(
         top[0] && ruleEvaluations.get(top[0].account.id)?.review,
@@ -317,6 +447,127 @@ export class AccountSuggestionRankingService {
           ),
         ),
       ],
+      decisionAudit,
+    };
+  }
+
+  private semanticEvidence(
+    reasons: RankedCandidate["reasons"],
+    normalizedSource: string,
+    candidate: GeneratedCandidate,
+  ): { satisfied: boolean; strong: boolean; reasons: string[] } {
+    const config = ACCOUNT_SUGGESTION_CONFIG.semanticEvidence;
+    const strongReasons = reasons.flatMap((reason) => {
+      if (reason.points <= 0 || reason.signal.startsWith("canonical_"))
+        return [];
+      if (
+        reason.signal === "exact_alias" ||
+        reason.signal === "exact_concept" ||
+        reason.signal === "supervised_learning_global" ||
+        reason.signal === "supervised_learning_industry"
+      )
+        return [reason.signal];
+      return [];
+    });
+    if (strongReasons.length)
+      return { satisfied: true, strong: true, reasons: strongReasons };
+    const points = (signal: string, maximum: number) =>
+      (reasons.find((reason) => reason.signal === signal)?.points ?? 0) /
+      maximum;
+    const aliasSimilarity = candidate.terms
+      .filter((term) => term.type !== "official_name")
+      .reduce(
+        (maximum, term) =>
+          Math.max(
+            maximum,
+            weightedTokenSimilarity(normalizedSource, term.normalizedTerm),
+          ),
+        0,
+      );
+    const mediumLexicalReasons = [
+      aliasSimilarity >= config.minimumMediumAliasSimilarity
+        ? "partial_alias"
+        : null,
+      points("jaccard", ACCOUNT_SUGGESTION_CONFIG.weights.jaccardMaximum) >=
+      config.minimumMediumJaccardSimilarity
+        ? "medium_jaccard"
+        : null,
+      points(
+        "character_trigrams",
+        ACCOUNT_SUGGESTION_CONFIG.weights.trigramMaximum,
+      ) >= config.minimumMediumTrigramSimilarity
+        ? "medium_trigrams"
+        : null,
+    ].filter((reason): reason is string => Boolean(reason));
+    const structuralCount = reasons.filter(
+      (reason) =>
+        reason.points >= 0 &&
+        [
+          "balance_match",
+          "balance_nature_match",
+          "debit_balance",
+          "credit_balance",
+          "compatible_statement_section",
+          "family_match",
+          "accounting_family_match",
+        ].includes(reason.signal),
+    ).length;
+    const relatedConcept = reasons.some(
+      (reason) => reason.signal === "concept_match" && reason.points > 0,
+    );
+    const ruleReasons = reasons
+      .filter(
+        (reason) => reason.signal.startsWith("rule:") && reason.points > 0,
+      )
+      .map((reason) => reason.signal);
+    const combined =
+      mediumLexicalReasons.length > 0 &&
+      (structuralCount >= config.minimumStructuralSignals || relatedConcept);
+    return {
+      satisfied: ruleReasons.length > 0 || combined,
+      strong: false,
+      reasons: [
+        ...ruleReasons,
+        ...(combined
+          ? [
+              ...mediumLexicalReasons,
+              relatedConcept ? "related_concept" : "structural_corroboration",
+            ]
+          : []),
+      ],
+    };
+  }
+
+  private decisionAudit(
+    decision: RankingDecision,
+    top: RankedCandidate[],
+    gap: number,
+    reviewByRule: boolean,
+  ) {
+    const winner = top[0];
+    const observed = {
+      candidateCount: top.length,
+      reviewByRule,
+      statementSection: winner?.metadata.statementSection,
+      score: winner?.score,
+      confidence: winner?.confidence,
+      absoluteGap: gap,
+      relativeGap: gap / Math.max(winner?.score ?? 0, 1),
+    };
+    const thresholds = {
+      minimumScore: ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore,
+      minimumConfidence: ACCOUNT_SUGGESTION_CONFIG.minimumAutomaticConfidence,
+      minimumAbsoluteGap: ACCOUNT_SUGGESTION_CONFIG.minimumAbsoluteDifference,
+      minimumRelativeGap: ACCOUNT_SUGGESTION_CONFIG.minimumRelativeDifference,
+    };
+    return {
+      decision,
+      observed,
+      thresholds,
+      discardedAt:
+        decision === "automatic"
+          ? null
+          : "account-suggestion-ranking.service.ts:rank:final-decision",
     };
   }
 

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { TaxDocumentStatus, TaxDocumentType } from "../enums/accounting.enums";
 import { TaxDocumentsService } from "./tax-documents.service";
 
@@ -60,6 +62,27 @@ function report(overrides: Record<string, unknown> = {}) {
 type TestReport = ReturnType<typeof report>;
 
 describe("persistencia normalizada de movimientos", () => {
+  it("mantiene el primer nombre en company_accounts y conserva el nombre de cada período como snapshot", () => {
+    const source = readFileSync(
+      join(__dirname, "tax-documents.service.ts"),
+      "utf8",
+    );
+    assert.match(
+      source,
+      /INSERT INTO company_accounts \(id, company_id, internal_code, name/,
+    );
+    assert.match(
+      source,
+      /UPDATE company_accounts SET last_seen_tax_period_id = \?, last_seen_at = NOW\(6\), updated_at = NOW\(6\) WHERE id = \?/,
+    );
+    assert.doesNotMatch(source, /UPDATE company_accounts SET name =/);
+    assert.match(
+      source,
+      /account_name_snapshot=VALUES\(account_name_snapshot\)/,
+    );
+    assert.match(source, /code: "ACCOUNT_NAME_CHANGED"/);
+  });
+
   it("persiste encabezado y todas las filas del Mayor antes de marcar procesado", async () => {
     const { service, calls, saved } = serviceHarness();
     const document = {

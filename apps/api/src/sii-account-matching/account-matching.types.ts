@@ -30,6 +30,13 @@ export interface AccountingMetadata {
   term?: AccountTerm;
   contraAccount: boolean;
   concepts: string[];
+  statementSectionSource?:
+    "official_metadata" | "code_hierarchy" | "knowledge" | "text_heuristic";
+}
+
+export interface AccountNameContext {
+  observedAccountName: string;
+  canonicalAccountName?: string;
 }
 
 export interface BalanceContext {
@@ -65,4 +72,7 @@ export interface RankedCandidate extends GeneratedCandidate {
   score: number;
   confidence: number;
   reasons: MatchingSignal[];
+  semanticEvidenceSatisfied: boolean;
+  semanticEvidenceStrong: boolean;
+  semanticEvidenceReasons: string[];
 }

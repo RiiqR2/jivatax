@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 import type { DataSource } from "typeorm";
 import { CompanyAccountSuggestionStatus } from "../../accounting/entities/company-account-suggestion.entity";
@@ -361,13 +362,24 @@ describe("AccountSuggestionService persistence", () => {
     );
   });
 
-  it("loads SII accounts only by the IDs referenced by terms", async () => {
-    let findOptions: Record<string, unknown> | undefined;
+  it("retrieves the complete active SII catalogue independently of terms and learning", async () => {
+    const clauses: string[] = [];
     const repository = {
-      find: async (options: Record<string, unknown>) => {
-        findOptions = options;
-        return [sii("available", "1.01.01.00", "Disponible")];
-      },
+      createQueryBuilder: () => ({
+        innerJoin: () => repository.createQueryBuilder(),
+        where: (clause: string) => {
+          clauses.push(clause);
+          return repository.createQueryBuilder();
+        },
+        andWhere: (clause: string) => {
+          clauses.push(clause);
+          return repository.createQueryBuilder();
+        },
+        getMany: async () => [
+          sii("available", "1.01.01.00", "Disponible"),
+          sii("unreferenced", "2.01.01.00", "Cuenta sin términos"),
+        ],
+      }),
     };
     const service = new AccountSuggestionService({
       getRepository: () => repository,
@@ -375,17 +387,13 @@ describe("AccountSuggestionService persistence", () => {
 
     const result = await (
       service as unknown as {
-        loadSiiAccounts: (ids: string[]) => Promise<SiiAccountEntity[]>;
+        loadSiiAccounts: () => Promise<SiiAccountEntity[]>;
       }
-    ).loadSiiAccounts(["available", "receivables"]);
+    ).loadSiiAccounts();
 
-    assert.equal(result.length, 1);
-    assert.ok(findOptions);
-    assert.deepEqual(Object.keys(findOptions), ["where"]);
-    const where = findOptions.where as { id: { value: string[] } };
-    assert.deepEqual(where.id.value, ["available", "receivables"]);
-    assert.equal("versionId" in where, false);
-    assert.equal("status" in where, false);
+    assert.equal(result.length, 2);
+    assert.ok(clauses.includes("account.deletedAt IS NULL"));
+    assert.ok(clauses.includes("version.status = :status"));
   });
 
   it("persists ranked suggestions and supersedes active rows without changing a mapping", async () => {
@@ -438,6 +446,119 @@ describe("AccountSuggestionService persistence", () => {
     assert.equal(
       (updates[0].value as Record<string, unknown>).status,
       CompanyAccountSuggestionStatus.SUPERSEDED,
+    );
+  });
+
+  it("persists review candidates and ranks with the observed period snapshot", async () => {
+    const saved: Array<Record<string, unknown>> = [];
+    const repository = {
+      update: async () => undefined,
+      create: (value: Record<string, unknown>) => value,
+      save: async (values: Array<Record<string, unknown>>) => {
+        saved.push(...values);
+        return values;
+      },
+      softDelete: undefined,
+    };
+    const dataSource = {
+      transaction: async (
+        callback: (manager: {
+          getRepository: () => typeof repository;
+        }) => unknown,
+      ) => callback({ getRepository: () => repository }),
+    } as unknown as DataSource;
+    const service = new AccountSuggestionService(dataSource);
+    Object.assign(service as object, {
+      loadCompanyContext: async () => ({ industryId: null }),
+      loadCompanyAccounts: async () => [
+        {
+          id: "internal-laundry",
+          name: "Mercaderías",
+          matchingContext: { accountNameSnapshot: "Insumos de Lavandería" },
+          mapping: { status: CompanyAccountMappingStatus.UNMAPPED },
+        },
+      ],
+      loadSiiAccounts: async () => [
+        sii("laundry", "3.01.09.00", "Insumos de Lavandería"),
+      ],
+      loadTerms: async () => [],
+      loadConcepts: async () => [],
+      loadKnowledge: async () => [],
+      loadRules: async () => [
+        {
+          id: "force-review",
+          ruleKey: "force-review",
+          priority: 100,
+          condition: { sourcePattern: "lavanderia" },
+          action: { type: "review" },
+          explanation: "Revisión de prueba",
+          active: true,
+          deletedAt: null,
+        },
+      ],
+      loadLearning: async () => [],
+    });
+
+    const result = await service.generateForPeriod(companyId, "period-1");
+    assert.equal(result.suggestionsCreated, 1);
+    assert.equal(saved[0].siiAccountId, "laundry");
+    assert.equal(saved[0].status, CompanyAccountSuggestionStatus.REVIEW);
+  });
+
+  it("does not persist a review candidate supported only by Balance structure", async () => {
+    const saved: Array<Record<string, unknown>> = [];
+    const repository = {
+      update: async () => undefined,
+      create: (value: Record<string, unknown>) => value,
+      save: async (values: Array<Record<string, unknown>>) => {
+        saved.push(...values);
+        return values;
+      },
+      softDelete: undefined,
+    };
+    const dataSource = {
+      transaction: async (
+        callback: (manager: {
+          getRepository: () => typeof repository;
+        }) => unknown,
+      ) => callback({ getRepository: () => repository }),
+    } as unknown as DataSource;
+    const service = new AccountSuggestionService(dataSource);
+    Object.assign(service as object, {
+      loadCompanyContext: async () => ({ industryId: null }),
+      loadCompanyAccounts: async () => [
+        {
+          id: "internal-laundry-supplies",
+          name: "Mercaderías",
+          matchingContext: {
+            accountNameSnapshot: "Insumos de Lavandería",
+            assetAmount: "100",
+            liabilityAmount: "0",
+            lossAmount: "0",
+            gainAmount: "0",
+            debitBalance: "100",
+            creditBalance: "0",
+          },
+          mapping: { status: CompanyAccountMappingStatus.UNMAPPED },
+        },
+      ],
+      loadSiiAccounts: async () => [
+        sii("machinery", "1.02.03.00", "Maquinarias y equipos"),
+      ],
+      loadTerms: async () => [],
+      loadConcepts: async () => [],
+      loadKnowledge: async () => [],
+      loadRules: async () => [],
+      loadLearning: async () => [],
+    });
+
+    const result = await service.generateForPeriod(companyId, "period-1");
+    assert.equal(saved.length, 0);
+    assert.equal(result.suggestionsCreated, 0);
+    assert.equal(result.withoutSuggestion, 1);
+    assert.equal(
+      result.withoutSuggestionReasons.insufficient_semantic_evidence,
+      1,
     );
   });
 
@@ -538,6 +659,47 @@ describe("AccountSuggestionService persistence", () => {
     assert.equal(result[0].industryEvidence, industry);
     const serialized = JSON.stringify(calls.map((call) => call.options));
     assert.doesNotMatch(serialized, /active|scope|companyId|promotionEligible/);
+  });
+
+  it("hashes only the observed period name for learning lookup", async () => {
+    let options: unknown;
+    const service = new AccountSuggestionService({
+      getRepository: () => ({
+        find: async (value: unknown) => {
+          options = value;
+          return [];
+        },
+      }),
+    } as unknown as DataSource);
+    await (
+      service as unknown as {
+        loadLearning: (
+          accounts: Array<{
+            name: string;
+            matchingContext: { accountNameSnapshot: string };
+          }>,
+          industryId: null,
+        ) => Promise<unknown[]>;
+      }
+    ).loadLearning(
+      [
+        {
+          name: "Mercaderías",
+          matchingContext: {
+            accountNameSnapshot: "Insumos de Lavandería",
+          },
+        },
+      ],
+      null,
+    );
+    const observedHash = createHash("sha256")
+      .update("insumos de lavanderia", "utf8")
+      .digest("hex");
+    const concatenatedHash = createHash("sha256")
+      .update("mercaderias insumos de lavanderia", "utf8")
+      .digest("hex");
+    assert.match(JSON.stringify(options), new RegExp(observedHash));
+    assert.doesNotMatch(JSON.stringify(options), new RegExp(concatenatedHash));
   });
 
   it("does not query industry learning when the company has no industry", async () => {

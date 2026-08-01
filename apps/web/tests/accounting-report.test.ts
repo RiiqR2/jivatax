@@ -113,7 +113,10 @@ test("homologación tiene vacío, filtros, búsqueda, confirmación e historial"
   assert.match(source, /Aprobar sugerencias de alta confianza/);
   assert.match(source, /Seleccionar todas las sugerencias visibles/);
   assert.match(source, /context\.company\.legalName/);
-  assert.match(source, /Nombre modificado/);
+  assert.match(source, /Nombre observado/);
+  assert.match(source, /Nombre registrado inicialmente/);
+  assert.doesNotMatch(source, /Nombre histórico/);
+  assert.doesNotMatch(source, /Nombre modificado · Canónico/);
   assert.doesNotMatch(
     source,
     /window\.(?:alert|confirm|prompt)|\b(?:alert|confirm|prompt)\(/,
