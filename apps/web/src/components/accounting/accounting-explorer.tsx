@@ -77,6 +77,12 @@ export function BalanceExplorer({
   });
   const change = (key: string, value: string) =>
     setFilters((old) => ({ ...old, [key]: value, page: 1 }));
+  const hasFilters = Boolean(
+    filters.code ||
+    filters.name ||
+    filters.mapping !== "all" ||
+    filters.section,
+  );
   return (
     <main className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">
       <nav className="mb-3 text-sm text-slate-500">
@@ -136,84 +142,102 @@ export function BalanceExplorer({
           <option value="gain">Ganancias</option>
         </select>
       </section>
-      <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 text-xs uppercase text-slate-600">
-              <tr>
-                {[
-                  "Código cuenta",
-                  "Nombre cuenta",
-                  "Código SII",
-                  "Nombre cuenta SII",
-                  "Débitos",
-                  "Créditos",
-                  "Saldo Deudor",
-                  "Saldo Acreedor",
-                ].map((h) => (
-                  <th key={h} className="whitespace-nowrap px-4 py-3">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {query.data?.items.map((row) => (
-                <tr
-                  key={row.accountId}
-                  tabIndex={0}
-                  role="link"
-                  onClick={() =>
-                    router.push(
-                      ledgerPath(companyId, taxPeriodId, row.accountId),
-                    )
-                  }
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter")
-                      router.push(
-                        ledgerPath(companyId, taxPeriodId, row.accountId),
-                      );
-                  }}
-                  className="cursor-pointer hover:bg-emerald-50 focus:bg-emerald-50"
-                >
-                  <td className="px-4 py-3 font-medium text-emerald-800">
-                    {row.code}
-                  </td>
-                  <td className="px-4 py-3">{row.name}</td>
-                  <td className="px-4 py-3">{row.siiCode ?? "Pendiente"}</td>
-                  <td className="px-4 py-3">{row.siiName ?? "—"}</td>
+      {query.data?.total === 0 && !hasFilters ? (
+        <section className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center">
+          <h2 className="text-lg font-semibold text-slate-900">
+            Aún no hay un Balance disponible
+          </h2>
+          <p className="mx-auto mt-2 max-w-xl text-sm text-slate-600">
+            Importa y procesa un Balance válido para comenzar a explorar las
+            cuentas de este período.
+          </p>
+          <Link
+            href={`/companies/${companyId}/periods/${taxPeriodId}/documents`}
+            className="mt-5 inline-flex rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white"
+          >
+            Ir a Documentos
+          </Link>
+        </section>
+      ) : (
+        <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase text-slate-600">
+                <tr>
                   {[
-                    row.debit,
-                    row.credit,
-                    row.debitBalance,
-                    row.creditBalance,
-                  ].map((v, i) => (
-                    <td key={i} className="px-4 py-3 text-right tabular-nums">
-                      {formatAccountingAmount(v)}
-                    </td>
+                    "Código cuenta",
+                    "Nombre cuenta",
+                    "Código SII",
+                    "Nombre cuenta SII",
+                    "Débitos",
+                    "Créditos",
+                    "Saldo Deudor",
+                    "Saldo Acreedor",
+                  ].map((h) => (
+                    <th key={h} className="whitespace-nowrap px-4 py-3">
+                      {h}
+                    </th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {query.data?.items.map((row) => (
+                  <tr
+                    key={row.accountId}
+                    tabIndex={0}
+                    role="link"
+                    onClick={() =>
+                      router.push(
+                        ledgerPath(companyId, taxPeriodId, row.accountId),
+                      )
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter")
+                        router.push(
+                          ledgerPath(companyId, taxPeriodId, row.accountId),
+                        );
+                    }}
+                    className="cursor-pointer hover:bg-emerald-50 focus:bg-emerald-50"
+                  >
+                    <td className="px-4 py-3 font-medium text-emerald-800">
+                      {row.code}
+                    </td>
+                    <td className="px-4 py-3">{row.name}</td>
+                    <td className="px-4 py-3">{row.siiCode ?? "Pendiente"}</td>
+                    <td className="px-4 py-3">{row.siiName ?? "—"}</td>
+                    {[
+                      row.debit,
+                      row.credit,
+                      row.debitBalance,
+                      row.creditBalance,
+                    ].map((v, i) => (
+                      <td key={i} className="px-4 py-3 text-right tabular-nums">
+                        {formatAccountingAmount(v)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {query.isLoading && (
+            <p className="p-6 text-center text-slate-500">Cargando Balance…</p>
+          )}
+          {query.isError && (
+            <p className="p-6 text-center text-red-700">
+              No fue posible cargar el Balance.
+            </p>
+          )}
+          {query.data && (
+            <Pager
+              page={filters.page}
+              pageSize={query.data.pageSize}
+              total={query.data.total}
+              setPage={(page) => setFilters((old) => ({ ...old, page }))}
+            />
+          )}
         </div>
-        {query.isLoading && (
-          <p className="p-6 text-center text-slate-500">Cargando Balance…</p>
-        )}
-        {query.isError && (
-          <p className="p-6 text-center text-red-700">
-            No fue posible cargar el Balance.
-          </p>
-        )}
-        {query.data && (
-          <Pager
-            page={filters.page}
-            pageSize={query.data.pageSize}
-            total={query.data.total}
-            setPage={(page) => setFilters((old) => ({ ...old, page }))}
-          />
-        )}
-      </div>
+      )}
     </main>
   );
 }
@@ -256,6 +280,13 @@ export function GeneralLedgerExplorer({
         old.sort === column && old.direction === "asc" ? "desc" : "asc",
       page: 1,
     }));
+  const hasFilters = Boolean(
+    filters.from ||
+    filters.to ||
+    filters.documentType ||
+    filters.documentNumber ||
+    filters.search,
+  );
   return (
     <main className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">
       <nav className="mb-3 text-sm text-slate-500">
@@ -323,71 +354,89 @@ export function GeneralLedgerExplorer({
           className={input}
         />
       </section>
-      <div className="mt-4 overflow-hidden rounded-xl border bg-white">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 text-xs uppercase text-slate-600">
-              <tr>
-                {[
-                  ["Fecha", "date"],
-                  ["Tipo documento", "documentType"],
-                  ["Número documento", "documentNumber"],
-                  ["Glosa", "description"],
-                  ["Debe", "debit"],
-                  ["Haber", "credit"],
-                  ["Saldo acumulado", "runningBalance"],
-                ].map(([label, key]) => (
-                  <th key={key} className="whitespace-nowrap px-4 py-3">
-                    <button onClick={() => sort(key)}>
-                      {label}
-                      {filters.sort === key
-                        ? filters.direction === "asc"
-                          ? " ↑"
-                          : " ↓"
-                        : ""}
-                    </button>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {query.data?.items.map((row) => (
-                <tr key={row.id}>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    {row.transactionDate}
-                  </td>
-                  <td className="px-4 py-3">{row.documentType ?? "—"}</td>
-                  <td className="px-4 py-3">{row.documentNumber ?? "—"}</td>
-                  <td className="px-4 py-3">{row.description}</td>
-                  {[row.debit, row.credit, row.runningBalance].map((v, i) => (
-                    <td key={i} className="px-4 py-3 text-right tabular-nums">
-                      {formatAccountingAmount(v)}
-                    </td>
+      {query.data?.total === 0 && !hasFilters ? (
+        <section className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center">
+          <h2 className="text-lg font-semibold text-slate-900">
+            No hay movimientos de Libro Mayor
+          </h2>
+          <p className="mx-auto mt-2 max-w-xl text-sm text-slate-600">
+            No existen movimientos procesados para esta cuenta en el período
+            seleccionado. Puedes cargar el Libro Mayor desde Documentos.
+          </p>
+          <Link
+            href={`/companies/${companyId}/periods/${taxPeriodId}/documents`}
+            className="mt-5 inline-flex rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white"
+          >
+            Ir a Documentos
+          </Link>
+        </section>
+      ) : (
+        <div className="mt-4 overflow-hidden rounded-xl border bg-white">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase text-slate-600">
+                <tr>
+                  {[
+                    ["Fecha", "date"],
+                    ["Tipo documento", "documentType"],
+                    ["Número documento", "documentNumber"],
+                    ["Glosa", "description"],
+                    ["Debe", "debit"],
+                    ["Haber", "credit"],
+                    ["Saldo acumulado", "runningBalance"],
+                  ].map(([label, key]) => (
+                    <th key={key} className="whitespace-nowrap px-4 py-3">
+                      <button onClick={() => sort(key)}>
+                        {label}
+                        {filters.sort === key
+                          ? filters.direction === "asc"
+                            ? " ↑"
+                            : " ↓"
+                          : ""}
+                      </button>
+                    </th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y">
+                {query.data?.items.map((row) => (
+                  <tr key={row.id}>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      {row.transactionDate}
+                    </td>
+                    <td className="px-4 py-3">{row.documentType ?? "—"}</td>
+                    <td className="px-4 py-3">{row.documentNumber ?? "—"}</td>
+                    <td className="px-4 py-3">{row.description}</td>
+                    {[row.debit, row.credit, row.runningBalance].map((v, i) => (
+                      <td key={i} className="px-4 py-3 text-right tabular-nums">
+                        {formatAccountingAmount(v)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {query.isLoading && (
+            <p className="p-6 text-center text-slate-500">
+              Cargando movimientos…
+            </p>
+          )}
+          {query.isError && (
+            <p className="p-6 text-center text-red-700">
+              No fue posible cargar el Libro Mayor.
+            </p>
+          )}
+          {query.data && (
+            <Pager
+              page={filters.page}
+              pageSize={query.data.pageSize}
+              total={query.data.total}
+              setPage={(page) => setFilters((old) => ({ ...old, page }))}
+            />
+          )}
         </div>
-        {query.isLoading && (
-          <p className="p-6 text-center text-slate-500">
-            Cargando movimientos…
-          </p>
-        )}
-        {query.isError && (
-          <p className="p-6 text-center text-red-700">
-            No fue posible cargar el Libro Mayor.
-          </p>
-        )}
-        {query.data && (
-          <Pager
-            page={filters.page}
-            pageSize={query.data.pageSize}
-            total={query.data.total}
-            setPage={(page) => setFilters((old) => ({ ...old, page }))}
-          />
-        )}
-      </div>
+      )}
     </main>
   );
 }

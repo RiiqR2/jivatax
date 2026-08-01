@@ -4,6 +4,7 @@ import {
   FileText,
   ListChecks,
   LayoutDashboard,
+  LibraryBig,
   Leaf,
   LoaderCircle,
   LogOut,
@@ -17,6 +18,10 @@ import { useLogout } from "@/hooks/use-logout";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useActiveCompany } from "@/providers/active-company-provider";
+import {
+  accountingExplorerPath,
+  isAccountingExplorerPath,
+} from "@/lib/accounting-navigation";
 
 export function AppSidebar() {
   const pathname = usePathname();
@@ -60,6 +65,17 @@ export function AppSidebar() {
               : "Selecciona un período tributario para homologar cuentas",
           },
           {
+            label: "Explorador contable",
+            href: taxPeriodId
+              ? accountingExplorerPath(companyId, taxPeriodId)
+              : setupPath,
+            icon: LibraryBig,
+            active: taxPeriodId ? isAccountingExplorerPath(pathname) : false,
+            title: operationalBase
+              ? undefined
+              : "Selecciona un período tributario para explorar la contabilidad",
+          },
+          {
             label: "Usuarios",
             href: `/companies/${companyId}/users`,
             icon: Users,
@@ -84,7 +100,9 @@ export function AppSidebar() {
       >
         <div className="space-y-1">
           {navigation.map((item) => {
-            const active = pathname.startsWith(item.href);
+            const active =
+              ("active" in item ? item.active : undefined) ??
+              pathname.startsWith(item.href);
             return (
               <Link
                 key={item.label}

@@ -28,6 +28,7 @@ import {
   canReviewMappings,
   statusPresentation,
 } from "@/lib/accounting-presentation";
+import { explorerDocumentPath } from "@/lib/accounting-navigation";
 
 const contracts = {
   balance: {
@@ -502,7 +503,6 @@ export function AccountingDocumentsPage({
           result={result}
         />
       )}
-
     </main>
   );
 }
@@ -557,6 +557,18 @@ function ProcessingResult({
             className="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white"
           >
             Revisar homologaciones
+          </Link>
+        )}
+        {explorerDocumentPath(companyId, taxPeriodId, result.document) && (
+          <Link
+            href={explorerDocumentPath(
+              companyId,
+              taxPeriodId,
+              result.document,
+            )!}
+            className="rounded-lg border border-emerald-700 px-3 py-2 text-sm font-medium text-emerald-800"
+          >
+            {type === "balance" ? "Ver Balance" : "Ver en explorador contable"}
           </Link>
         )}
       </div>
@@ -699,6 +711,24 @@ function History({
                       >
                         Ver detalle
                       </Link>
+                      {explorerDocumentPath(
+                        companyId,
+                        taxPeriodId,
+                        document,
+                      ) && (
+                        <Link
+                          href={explorerDocumentPath(
+                            companyId,
+                            taxPeriodId,
+                            document,
+                          )!}
+                          className="rounded border border-emerald-300 px-2 py-1 text-emerald-800"
+                        >
+                          {type === "balance"
+                            ? "Ver Balance"
+                            : "Ver en explorador contable"}
+                        </Link>
+                      )}
                       <Link
                         href={`/companies/${companyId}/periods/${taxPeriodId}/documents/${document.id}/report`}
                         className="rounded border px-2 py-1"
