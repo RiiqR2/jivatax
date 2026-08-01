@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  accountingExplorerPath,
   companyEntryPath,
+  explorerDocumentPath,
+  isAccountingExplorerPath,
+  isValidTaxPeriodId,
   periodSelectionPath,
   selectPreferredPeriod,
 } from "../src/lib/accounting-navigation.ts";
@@ -63,6 +67,81 @@ test("cambiar período conserva secciones tributarias pero no anida Usuarios", (
   );
 });
 
+test("el explorador genera rutas contextuales y permanece activo en Balance y Mayor", () => {
+  const balance = accountingExplorerPath("company-1", "period-1");
+  assert.equal(balance, "/companies/company-1/periods/period-1/balance");
+  assert.equal(isAccountingExplorerPath(balance), true);
+  assert.equal(
+    isAccountingExplorerPath(`${balance}/accounts/account-1/general-ledger`),
+    true,
+  );
+  assert.equal(
+    isAccountingExplorerPath("/companies/company-1/periods/period-1/documents"),
+    false,
+  );
+});
+
+test("setup nunca se interpreta como identificador de período", () => {
+  assert.equal(isValidTaxPeriodId("setup"), false);
+  assert.equal(isValidTaxPeriodId(undefined), false);
+  assert.equal(
+    isValidTaxPeriodId("52402e39-0ebd-4484-a5fe-db2f512ac72d"),
+    true,
+  );
+
+  const sidebar = readFileSync(
+    new URL("../src/components/layout/app-sidebar.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    sidebar,
+    /accountingExplorerPath\(companyId, taxPeriodId\)/,
+  );
+});
+
+test("cambiar período conserva Balance y reinicia una cuenta del Mayor", () => {
+  assert.equal(
+    periodSelectionPath(
+      "/companies/company-1/periods/old/balance",
+      "company-1",
+      "new",
+    ),
+    "/companies/company-1/periods/new/balance",
+  );
+  assert.equal(
+    periodSelectionPath(
+      "/companies/company-1/periods/old/balance/accounts/account-1/general-ledger",
+      "company-1",
+      "new",
+    ),
+    "/companies/company-1/periods/new/balance",
+  );
+});
+
+test("Documentos enlaza al explorador únicamente desde importaciones procesadas válidas", () => {
+  const valid = {
+    documentType: "general_ledger",
+    status: "processed",
+  };
+  assert.equal(
+    explorerDocumentPath("company-1", "period-1", valid),
+    "/companies/company-1/periods/period-1/balance",
+  );
+  for (const status of ["invalid", "processing", "discarded"]) {
+    assert.equal(
+      explorerDocumentPath("company-1", "period-1", { ...valid, status }),
+      null,
+    );
+  }
+  assert.equal(
+    explorerDocumentPath("company-1", "period-1", {
+      ...valid,
+      documentType: "journal",
+    }),
+    null,
+  );
+});
+
 test("el sidebar conserva operación sin período y limita Administración a metauser", () => {
   const sidebar = readFileSync(
     new URL("../src/components/layout/app-sidebar.tsx", import.meta.url),
@@ -72,6 +151,7 @@ test("el sidebar conserva operación sin período y limita Administración a met
   assert.match(sidebar, /label: "Resumen"/);
   assert.match(sidebar, /label: "Documentos"/);
   assert.match(sidebar, /label: "Homologación"/);
+  assert.match(sidebar, /label: "Explorador contable"/);
   assert.match(sidebar, /account-mapping/);
   assert.match(sidebar, /label: "Usuarios"/);
   assert.match(sidebar, /Crea un período tributario para cargar documentos/);

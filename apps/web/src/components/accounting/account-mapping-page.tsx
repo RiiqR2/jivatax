@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { accountingService } from "@/services/accounting.service";
 import type { AccountMappingItem } from "@/types/accounting.types";
+import { accountingExplorerPath } from "@/lib/accounting-navigation";
 
 const statusLabels: Record<string, string> = {
   pending: "Pendiente",
@@ -84,12 +85,20 @@ export function AccountMappingPage({
   return (
     <main className="mx-auto max-w-7xl p-4 sm:p-8">
       <header>
-        <Link
-          href={`/companies/${companyId}/periods/${taxPeriodId}/documents`}
-          className="text-sm text-emerald-700"
-        >
-          ← Volver a documentos
-        </Link>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <Link
+            href={`/companies/${companyId}/periods/${taxPeriodId}/documents`}
+            className="text-sm text-emerald-700"
+          >
+            ← Volver a documentos
+          </Link>
+          <Link
+            href={accountingExplorerPath(companyId, taxPeriodId)}
+            className="text-sm text-slate-600 underline-offset-4 hover:text-emerald-700 hover:underline"
+          >
+            Ver Balance
+          </Link>
+        </div>
         <h1 className="mt-2 text-3xl font-semibold">Homologación de cuentas</h1>
         {query.data?.context && (
           <p className="mt-1 text-slate-600">

@@ -36,9 +36,55 @@ export function periodSelectionPath(
     return `/companies/${companyId}/users`;
   }
 
+  // A ledger account belongs to a particular period. When switching periods,
+  // return to the explorer root instead of carrying a potentially invalid ID.
+  if (/\/balance\/accounts\/[^/]+\/general-ledger\/?$/.test(pathname)) {
+    return `/companies/${companyId}/periods/${taxPeriodId}/balance`;
+  }
+
   const section = pathname.match(
-    /\/(dashboard|documents|account-mapping)\/?$/,
+    /\/(dashboard|documents|account-mapping|balance)\/?$/,
   )?.[1];
 
   return `/companies/${companyId}/periods/${taxPeriodId}/${section ?? "dashboard"}`;
+}
+
+export function accountingExplorerPath(
+  companyId: string,
+  taxPeriodId: string,
+): string {
+  return `/companies/${companyId}/periods/${taxPeriodId}/balance`;
+}
+
+export function isValidTaxPeriodId(value: string | undefined): value is string {
+  return Boolean(
+    value &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value,
+    ),
+  );
+}
+
+export function isAccountingExplorerPath(pathname: string): boolean {
+  return /\/periods\/[^/]+\/balance(?:\/|$)/.test(pathname);
+}
+
+export function explorerDocumentPath(
+  companyId: string,
+  taxPeriodId: string,
+  document: {
+    documentType: string;
+    status: string;
+    discardedAt?: string | null;
+  },
+): string | null {
+  if (
+    document.status !== "processed" ||
+    document.discardedAt ||
+    !["balance", "general_ledger"].includes(document.documentType)
+  ) {
+    return null;
+  }
+
+  return accountingExplorerPath(companyId, taxPeriodId);
 }

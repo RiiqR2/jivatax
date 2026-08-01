@@ -4,6 +4,7 @@ import {
   FileText,
   ListChecks,
   LayoutDashboard,
+  LibraryBig,
   Leaf,
   LoaderCircle,
   LogOut,
@@ -17,6 +18,11 @@ import { useLogout } from "@/hooks/use-logout";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useActiveCompany } from "@/providers/active-company-provider";
+import {
+  accountingExplorerPath,
+  isAccountingExplorerPath,
+  isValidTaxPeriodId,
+} from "@/lib/accounting-navigation";
 
 export function AppSidebar() {
   const pathname = usePathname();
@@ -25,9 +31,10 @@ export function AppSidebar() {
   const { activeCompany } = useActiveCompany();
   const companyId = activeCompany?.id;
   const taxPeriodId = pathname.match(/\/periods\/([^/]+)/)?.[1];
+  const validTaxPeriodId = isValidTaxPeriodId(taxPeriodId) ? taxPeriodId : null;
   const operationalBase =
-    companyId && taxPeriodId
-      ? `/companies/${companyId}/periods/${taxPeriodId}`
+    companyId && validTaxPeriodId
+      ? `/companies/${companyId}/periods/${validTaxPeriodId}`
       : null;
   const setupPath = companyId
     ? `/companies/${companyId}/periods/setup`
@@ -60,6 +67,19 @@ export function AppSidebar() {
               : "Selecciona un período tributario para homologar cuentas",
           },
           {
+            label: "Explorador contable",
+            href: validTaxPeriodId
+              ? accountingExplorerPath(companyId, validTaxPeriodId)
+              : setupPath,
+            icon: LibraryBig,
+            active: validTaxPeriodId
+              ? isAccountingExplorerPath(pathname)
+              : false,
+            title: operationalBase
+              ? undefined
+              : "Selecciona un período tributario para explorar la contabilidad",
+          },
+          {
             label: "Usuarios",
             href: `/companies/${companyId}/users`,
             icon: Users,
@@ -84,7 +104,9 @@ export function AppSidebar() {
       >
         <div className="space-y-1">
           {navigation.map((item) => {
-            const active = pathname.startsWith(item.href);
+            const active =
+              ("active" in item ? item.active : undefined) ??
+              pathname.startsWith(item.href);
             return (
               <Link
                 key={item.label}
