@@ -1,10 +1,10 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Brackets, Repository } from "typeorm";
-import { SiiAccountPlanVersionStatus } from "../enums/sii-account-plan-version-status.enum";
 import type { ListSiiAccountsQueryDto } from "../dto/list-sii-accounts-query.dto";
 import { SiiAccountEntity } from "../entities/sii-account.entity";
 import { SiiAccountPlanVersionEntity } from "../entities/sii-account-plan-version.entity";
+import { CurrentSiiAccountCatalogService } from "./current-sii-account-catalog.service";
 
 @Injectable()
 export class SiiAccountPlanService {
@@ -13,6 +13,7 @@ export class SiiAccountPlanService {
     private readonly versions: Repository<SiiAccountPlanVersionEntity>,
     @InjectRepository(SiiAccountEntity)
     private readonly accounts: Repository<SiiAccountEntity>,
+    private readonly currentCatalog: CurrentSiiAccountCatalogService,
   ) {}
 
   async listVersions() {
@@ -45,12 +46,8 @@ export class SiiAccountPlanService {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 50;
     const builder = this.accounts.createQueryBuilder("account");
-
-    if (query.versionId) {
-      builder.andWhere("account.versionId = :versionId", {
-        versionId: query.versionId,
-      });
-    }
+    const versionId = await this.currentCatalog.getVersionId();
+    builder.andWhere("account.versionId = :versionId", { versionId });
     if (query.code) {
       builder.andWhere("account.code = :code", {
         code: query.code,
@@ -112,16 +109,9 @@ export class SiiAccountPlanService {
   async findActiveByCode(code: string): Promise<SiiAccountEntity | null> {
     const normalizedCode = code.trim();
     if (!normalizedCode) return null;
-    return this.accounts
-      .createQueryBuilder("account")
-      .innerJoin("account.version", "version")
-      .where("account.code = :code", { code: normalizedCode })
-      .andWhere("account.deletedAt IS NULL")
-      .andWhere("version.deletedAt IS NULL")
-      .andWhere("version.status = :status", {
-        status: SiiAccountPlanVersionStatus.ACTIVE,
-      })
-      .getOne();
+    const versionId = await this.currentCatalog.getVersionId();
+    if (!versionId) return null;
+    return this.accounts.findOneBy({ code: normalizedCode, versionId });
   }
 
   private presentAccount(account: SiiAccountEntity) {

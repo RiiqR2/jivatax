@@ -13,7 +13,6 @@ import {
   CompanyAccountMappingMethod,
   CompanyAccountMappingStatus,
 } from "../../company-account-plan/enums/company-account-plan.enums";
-import { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
 import { SiiAccountTermEntity } from "../../sii-account-matching/entities/sii-account-term.entity";
 import { normalizeAccountTerm } from "../../sii-account-matching/normalization/account-term-normalizer";
 import {
@@ -32,6 +31,7 @@ import { TaxDocumentType } from "../enums/accounting.enums";
 import { AccountMatchingFeedbackEntity } from "../../sii-account-matching/entities/account-matching-feedback.entity";
 import { SupervisedLearningService } from "../../sii-account-matching/services/supervised-learning.service";
 import { LearningAggregatorService } from "../../sii-account-matching/services/learning-aggregator.service";
+import { CurrentSiiAccountCatalogService } from "../../sii-account-plan/services/current-sii-account-catalog.service";
 
 type MappingListRow = {
   companyAccountId: string;
@@ -88,6 +88,7 @@ export class PeriodAccountMappingsService {
     private readonly documents: Repository<TaxDocumentEntity>,
     private readonly periods: TaxPeriodsService,
     private readonly supervisedLearning: SupervisedLearningService,
+    private readonly currentCatalog: CurrentSiiAccountCatalogService,
     private readonly learningAggregatorService: LearningAggregatorService,
   ) {}
 
@@ -386,12 +387,13 @@ export class PeriodAccountMappingsService {
       relations: { companyAccount: true },
     });
     if (!mapping) throw new NotFoundException("Homologación no encontrada.");
-    const siiAccounts = manager.getRepository(SiiAccountEntity);
     if (
       dto.action === "confirm" &&
-      !(await siiAccounts.findOne({ where: { id: dto.siiAccountId } }))
+      !(await this.currentCatalog.containsAccount(dto.siiAccountId!, manager))
     )
-      throw new BadRequestException("La cuenta SII seleccionada no existe.");
+      throw new BadRequestException(
+        "La cuenta SII seleccionada no pertenece al catálogo vigente.",
+      );
 
     const nextStatus =
       dto.action === "confirm"

@@ -30,10 +30,12 @@ import { AccountMatchingLearningIndustryEntity } from "./entities/account-matchi
 import { AccountMatchingConfirmationService } from "./services/account-matching-confirmation.service";
 import { LearningAggregatorService } from "./services/learning-aggregator.service";
 import { ExpertAccountMappingImportService } from "./expert-import/expert-account-mapping-import.service";
+import { SiiAccountPlanModule } from "../sii-account-plan/sii-account-plan.module";
 
 @Module({
   imports: [
     IndustriesModule,
+    SiiAccountPlanModule,
     TypeOrmModule.forFeature([
       SiiAccountEntity,
       SiiAccountPlanVersionEntity,

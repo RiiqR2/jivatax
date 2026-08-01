@@ -22,6 +22,7 @@ import { TaxPeriodsService } from "./services/tax-periods.service";
 import { PeriodAccountMappingsService } from "./services/period-account-mappings.service";
 import { SiiAccountMatchingModule } from "../sii-account-matching/sii-account-matching.module";
 import { AccountMatchingFeedbackEntity } from "../sii-account-matching/entities/account-matching-feedback.entity";
+import { SiiAccountPlanModule } from "../sii-account-plan/sii-account-plan.module";
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { AccountMatchingFeedbackEntity } from "../sii-account-matching/entities/
     ]),
     AuthModule,
     StorageModule,
+    SiiAccountPlanModule,
     SiiAccountMatchingModule,
   ],
   controllers: [

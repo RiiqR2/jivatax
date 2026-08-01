@@ -5,13 +5,18 @@ import { SiiAccountEntity } from "./entities/sii-account.entity";
 import { SiiAccountPlanVersionEntity } from "./entities/sii-account-plan-version.entity";
 import { SiiAccountPlanImportService } from "./services/sii-account-plan-import.service";
 import { SiiAccountPlanService } from "./services/sii-account-plan.service";
+import { CurrentSiiAccountCatalogService } from "./services/current-sii-account-catalog.service";
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([SiiAccountPlanVersionEntity, SiiAccountEntity]),
   ],
   controllers: [SiiAccountPlanController],
-  providers: [SiiAccountPlanService, SiiAccountPlanImportService],
-  exports: [SiiAccountPlanImportService],
+  providers: [
+    SiiAccountPlanService,
+    SiiAccountPlanImportService,
+    CurrentSiiAccountCatalogService,
+  ],
+  exports: [SiiAccountPlanImportService, CurrentSiiAccountCatalogService],
 })
 export class SiiAccountPlanModule {}
