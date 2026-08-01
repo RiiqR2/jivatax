@@ -37,13 +37,12 @@ describe("deterministic candidate retrieval and ranking", () => {
   const generator = new AccountCandidateGeneratorService();
   const ranking = new AccountSuggestionRankingService();
 
-  it("evaluates the full catalogue and always returns Top 5", () => {
+  it("evaluates the full catalogue before semantic eligibility", () => {
     const generated = generator.generate(catalogue, []);
     assert.equal(generated.length, 6);
-    assert.equal(
-      ranking.rank("cuenta desconocida", generated).candidates.length,
-      5,
-    );
+    const result = ranking.rank("cuenta desconocida", generated);
+    assert.equal(result.allCandidates.length, 6);
+    assert.equal(result.candidates.length, 0);
   });
 
   it("adds independent Jaccard, trigram and explainability signals", () => {
@@ -74,7 +73,7 @@ describe("deterministic candidate retrieval and ranking", () => {
 
     assert.equal(result.candidates[0].account.id, "laundry");
     assert.ok(
-      result.candidates
+      result.allCandidates
         .find((candidate) => candidate.account.id === "merchandise")
         ?.reasons.some((reason) => reason.signal.startsWith("canonical_")),
     );
@@ -121,9 +120,10 @@ describe("deterministic candidate retrieval and ranking", () => {
       ]),
       context("asset", "debit"),
     );
-    assert.equal(result.decision, "review");
-    assert.equal(result.candidates[0].semanticEvidenceSatisfied, false);
-    assert.deepEqual(result.candidates[0].semanticEvidenceReasons, []);
+    assert.equal(result.decision, "no_candidate");
+    assert.equal(result.candidates.length, 0);
+    assert.equal(result.allCandidates[0].semanticEvidenceSatisfied, false);
+    assert.deepEqual(result.allCandidates[0].semanticEvidenceReasons, []);
   });
 
   it("accepts specific rules and aliases as semantic review evidence", () => {
@@ -137,6 +137,7 @@ describe("deterministic candidate retrieval and ranking", () => {
         "rule:capital_is_equity",
       ),
     );
+    assert.equal(capital.decision, "review");
 
     const income = account(
       "operating-income",
@@ -160,14 +161,10 @@ describe("deterministic candidate retrieval and ranking", () => {
       context("income", "credit"),
     );
     assert.equal(sales.candidates[0].semanticEvidenceSatisfied, true);
-    assert.ok(
-      sales.candidates[0].semanticEvidenceReasons.includes(
-        "semantic_alias_hit",
-      ),
-    );
+    assert.ok(sales.candidates[0].semanticEvidenceReasons.length > 0);
   });
 
-  it("does not treat historical names or weak cost/payable overlap as semantic evidence", () => {
+  it("combines medium lexical and structural evidence without using historical names", () => {
     for (const [observedAccountName, canonicalAccountName, destination] of [
       [
         "Remuneraciones por Pagar",
@@ -188,11 +185,10 @@ describe("deterministic candidate retrieval and ranking", () => {
         generator.generate([destination]),
         section,
       );
-      assert.equal(
-        result.candidates[0].semanticEvidenceSatisfied,
-        false,
-        `${observedAccountName}: ${result.candidates[0].semanticEvidenceReasons.join(",")}`,
-      );
+      assert.equal(result.decision, "review");
+      assert.equal(result.candidates[0].semanticEvidenceSatisfied, true);
+      assert.equal(result.candidates[0].semanticEvidenceStrong, false);
+      assert.ok(result.candidates[0].semanticEvidenceReasons.length > 1);
       assert.ok(
         !result.candidates[0].semanticEvidenceReasons.some((reason) =>
           reason.startsWith("canonical_"),
@@ -207,7 +203,7 @@ describe("deterministic candidate retrieval and ranking", () => {
       generator.generate(catalogue, []),
       context("liability", "credit"),
     );
-    const debt = result.candidates.find(
+    const debt = result.allCandidates.find(
       (candidate) => candidate.account.id === "debt",
     )!;
     const cash = result.candidates.find(
@@ -525,10 +521,13 @@ describe("deterministic candidate retrieval and ranking", () => {
       "activo",
       generator.generate(catalogue, [], concepts),
     );
-    assert.equal(result.decision, "review");
+    assert.equal(result.decision, "no_candidate");
     assert.ok(
-      !result.candidates[0].reasons.some(
-        (reason) => reason.signal === "exact_concept",
+      result.allCandidates.every(
+        (candidate) =>
+          !candidate.reasons.some(
+            (reason) => reason.signal === "exact_concept",
+          ),
       ),
     );
   });

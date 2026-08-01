@@ -10,6 +10,7 @@ import { TaxPeriodCompanyAccountEntity } from "../../accounting/entities/tax-per
 import { CompanyAccountEntity } from "../../company-account-plan/entities/company-account.entity";
 import { CompanyAccountMappingStatus } from "../../company-account-plan/enums/company-account-plan.enums";
 import { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
+import { SiiAccountPlanVersionStatus } from "../../sii-account-plan/enums/sii-account-plan-version-status.enum";
 import {
   SiiAccountTermEntity,
   type SiiAccountTermType,
@@ -112,7 +113,7 @@ export class AccountSuggestionService {
     );
     // Terms are synchronized against the selected active SII version. Resolving
     // by those real account ids prevents mixing candidates from older versions.
-    const siiAccounts = await this.loadSiiAccounts(siiAccountIds);
+    const siiAccounts = await this.loadSiiAccounts();
     const expenseKnowledge = resolveCatalogExpenseKnowledge(siiAccounts);
     const siiAccountsById = new Map(
       siiAccounts.map((account) => [account.id, account]),
@@ -277,11 +278,8 @@ export class AccountSuggestionService {
               generatedAt,
             }),
           );
-        const semanticCandidates = deterministic.candidates.filter(
-          (candidate) => candidate.semanticEvidenceSatisfied,
-        );
         const ranked = {
-          candidates: semanticCandidates.map((candidate) => ({
+          candidates: deterministic.candidates.map((candidate) => ({
             ...candidate,
             exact: candidate.reasons.some(
               (reason) => reason.signal === "exact_alias",
@@ -297,7 +295,8 @@ export class AccountSuggestionService {
           discardReason:
             deterministic.decision === "ambiguous"
               ? ("ambiguous_candidates" as const)
-              : semanticCandidates.length === 0
+              : deterministic.candidates.length === 0 &&
+                  deterministic.semanticRejectedCandidates.length > 0
                 ? ("insufficient_semantic_evidence" as const)
                 : undefined,
         };
@@ -389,13 +388,16 @@ export class AccountSuggestionService {
       .getMany() as Promise<AccountWithContext[]>;
   }
 
-  private loadSiiAccounts(ids?: string[]) {
-    return this.dataSource.getRepository(SiiAccountEntity).find({
-      where: {
-        ...(ids ? { id: In(ids) } : {}),
-        deletedAt: IsNull(),
-      },
-    });
+  private loadSiiAccounts() {
+    return this.dataSource
+      .getRepository(SiiAccountEntity)
+      .createQueryBuilder("account")
+      .innerJoin("account.version", "version")
+      .where("account.deletedAt IS NULL")
+      .andWhere("version.status = :status", {
+        status: SiiAccountPlanVersionStatus.ACTIVE,
+      })
+      .getMany();
   }
 
   private loadTerms(companyId: string) {
@@ -563,6 +565,7 @@ export class AccountSuggestionService {
       score: item.score,
       confidence: item.confidence,
       semanticEvidenceSatisfied: item.semanticEvidenceSatisfied,
+      semanticEvidenceStrong: item.semanticEvidenceStrong,
       semanticEvidenceReasons: item.semanticEvidenceReasons,
       learningHits: (item.learning ?? []).filter(
         (learning) => learning.normalizedNameHash === normalizedNameHash,
@@ -592,8 +595,7 @@ export class AccountSuggestionService {
     const beforeSemanticFilter = input.ranking.allCandidates
       .slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates)
       .map(describeCandidate);
-    const afterSemanticFilter = input.ranking.allCandidates
-      .filter((candidate) => candidate.semanticEvidenceSatisfied)
+    const afterSemanticFilter = input.ranking.candidates
       .slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates)
       .map(describeCandidate);
     const discarded = input.ranking.discardedCandidates
@@ -691,6 +693,24 @@ export class AccountSuggestionService {
         deterministicRules: input.ranking.evaluatedRules,
       },
       candidatesEnteringPipeline: input.generatedCandidates.length,
+      pipelineCounts: {
+        catalogueAccountsEvaluated: input.generatedCandidates.length,
+        discardedByRetrieval: 0,
+        discardedByHardFilters: input.ranking.discardedCandidates.length,
+        discardedByScore: input.ranking.allCandidates.filter(
+          (candidate) =>
+            candidate.score < ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore,
+        ).length,
+        discardedByConfidence: input.ranking.allCandidates.filter(
+          (candidate) =>
+            candidate.score >=
+              ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore &&
+            candidate.confidence <
+              ACCOUNT_SUGGESTION_CONFIG.minimumAutomaticConfidence,
+        ).length,
+        discardedByInsufficientEvidence:
+          input.ranking.semanticRejectedCandidates.length,
+      },
       topCandidatesBeforeSemanticFilter: beforeSemanticFilter,
       topCandidatesAfterSemanticFilter: afterSemanticFilter,
       candidatesDiscardedByHardFilters: discarded,

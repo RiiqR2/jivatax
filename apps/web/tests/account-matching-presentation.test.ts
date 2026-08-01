@@ -10,10 +10,12 @@ const source = readFileSync(
   "utf8",
 );
 
-test("distingue el nombre observado del nombre histórico sin llamarlo modificado", () => {
+test("muestra sólo el nombre observado en la tabla y aclara el inicial en el modal", () => {
   assert.match(source, /\{item\.periodName\}/);
-  assert.match(source, /Nombre histórico: \{item\.canonicalName\}/);
-  assert.match(source, /Nombre del período: \{item\.periodName\}/);
+  assert.match(source, /Nombre observado: \{item\.periodName\}/);
+  assert.match(source, /Nombre registrado inicialmente:/);
+  assert.doesNotMatch(source, /Nombre histórico/);
+  assert.doesNotMatch(source, /Canónico/);
   assert.doesNotMatch(source, /Nombre modificado · Canónico/);
 });
 

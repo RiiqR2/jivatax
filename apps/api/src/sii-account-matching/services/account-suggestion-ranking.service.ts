@@ -200,10 +200,7 @@ export class AccountSuggestionRankingService {
               ),
             0,
           );
-        if (
-          aliasSimilarity >=
-          ACCOUNT_SUGGESTION_CONFIG.semanticEvidence.minimumAliasTokenSimilarity
-        )
+        if (aliasSimilarity > 0)
           reasons.push(
             this.reason(
               "semantic_alias_hit",
@@ -360,7 +357,7 @@ export class AccountSuggestionRankingService {
           (total, reason) => total + reason.points,
           0,
         );
-        const semanticEvidenceReasons = this.semanticEvidenceReasons(
+        const semanticEvidence = this.semanticEvidence(
           reasons,
           normalized,
           candidate,
@@ -370,40 +367,50 @@ export class AccountSuggestionRankingService {
           score,
           confidence: 0,
           reasons,
-          semanticEvidenceSatisfied: semanticEvidenceReasons.length > 0,
-          semanticEvidenceReasons,
+          semanticEvidenceSatisfied: semanticEvidence.satisfied,
+          semanticEvidenceStrong: semanticEvidence.strong,
+          semanticEvidenceReasons: semanticEvidence.reasons,
         };
       })
       .sort(
         (a, b) =>
           b.score - a.score || a.account.code.localeCompare(b.account.code),
       );
-    ranked.forEach((candidate, index) => {
+    const semanticallyEligible = ranked.filter(
+      (candidate) => candidate.semanticEvidenceSatisfied,
+    );
+    semanticallyEligible.forEach((candidate, index) => {
       candidate.confidence = this.calibrator.calibrate(
         candidate,
-        ranked[index + 1]?.score ?? 0,
-        ranked.length,
+        semanticallyEligible[index + 1]?.score ?? 0,
+        semanticallyEligible.length,
       );
     });
-    const top = ranked.slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates);
+    const top = semanticallyEligible.slice(
+      0,
+      ACCOUNT_SUGGESTION_CONFIG.topCandidates,
+    );
     const gap = (top[0]?.score ?? 0) - (top[1]?.score ?? 0);
     const decision: RankingDecision = !top.length
       ? "no_candidate"
       : ruleEvaluations.get(top[0].account.id)?.review
         ? "review"
-        : top[0].metadata.statementSection === "unknown"
+        : !top[0].semanticEvidenceStrong
           ? "review"
-          : top[0].score < ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore
+          : top[0].metadata.statementSection === "unknown"
             ? "review"
-            : top[0].confidence <
-                ACCOUNT_SUGGESTION_CONFIG.minimumAutomaticConfidence
+            : top[0].score < ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore
               ? "review"
-              : top.length > 1 &&
-                  (gap < ACCOUNT_SUGGESTION_CONFIG.minimumAbsoluteDifference ||
-                    gap / Math.max(top[0].score, 1) <
-                      ACCOUNT_SUGGESTION_CONFIG.minimumRelativeDifference)
-                ? "ambiguous"
-                : "automatic";
+              : top[0].confidence <
+                  ACCOUNT_SUGGESTION_CONFIG.minimumAutomaticConfidence
+                ? "review"
+                : top.length > 1 &&
+                    (gap <
+                      ACCOUNT_SUGGESTION_CONFIG.minimumAbsoluteDifference ||
+                      gap / Math.max(top[0].score, 1) <
+                        ACCOUNT_SUGGESTION_CONFIG.minimumRelativeDifference)
+                  ? "ambiguous"
+                  : "automatic";
     const decisionAudit = this.decisionAudit(
       decision,
       top,
@@ -424,6 +431,9 @@ export class AccountSuggestionRankingService {
     return {
       candidates: top,
       allCandidates: ranked,
+      semanticRejectedCandidates: ranked.filter(
+        (candidate) => !candidate.semanticEvidenceSatisfied,
+      ),
       decision,
       reviewRequiredByRule: Boolean(
         top[0] && ruleEvaluations.get(top[0].account.id)?.review,
@@ -441,34 +451,13 @@ export class AccountSuggestionRankingService {
     };
   }
 
-  private semanticEvidenceReasons(
+  private semanticEvidence(
     reasons: RankedCandidate["reasons"],
     normalizedSource: string,
     candidate: GeneratedCandidate,
-  ): string[] {
+  ): { satisfied: boolean; strong: boolean; reasons: string[] } {
     const config = ACCOUNT_SUGGESTION_CONFIG.semanticEvidence;
-    const genericTokens = new Set([
-      "cuenta",
-      "costo",
-      "gasto",
-      "pagar",
-      "servicio",
-    ]);
-    const sourceTokens = new Set(
-      [...relevantWords(normalizedSource)]
-        .map(singularize)
-        .filter((token) => !genericTokens.has(token)),
-    );
-    const meaningfulSharedToken = [
-      candidate.account.name,
-      ...candidate.terms.map((term) => term.term),
-    ].some((variant) =>
-      [...relevantWords(variant)]
-        .map(singularize)
-        .some((token) => sourceTokens.has(token)),
-    );
-    return reasons.flatMap((reason) => {
-      if (reason.signal === "semantic_alias_hit") return [reason.signal];
+    const strongReasons = reasons.flatMap((reason) => {
       if (reason.points <= 0 || reason.signal.startsWith("canonical_"))
         return [];
       if (
@@ -478,22 +467,75 @@ export class AccountSuggestionRankingService {
         reason.signal === "supervised_learning_industry"
       )
         return [reason.signal];
-      if (reason.signal.startsWith("rule:")) return [reason.signal];
-      if (
-        reason.signal === "jaccard" &&
-        meaningfulSharedToken &&
-        reason.points / ACCOUNT_SUGGESTION_CONFIG.weights.jaccardMaximum >=
-          config.minimumJaccardSimilarity
-      )
-        return [reason.signal];
-      if (
-        reason.signal === "character_trigrams" &&
-        reason.points / ACCOUNT_SUGGESTION_CONFIG.weights.trigramMaximum >=
-          config.minimumTrigramSimilarity
-      )
-        return [reason.signal];
       return [];
     });
+    if (strongReasons.length)
+      return { satisfied: true, strong: true, reasons: strongReasons };
+    const points = (signal: string, maximum: number) =>
+      (reasons.find((reason) => reason.signal === signal)?.points ?? 0) /
+      maximum;
+    const aliasSimilarity = candidate.terms
+      .filter((term) => term.type !== "official_name")
+      .reduce(
+        (maximum, term) =>
+          Math.max(
+            maximum,
+            weightedTokenSimilarity(normalizedSource, term.normalizedTerm),
+          ),
+        0,
+      );
+    const mediumLexicalReasons = [
+      aliasSimilarity >= config.minimumMediumAliasSimilarity
+        ? "partial_alias"
+        : null,
+      points("jaccard", ACCOUNT_SUGGESTION_CONFIG.weights.jaccardMaximum) >=
+      config.minimumMediumJaccardSimilarity
+        ? "medium_jaccard"
+        : null,
+      points(
+        "character_trigrams",
+        ACCOUNT_SUGGESTION_CONFIG.weights.trigramMaximum,
+      ) >= config.minimumMediumTrigramSimilarity
+        ? "medium_trigrams"
+        : null,
+    ].filter((reason): reason is string => Boolean(reason));
+    const structuralCount = reasons.filter(
+      (reason) =>
+        reason.points >= 0 &&
+        [
+          "balance_match",
+          "balance_nature_match",
+          "debit_balance",
+          "credit_balance",
+          "compatible_statement_section",
+          "family_match",
+          "accounting_family_match",
+        ].includes(reason.signal),
+    ).length;
+    const relatedConcept = reasons.some(
+      (reason) => reason.signal === "concept_match" && reason.points > 0,
+    );
+    const ruleReasons = reasons
+      .filter(
+        (reason) => reason.signal.startsWith("rule:") && reason.points > 0,
+      )
+      .map((reason) => reason.signal);
+    const combined =
+      mediumLexicalReasons.length > 0 &&
+      (structuralCount >= config.minimumStructuralSignals || relatedConcept);
+    return {
+      satisfied: ruleReasons.length > 0 || combined,
+      strong: false,
+      reasons: [
+        ...ruleReasons,
+        ...(combined
+          ? [
+              ...mediumLexicalReasons,
+              relatedConcept ? "related_concept" : "structural_corroboration",
+            ]
+          : []),
+      ],
+    };
   }
 
   private decisionAudit(

@@ -329,14 +329,7 @@ export function AccountMappingPage({
                         )}
                     </td>
                     <td className="px-3 py-3 font-mono">{item.code}</td>
-                    <td className="px-3 py-3">
-                      {item.periodName}
-                      {item.nameChanged && (
-                        <span className="mt-1 block text-xs text-amber-700">
-                          Nombre histórico: {item.canonicalName}
-                        </span>
-                      )}
-                    </td>
+                    <td className="px-3 py-3">{item.periodName}</td>
                     <td className="px-3 py-3">
                       {item.mapping.siiAccount
                         ? `${item.mapping.siiAccount.code} · ${item.mapping.siiAccount.name}`
@@ -534,8 +527,10 @@ function MappingDialog({
           Revisar cuenta {item.code}
         </h2>
         <p id="mapping-description" className="mt-1 text-slate-600">
-          Nombre del período: {item.periodName}
-          {item.nameChanged ? ` · Nombre histórico: ${item.canonicalName}` : ""}
+          Nombre observado: {item.periodName}
+          {item.nameChanged
+            ? ` · Nombre registrado inicialmente: ${item.canonicalName}`
+            : ""}
           . La selección no se guarda automáticamente.
         </p>
         {item.suggestions.length ? (

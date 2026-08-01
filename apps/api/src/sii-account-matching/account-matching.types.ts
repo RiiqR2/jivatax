@@ -73,5 +73,6 @@ export interface RankedCandidate extends GeneratedCandidate {
   confidence: number;
   reasons: MatchingSignal[];
   semanticEvidenceSatisfied: boolean;
+  semanticEvidenceStrong: boolean;
   semanticEvidenceReasons: string[];
 }

@@ -9,9 +9,10 @@ export const ACCOUNT_SUGGESTION_CONFIG = Object.freeze({
   scoreForFullConfidence: 100,
   lexicalCandidateThreshold: 0.34,
   semanticEvidence: {
-    minimumAliasTokenSimilarity: 0.3,
-    minimumJaccardSimilarity: 0.34,
-    minimumTrigramSimilarity: 0.5,
+    minimumMediumAliasSimilarity: 0.25,
+    minimumMediumJaccardSimilarity: 0.3,
+    minimumMediumTrigramSimilarity: 0.2,
+    minimumStructuralSignals: 2,
   },
   weights: {
     historicalCompanyMapping: 100,
