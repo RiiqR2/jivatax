@@ -31,6 +31,7 @@ import { TaxDocumentEntity } from "../entities/tax-document.entity";
 import { TaxDocumentType } from "../enums/accounting.enums";
 import { AccountMatchingFeedbackEntity } from "../../sii-account-matching/entities/account-matching-feedback.entity";
 import { SupervisedLearningService } from "../../sii-account-matching/services/supervised-learning.service";
+import { LearningAggregatorService } from "../../sii-account-matching/services/learning-aggregator.service";
 
 type MappingListRow = {
   companyAccountId: string;
@@ -86,6 +87,7 @@ export class PeriodAccountMappingsService {
     private readonly documents: Repository<TaxDocumentEntity>,
     private readonly periods: TaxPeriodsService,
     private readonly supervisedLearning: SupervisedLearningService,
+    private readonly learningAggregatorService: LearningAggregatorService,
   ) {}
 
   async list(
@@ -352,13 +354,16 @@ export class PeriodAccountMappingsService {
     dto: UpdatePeriodAccountMappingDto,
   ) {
     return this.dataSource.transaction(async (manager) => {
-      return this.applyMappingDecision(
+      const result = await this.applyMappingDecision(
         manager,
         companyId,
         accountId,
         userId,
         dto,
       );
+      if (dto.action === "confirm")
+        await this.learningAggregatorService.rebuildWithManager(manager);
+      return result;
     });
   }
 
@@ -553,10 +558,14 @@ export class PeriodAccountMappingsService {
           siiAccountId: suggestion.siiAccountId,
         });
       }
+      const approved = results.filter(
+        (result) => result.status === "approved",
+      ).length;
+      if (approved > 0)
+        await this.learningAggregatorService.rebuildWithManager(manager);
       return {
         requested: ids.length,
-        approved: results.filter((result) => result.status === "approved")
-          .length,
+        approved,
         skipped: results.filter((result) => result.status === "skipped").length,
         results,
       };
