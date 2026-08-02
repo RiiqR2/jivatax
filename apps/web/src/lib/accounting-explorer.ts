@@ -6,11 +6,25 @@ export function ledgerPath(
   companyId: string,
   taxPeriodId: string,
   accountId: string,
+  returnTo?: string,
 ) {
-  return `${balancePath(companyId, taxPeriodId)}/accounts/${accountId}/general-ledger`;
+  const path = `${balancePath(companyId, taxPeriodId)}/accounts/${accountId}/general-ledger`;
+  return returnTo ? `${path}?returnTo=${encodeURIComponent(returnTo)}` : path;
 }
 
-export function formatAccountingAmount(value: string | number) {
+export function safeBalanceReturnTo(
+  value: string | null,
+  companyId: string,
+  taxPeriodId: string,
+) {
+  const expected = balancePath(companyId, taxPeriodId);
+  return value && (value === expected || value.startsWith(`${expected}?`))
+    ? value
+    : expected;
+}
+
+export function formatAccountingAmount(value: string | number | null) {
+  if (value === null) return "—";
   return new Intl.NumberFormat("es-CL", {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
@@ -18,24 +32,26 @@ export function formatAccountingAmount(value: string | number) {
 }
 
 export type BalanceExplorerFilters = {
-  code: string;
-  name: string;
-  mapping: string;
+  search: string;
   section: string;
+  reconciliation: string;
+  sort: string;
+  direction: string;
   page: number;
 };
 
 export function buildBalanceExplorerParams(filters: BalanceExplorerFilters) {
   const params: Record<string, string | number> = {
-    mapping: filters.mapping,
     page: filters.page,
     pageSize: 25,
+    sort: filters.sort,
+    direction: filters.direction,
   };
-  const code = filters.code.trim();
-  const name = filters.name.trim();
-  if (code) params.code = code;
-  if (name) params.name = name;
+  const search = filters.search.trim();
+  if (search) params.search = search;
   if (filters.section) params.section = filters.section;
+  if (filters.reconciliation !== "all")
+    params.reconciliation = filters.reconciliation;
   return params;
 }
 

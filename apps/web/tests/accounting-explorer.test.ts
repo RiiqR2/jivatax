@@ -1,97 +1,107 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { readFileSync } from "node:fs";
+import test from "node:test";
 import {
-  balancePath,
   buildBalanceExplorerParams,
   formatAccountingAmount,
   ledgerPath,
+  safeBalanceReturnTo,
 } from "../src/lib/accounting-explorer.ts";
 
-test("builds the Balance to Libro Mayor navigation preserving company and period", () => {
-  assert.equal(
-    balancePath("company-1", "period-1"),
-    "/companies/company-1/periods/period-1/balance",
-  );
-  assert.equal(
-    ledgerPath("company-1", "period-1", "account-1"),
-    "/companies/company-1/periods/period-1/balance/accounts/account-1/general-ledger",
-  );
-});
+const source = readFileSync(
+  new URL(
+    "../src/components/accounting/accounting-explorer.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const balanceSource = source.slice(
+  0,
+  source.indexOf("export function GeneralLedgerExplorer"),
+);
 
-test("formats accounting values for presentation", () => {
-  assert.match(formatAccountingAmount("1234"), /1[.\s]234/);
-});
-
-test("omite filtros vacíos y conserva parámetros obligatorios del Balance", () => {
+test("balance filters omit empty optional values and mapping", () => {
   assert.deepEqual(
     buildBalanceExplorerParams({
-      code: " ",
-      name: "",
-      mapping: "all",
+      search: " ",
       section: "",
-      page: 1,
-    }),
-    { mapping: "all", page: 1, pageSize: 25 },
-  );
-  assert.deepEqual(
-    buildBalanceExplorerParams({
-      code: " 1101 ",
-      name: " Caja ",
-      mapping: "mapped",
-      section: "asset",
+      reconciliation: "all",
+      sort: "difference",
+      direction: "desc",
       page: 2,
     }),
-    {
-      mapping: "mapped",
-      page: 2,
-      pageSize: 25,
-      code: "1101",
-      name: "Caja",
-      section: "asset",
-    },
+    { page: 2, pageSize: 25, sort: "difference", direction: "desc" },
   );
 });
 
-test("expone accesos contextuales y estados vacíos accionables", () => {
-  const explorer = readFileSync(
-    new URL(
-      "../src/components/accounting/accounting-explorer.tsx",
-      import.meta.url,
-    ),
-    "utf8",
+test("ledger navigation preserves a safe balance return URL", () => {
+  const balance = "/companies/c/periods/p/balance?page=2&search=iva";
+  assert.match(ledgerPath("c", "p", "a", balance), /returnTo=/);
+  assert.equal(safeBalanceReturnTo(balance, "c", "p"), balance);
+  assert.equal(
+    safeBalanceReturnTo("https://evil.test", "c", "p"),
+    "/companies/c/periods/p/balance",
   );
-  const documents = readFileSync(
-    new URL("../src/components/accounting/documents-page.tsx", import.meta.url),
-    "utf8",
-  );
-  const mappings = readFileSync(
-    new URL(
-      "../src/components/accounting/account-mapping-page.tsx",
-      import.meta.url,
-    ),
-    "utf8",
-  );
-  assert.match(explorer, /Aún no hay un Balance disponible/);
-  assert.match(explorer, /No hay movimientos de Libro Mayor/);
-  assert.match(explorer, /Ir a Documentos/);
-  assert.match(documents, /explorerDocumentPath/);
-  assert.match(documents, /Ver en explorador contable/);
-  assert.match(mappings, /Ver Balance/);
 });
 
-test("la ruta sin período muestra configuración sin montar el explorador", () => {
-  const page = readFileSync(
-    new URL(
-      "../src/app/companies/[companyId]/periods/[taxPeriodId]/balance/page.tsx",
-      import.meta.url,
-    ),
-    "utf8",
+test("null accounting totals remain unavailable", () => {
+  assert.equal(formatAccountingAmount(null), "—");
+});
+
+test("explorer uses one compact reconciliation panel without mapping UI", () => {
+  assert.equal(
+    (
+      source.match(/<h2[^>]*>[\s\S]*?Estado de conciliación[\s\S]*?<\/h2>/g) ??
+      []
+    ).length,
+    1,
   );
-  assert.match(page, /isValidTaxPeriodId/);
-  assert.match(page, /Crear período tributario/);
-  assert.match(page, /periods\/setup/);
-  assert.ok(
-    page.indexOf("if (!isValidTaxPeriodId") < page.indexOf("<BalanceExplorer"),
+  for (const removed of [
+    "Homologadas",
+    "Pendientes",
+    "Homologación SII",
+    "Estado de homologación",
+    "Revisar homologación",
+  ])
+    assert.doesNotMatch(source, new RegExp(removed));
+  assert.match(source, /Libro Mayor no disponible/);
+  assert.match(source, /!ledgerAvailable \?/);
+});
+
+test("balance table exposes every accounting column with horizontal scrolling", () => {
+  for (const column of [
+    "Código",
+    "Cuenta",
+    "Débitos Balance",
+    "Créditos Balance",
+    "Saldo deudor",
+    "Saldo acreedor",
+    "Débitos Mayor",
+    "Créditos Mayor",
+    "Diferencia",
+    "Movimientos",
+    "Último movimiento",
+    "Estado",
+    "Acción",
+  ])
+    assert.match(source, new RegExp(`"${column}"`));
+  assert.match(source, /overflow-x-auto/);
+  assert.match(source, /min-w-\[1500px\]/);
+  assert.doesNotMatch(
+    balanceSource,
+    /overflow-hidden rounded-xl border bg-white/,
   );
+});
+
+test("rows preserve accessible investigation and explicit reconciliation labels", () => {
+  for (const label of [
+    "Conciliada",
+    "Sin movimientos",
+    "No disponible",
+    "Ver movimientos",
+  ])
+    assert.match(source, new RegExp(label));
+  assert.match(source, /role="link"/);
+  assert.match(source, /onKeyDown/);
+  assert.match(source, /stopPropagation/);
 });
