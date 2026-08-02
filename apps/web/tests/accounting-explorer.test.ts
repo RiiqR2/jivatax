@@ -3,35 +3,40 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   buildBalanceExplorerParams,
+  formatAccountingAmount,
   ledgerPath,
   safeBalanceReturnTo,
 } from "../src/lib/accounting-explorer.ts";
 
-test("balance filters omit empty optional values", () => {
+const source = readFileSync(
+  new URL(
+    "../src/components/accounting/accounting-explorer.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const balanceSource = source.slice(
+  0,
+  source.indexOf("export function GeneralLedgerExplorer"),
+);
+
+test("balance filters omit empty optional values and mapping", () => {
   assert.deepEqual(
     buildBalanceExplorerParams({
       search: " ",
-      mapping: "all",
       section: "",
       reconciliation: "all",
       sort: "difference",
       direction: "desc",
       page: 2,
     }),
-    {
-      mapping: "all",
-      page: 2,
-      pageSize: 25,
-      sort: "difference",
-      direction: "desc",
-    },
+    { page: 2, pageSize: 25, sort: "difference", direction: "desc" },
   );
 });
 
 test("ledger navigation preserves a safe balance return URL", () => {
   const balance = "/companies/c/periods/p/balance?page=2&search=iva";
-  const ledger = ledgerPath("c", "p", "a", balance);
-  assert.match(ledger, /returnTo=/);
+  assert.match(ledgerPath("c", "p", "a", balance), /returnTo=/);
   assert.equal(safeBalanceReturnTo(balance, "c", "p"), balance);
   assert.equal(
     safeBalanceReturnTo("https://evil.test", "c", "p"),
@@ -39,26 +44,63 @@ test("ledger navigation preserves a safe balance return URL", () => {
   );
 });
 
-test("explorer renders summaries, reconciliation states and accessible investigation controls", () => {
-  const source = readFileSync(
-    new URL(
-      "../src/components/accounting/accounting-explorer.tsx",
-      import.meta.url,
-    ),
-    "utf8",
+test("null accounting totals remain unavailable", () => {
+  assert.equal(formatAccountingAmount(null), "—");
+});
+
+test("explorer uses one compact reconciliation panel without mapping UI", () => {
+  assert.equal(
+    (
+      source.match(/<h2[^>]*>[\s\S]*?Estado de conciliación[\s\S]*?<\/h2>/g) ??
+      []
+    ).length,
+    1,
   );
-  for (const text of [
-    "Total cuentas",
-    "Conciliadas",
-    "Con diferencias",
-    "Sin movimientos",
-    "No existe un Libro Mayor procesado",
-    "Aún no hay un Balance disponible",
-    "Ir a Documentos",
+  for (const removed of [
+    "Homologadas",
+    "Pendientes",
+    "Homologación SII",
+    "Estado de homologación",
     "Revisar homologación",
+  ])
+    assert.doesNotMatch(source, new RegExp(removed));
+  assert.match(source, /Libro Mayor no disponible/);
+  assert.match(source, /!ledgerAvailable \?/);
+});
+
+test("balance table exposes every accounting column with horizontal scrolling", () => {
+  for (const column of [
+    "Código",
+    "Cuenta",
+    "Débitos Balance",
+    "Créditos Balance",
+    "Saldo deudor",
+    "Saldo acreedor",
+    "Débitos Mayor",
+    "Créditos Mayor",
+    "Diferencia",
+    "Movimientos",
+    "Último movimiento",
+    "Estado",
+    "Acción",
+  ])
+    assert.match(source, new RegExp(`"${column}"`));
+  assert.match(source, /overflow-x-auto/);
+  assert.match(source, /min-w-\[1500px\]/);
+  assert.doesNotMatch(
+    balanceSource,
+    /overflow-hidden rounded-xl border bg-white/,
+  );
+});
+
+test("rows preserve accessible investigation and explicit reconciliation labels", () => {
+  for (const label of [
+    "Conciliada",
+    "Sin movimientos",
+    "No disponible",
     "Ver movimientos",
   ])
-    assert.match(source, new RegExp(text));
+    assert.match(source, new RegExp(label));
   assert.match(source, /role="link"/);
   assert.match(source, /onKeyDown/);
   assert.match(source, /stopPropagation/);

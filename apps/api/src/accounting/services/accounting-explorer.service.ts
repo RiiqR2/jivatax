@@ -8,6 +8,13 @@ import {
 import { TaxPeriodsService } from "./tax-periods.service";
 
 type Row = Record<string, string | number | null>;
+type ExplorerSource = {
+  id: string;
+  importId: string | null;
+  documentType: "balance" | "general_ledger";
+  versionNumber: number;
+  processedAt: string | null;
+};
 export const RECONCILIATION_TOLERANCE = "0.0100";
 export function accumulatedBalance(
   rows: Array<{ debit: number; credit: number }>,
@@ -24,6 +31,46 @@ export class AccountingExplorerService {
     private readonly periods: TaxPeriodsService,
   ) {}
 
+  private async resolveSources(companyId: string, periodId: string) {
+    const rows = (await this.db.query(
+      `SELECT d.id, d.document_type documentType, d.version_number versionNumber,
+        d.processed_at processedAt, c.legal_name companyName, gli.id importId
+       FROM tax_documents d
+       JOIN companies c ON c.id=d.company_id
+       LEFT JOIN general_ledger_imports gli
+         ON gli.tax_document_id=d.id AND gli.company_id=d.company_id AND gli.tax_period_id=d.tax_period_id
+       WHERE d.company_id=? AND d.tax_period_id=? AND d.status='processed'
+         AND d.discarded_at IS NULL AND d.document_type IN ('balance','general_ledger')
+         AND d.version_number=(SELECT MAX(current.version_number) FROM tax_documents current
+           WHERE current.company_id=d.company_id AND current.tax_period_id=d.tax_period_id
+             AND current.document_type=d.document_type AND current.status='processed'
+             AND current.discarded_at IS NULL)
+       ORDER BY d.document_type, d.version_number DESC`,
+      [companyId, periodId],
+    )) as Row[];
+    const toSource = (row: Row | undefined): ExplorerSource | null =>
+      row
+        ? {
+            id: String(row.id),
+            importId: row.importId == null ? null : String(row.importId),
+            documentType: row.documentType as ExplorerSource["documentType"],
+            versionNumber: Number(row.versionNumber),
+            processedAt:
+              row.processedAt === null ? null : String(row.processedAt),
+          }
+        : null;
+    return {
+      companyName: String(rows[0]?.companyName ?? ""),
+      balance: toSource(rows.find((row) => row.documentType === "balance")),
+      generalLedger: toSource(
+        rows.find(
+          (row) =>
+            row.documentType === "general_ledger" && row.importId != null,
+        ),
+      ),
+    };
+  }
+
   async balance(
     companyId: string,
     periodId: string,
@@ -33,37 +80,23 @@ export class AccountingExplorerService {
       commercialYear: number;
       taxYear: number;
     };
-    const sourceRows = (await this.db.query(
-      `SELECT d.id, d.document_type documentType, d.version_number versionNumber, d.processed_at processedAt,
-        c.legal_name companyName
-       FROM tax_documents d JOIN companies c ON c.id=d.company_id
-       WHERE d.company_id=? AND d.tax_period_id=? AND d.status='processed'
-         AND d.discarded_at IS NULL AND d.document_type IN ('balance','general_ledger')
-       ORDER BY d.document_type, d.version_number DESC`,
-      [companyId, periodId],
-    )) as Row[];
-    const balanceDocument = sourceRows.find(
-      (row) => row.documentType === "balance",
-    );
-    const ledgerDocument = sourceRows.find(
-      (row) => row.documentType === "general_ledger",
-    );
-    const source = (row: Row | undefined) =>
+    const resolved = await this.resolveSources(companyId, periodId);
+    const source = (row: ExplorerSource | null) =>
       row
         ? {
-            id: String(row.id),
-            versionNumber: Number(row.versionNumber),
+            id: row.id,
+            versionNumber: row.versionNumber,
             processedAt: row.processedAt,
           }
         : null;
     const sources = {
-      companyName: String(sourceRows[0]?.companyName ?? ""),
+      companyName: resolved.companyName,
       commercialYear: period.commercialYear,
       taxYear: period.taxYear,
-      balanceDocument: source(balanceDocument),
-      generalLedgerDocument: source(ledgerDocument),
+      balanceDocument: source(resolved.balance),
+      generalLedgerDocument: source(resolved.generalLedger),
     };
-    if (!balanceDocument) {
+    if (!resolved.balance) {
       return {
         summary: this.emptySummary(false),
         sources,
@@ -80,7 +113,7 @@ export class AccountingExplorerService {
       "pa.discarded_at IS NULL",
       "pa.source_document_id = ?",
     ];
-    const params: unknown[] = [companyId, periodId, balanceDocument.id];
+    const params: unknown[] = [companyId, periodId, resolved.balance.id];
     if (query.search) {
       where.push(
         "(pa.account_code_snapshot LIKE ? OR pa.account_name_snapshot LIKE ?)",
@@ -105,17 +138,17 @@ export class AccountingExplorerService {
       gain: "gain_amount",
     };
     if (query.section) where.push(`pa.${sectionColumns[query.section]} <> 0`);
-    const ledgerAvailable = Boolean(ledgerDocument);
-    const ledgerJoin = ledgerDocument
+    const ledgerAvailable = Boolean(resolved.generalLedger?.importId);
+    const ledgerJoin = ledgerAvailable
       ? `LEFT JOIN (SELECT e.company_account_id, CAST(SUM(e.debit) AS DECIMAL(24,4)) ledgerDebit,
           CAST(SUM(e.credit) AS DECIMAL(24,4)) ledgerCredit, COUNT(*) ledgerMovementCount,
           MAX(e.transaction_date) lastLedgerMovementDate
-        FROM general_ledger_entries e JOIN general_ledger_imports gli ON gli.id=e.general_ledger_import_id
-        WHERE gli.tax_document_id=? AND e.company_id=? AND e.tax_period_id=? GROUP BY e.company_account_id) l
+        FROM general_ledger_entries e
+        WHERE e.general_ledger_import_id=? AND e.company_id=? AND e.tax_period_id=? GROUP BY e.company_account_id) l
         ON l.company_account_id=pa.company_account_id`
       : "LEFT JOIN (SELECT NULL company_account_id, NULL ledgerDebit, NULL ledgerCredit, 0 ledgerMovementCount, NULL lastLedgerMovementDate) l ON 1=0";
-    const ledgerParams: unknown[] = ledgerDocument
-      ? [ledgerDocument.id, companyId, periodId]
+    const ledgerParams: unknown[] = ledgerAvailable
+      ? [resolved.generalLedger!.importId, companyId, periodId]
       : [];
     const statusSql = ledgerAvailable
       ? `CASE WHEN COALESCE(l.ledgerMovementCount,0)=0 THEN 'no_ledger'
@@ -182,8 +215,21 @@ export class AccountingExplorerService {
        CAST(${ledgerAvailable ? "COALESCE(SUM(creditDifference),0)" : "NULL"} AS DECIMAL(24,4)) totalCreditDifference FROM explorer`,
       [...ledgerParams, ...params],
     )) as Row[];
+    const summary = ledgerAvailable
+      ? (summaries[0] ?? this.emptySummary(true))
+      : {
+          ...(summaries[0] ?? this.emptySummary(false)),
+          reconciledAccounts: 0,
+          accountsWithDifferences: 0,
+          accountsWithoutLedgerMovements: 0,
+          reconciliationUnavailable: true,
+          totalLedgerDebit: null,
+          totalLedgerCredit: null,
+          totalDebitDifference: null,
+          totalCreditDifference: null,
+        };
     return {
-      summary: summaries[0] ?? this.emptySummary(ledgerAvailable),
+      summary,
       sources,
       items: rows.map(({ total: _, ...row }) => row),
       page: query.page,
@@ -218,6 +264,7 @@ export class AccountingExplorerService {
     query: GeneralLedgerQueryDto,
   ) {
     await this.periods.get(companyId, periodId);
+    const resolved = await this.resolveSources(companyId, periodId);
     const accounts = (await this.db.query(
       "SELECT id, internal_code code, name FROM company_accounts WHERE id = ? AND company_id = ? LIMIT 1",
       [accountId, companyId],
@@ -228,14 +275,14 @@ export class AccountingExplorerService {
       "e.company_id = ?",
       "e.tax_period_id = ?",
       "e.company_account_id = ?",
-      "d.discarded_at IS NULL",
-      "d.status = 'processed'",
-      `d.id = (SELECT current_document.id FROM tax_documents current_document
-        WHERE current_document.company_id=e.company_id AND current_document.tax_period_id=e.tax_period_id
-          AND current_document.document_type='general_ledger' AND current_document.status='processed'
-          AND current_document.discarded_at IS NULL ORDER BY current_document.version_number DESC LIMIT 1)`,
+      "e.general_ledger_import_id = ?",
     ];
-    const params: unknown[] = [companyId, periodId, accountId];
+    const params: unknown[] = [
+      companyId,
+      periodId,
+      accountId,
+      resolved.generalLedger?.importId ?? "",
+    ];
     if (query.from) {
       where.push("e.transaction_date >= ?");
       params.push(query.from);
@@ -271,7 +318,7 @@ export class AccountingExplorerService {
     const sql = `SELECT filtered.*, SUM(filtered.debit - filtered.credit) OVER (ORDER BY filtered.transactionDate, filtered.id ROWS UNBOUNDED PRECEDING) runningBalance, COUNT(*) OVER() total
       FROM (SELECT e.id, e.transaction_date transactionDate, e.document_type documentType, e.document_number documentNumber, e.description,
         CAST(e.debit AS DECIMAL(24,4)) debit, CAST(e.credit AS DECIMAL(24,4)) credit
-        FROM general_ledger_entries e JOIN general_ledger_imports i ON i.id=e.general_ledger_import_id JOIN tax_documents d ON d.id=i.tax_document_id
+        FROM general_ledger_entries e
         WHERE ${where.join(" AND ")}) filtered
       ORDER BY ${sort[query.sort]} ${query.direction.toUpperCase()}, id ASC LIMIT ? OFFSET ?`;
     const rows = (await this.db.query(sql, [
@@ -281,6 +328,7 @@ export class AccountingExplorerService {
     ])) as Row[];
     return {
       account: accounts[0],
+      generalLedgerAvailable: Boolean(resolved.generalLedger?.importId),
       items: rows.map(({ total: _, ...row }) => row),
       page: query.page,
       pageSize: query.pageSize,

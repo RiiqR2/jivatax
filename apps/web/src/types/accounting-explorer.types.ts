@@ -77,4 +77,5 @@ export type LedgerEntry = {
 };
 export type LedgerResponse = Paginated<LedgerEntry> & {
   account: { id: string; code: string; name: string };
+  generalLedgerAvailable: boolean;
 };

@@ -71,6 +71,38 @@ const statusClasses = {
   unavailable: "bg-slate-100 text-slate-700",
 };
 
+function AccountingTotals({
+  title,
+  balance,
+  ledger,
+  difference,
+}: {
+  title: string;
+  balance: string;
+  ledger: string | null;
+  difference: string | null;
+}) {
+  return (
+    <div className="text-sm">
+      <p className="font-medium text-slate-800">{title}</p>
+      <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 text-slate-600">
+        <dt>Balance</dt>
+        <dd className="text-right tabular-nums">
+          {formatAccountingAmount(balance)}
+        </dd>
+        <dt>Mayor</dt>
+        <dd className="text-right tabular-nums">
+          {formatAccountingAmount(ledger)}
+        </dd>
+        <dt>Diferencia</dt>
+        <dd className="text-right font-medium tabular-nums">
+          {formatAccountingAmount(difference)}
+        </dd>
+      </dl>
+    </div>
+  );
+}
+
 export function BalanceExplorer({
   companyId,
   taxPeriodId,
@@ -83,7 +115,6 @@ export function BalanceExplorer({
     searchParams = useSearchParams();
   const [filters, setFilters] = useState(() => ({
     search: searchParams.get("search") ?? "",
-    mapping: searchParams.get("mapping") ?? "all",
     section: searchParams.get("section") ?? "",
     reconciliation: searchParams.get("reconciliation") ?? "all",
     sort: searchParams.get("sort") ?? "code",
@@ -121,16 +152,7 @@ export function BalanceExplorer({
       ),
     );
   const data = query.data;
-  const cards = data
-    ? [
-        ["Total cuentas", data.summary.totalAccounts],
-        ["Homologadas", data.summary.mappedAccounts],
-        ["Pendientes", data.summary.pendingMappingAccounts],
-        ["Conciliadas", data.summary.reconciledAccounts],
-        ["Con diferencias", data.summary.accountsWithDifferences],
-        ["Sin movimientos", data.summary.accountsWithoutLedgerMovements],
-      ]
-    : [];
+  const ledgerAvailable = Boolean(data?.sources.generalLedgerDocument);
   return (
     <main className="mx-auto max-w-[1600px] p-4 sm:p-6 lg:p-8">
       <nav className="mb-3 text-sm text-slate-500">
@@ -153,42 +175,70 @@ export function BalanceExplorer({
           {data?.sources.taxYear ?? "—"}
         </p>
         <p className="mt-1 text-xs text-slate-500">
-          Balance v{data?.sources.balanceDocument?.versionNumber ?? "—"} · Libro
-          Mayor{" "}
+          {data?.sources.balanceDocument
+            ? `Balance v${data.sources.balanceDocument.versionNumber}`
+            : "Balance no disponible"}{" "}
+          · Libro Mayor{" "}
           {data?.sources.generalLedgerDocument
             ? `v${data.sources.generalLedgerDocument.versionNumber}`
             : "no disponible"}
         </p>
       </header>
-      {data?.summary.reconciliationUnavailable && data.balanceAvailable && (
+      {data?.balanceAvailable && (
         <section
-          role="status"
-          className="mt-4 rounded-lg border border-slate-300 bg-slate-50 p-4 text-sm"
+          aria-label="Estado de conciliación"
+          className="mt-5 rounded-xl border border-slate-200 bg-white p-4"
         >
-          No existe un Libro Mayor procesado para este período. La conciliación
-          aún no está disponible.{" "}
-          <Link
-            className="font-medium text-emerald-800 underline"
-            href={`/companies/${companyId}/periods/${taxPeriodId}/documents`}
-          >
-            Cargar Libro Mayor
-          </Link>
+          <h2 className="font-semibold text-slate-950">
+            Estado de conciliación
+          </h2>
+          <p className="mt-1 text-sm text-slate-600">
+            {data.summary.totalAccounts} cuentas del Balance
+          </p>
+          {!ledgerAvailable ? (
+            <div className="mt-3" role="status">
+              <p className="font-medium text-slate-800">
+                Libro Mayor no disponible
+              </p>
+              <p className="mt-1 text-sm text-slate-600">
+                La conciliación todavía no puede calcularse.
+              </p>
+              <Link
+                className="mt-3 inline-flex text-sm font-medium text-emerald-800 underline"
+                href={`/companies/${companyId}/periods/${taxPeriodId}/documents`}
+              >
+                Cargar Libro Mayor
+              </Link>
+            </div>
+          ) : (
+            <div className="mt-3 grid gap-4 md:grid-cols-3">
+              <div className="text-sm">
+                <p className="font-medium text-slate-800">Cuentas</p>
+                <p className="mt-1 text-slate-600">
+                  {data.summary.reconciledAccounts} conciliadas ·{" "}
+                  {data.summary.accountsWithDifferences} con diferencias ·{" "}
+                  {data.summary.accountsWithoutLedgerMovements} sin movimientos
+                </p>
+              </div>
+              <AccountingTotals
+                title="Débitos"
+                balance={data.summary.totalBalanceDebit}
+                ledger={data.summary.totalLedgerDebit}
+                difference={data.summary.totalDebitDifference}
+              />
+              <AccountingTotals
+                title="Créditos"
+                balance={data.summary.totalBalanceCredit}
+                ledger={data.summary.totalLedgerCredit}
+                difference={data.summary.totalCreditDifference}
+              />
+            </div>
+          )}
         </section>
       )}
       <section
-        aria-label="Resumen de conciliación"
-        className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-6"
-      >
-        {cards.map(([label, value]) => (
-          <div key={label} className="rounded-xl border bg-white p-3">
-            <p className="text-xs text-slate-500">{label}</p>
-            <p className="mt-1 text-xl font-semibold">{value}</p>
-          </div>
-        ))}
-      </section>
-      <section
         aria-label="Filtros de Balance"
-        className="mt-5 grid gap-3 rounded-xl border bg-white p-4 md:grid-cols-5"
+        className="mt-5 grid gap-3 rounded-xl border bg-white p-4 md:grid-cols-4"
       >
         <input
           aria-label="Buscar por código o nombre"
@@ -197,16 +247,6 @@ export function BalanceExplorer({
           onChange={(e) => change("search", e.target.value)}
           className={input}
         />
-        <select
-          aria-label="Estado de homologación"
-          value={filters.mapping}
-          onChange={(e) => change("mapping", e.target.value)}
-          className={input}
-        >
-          <option value="all">Todas</option>
-          <option value="mapped">Homologadas</option>
-          <option value="pending">Pendientes</option>
-        </select>
         <select
           aria-label="Sección contable"
           value={filters.section}
@@ -263,15 +303,14 @@ export function BalanceExplorer({
           </Link>
         </section>
       ) : (
-        <div className="mt-4 overflow-hidden rounded-xl border bg-white">
-          <div className="max-h-[65vh] overflow-auto">
-            <table className="w-full text-left text-sm">
+        <div className="mt-4 rounded-xl border bg-white">
+          <div className="max-h-[65vh] overflow-x-auto overflow-y-auto">
+            <table className="min-w-[1500px] text-left text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50 text-xs uppercase text-slate-600">
                 <tr>
                   {[
                     "Código",
                     "Cuenta",
-                    "Homologación SII",
                     "Débitos Balance",
                     "Créditos Balance",
                     "Saldo deudor",
@@ -280,6 +319,7 @@ export function BalanceExplorer({
                     "Créditos Mayor",
                     "Diferencia",
                     "Movimientos",
+                    "Último movimiento",
                     "Estado",
                     "Acción",
                   ].map((h) => (
@@ -302,37 +342,10 @@ export function BalanceExplorer({
                     }}
                     className="cursor-pointer hover:bg-emerald-50 focus:bg-emerald-50"
                   >
-                    <td className="px-3 py-3 font-medium text-emerald-800">
+                    <td className="min-w-28 px-3 py-3 font-medium text-slate-900">
                       {row.code}
                     </td>
-                    <td className="px-3 py-3">{row.name}</td>
-                    <td className="px-3 py-3">
-                      {row.mappingStatus === "confirmed" ? (
-                        <>
-                          <span className="font-medium">Confirmada</span>
-                          <br />
-                          <span className="text-xs">
-                            {row.siiCode} · {row.siiName}
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <span className="text-amber-800">
-                            {row.mappingStatus === "rejected"
-                              ? "Rechazada"
-                              : "Pendiente"}
-                          </span>
-                          <br />
-                          <Link
-                            onClick={(e) => e.stopPropagation()}
-                            className="text-xs text-emerald-800 underline"
-                            href={`/companies/${companyId}/periods/${taxPeriodId}/account-mapping`}
-                          >
-                            Revisar homologación
-                          </Link>
-                        </>
-                      )}
-                    </td>
+                    <td className="min-w-60 max-w-72 px-3 py-3">{row.name}</td>
                     {[
                       row.balanceDebit,
                       row.balanceCredit,
@@ -341,31 +354,33 @@ export function BalanceExplorer({
                       row.ledgerDebit,
                       row.ledgerCredit,
                     ].map((v, i) => (
-                      <td key={i} className="px-3 py-3 text-right tabular-nums">
+                      <td
+                        key={i}
+                        className="min-w-36 whitespace-nowrap px-3 py-3 text-right tabular-nums"
+                      >
                         {formatAccountingAmount(v)}
                       </td>
                     ))}
                     <td className="px-3 py-3 text-right text-xs tabular-nums">
                       {row.reconciliationStatus === "reconciled" ? (
-                        "Conciliado"
-                      ) : (
+                        "Conciliada"
+                      ) : row.reconciliationStatus === "difference" ? (
                         <>
                           Debe: {formatAccountingAmount(row.debitDifference)}
                           <br />
                           Haber: {formatAccountingAmount(row.creditDifference)}
                         </>
+                      ) : row.reconciliationStatus === "no_ledger" ? (
+                        "Sin movimientos"
+                      ) : (
+                        "No disponible"
                       )}
                     </td>
                     <td className="px-3 py-3 text-right">
                       <strong>{row.ledgerMovementCount}</strong>
-                      {row.lastLedgerMovementDate && (
-                        <>
-                          <br />
-                          <span className="text-xs text-slate-500">
-                            {row.lastLedgerMovementDate}
-                          </span>
-                        </>
-                      )}
+                    </td>
+                    <td className="min-w-36 whitespace-nowrap px-3 py-3 text-slate-600">
+                      {row.lastLedgerMovementDate ?? "—"}
                     </td>
                     <td className="px-3 py-3">
                       <span
@@ -531,11 +546,14 @@ export function GeneralLedgerExplorer({
       {query.data?.total === 0 && !hasFilters ? (
         <section className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center">
           <h2 className="text-lg font-semibold text-slate-900">
-            No hay movimientos de Libro Mayor
+            {query.data.generalLedgerAvailable
+              ? "No hay movimientos para esta cuenta"
+              : "No existe Libro Mayor procesado"}
           </h2>
           <p className="mx-auto mt-2 max-w-xl text-sm text-slate-600">
-            No existen movimientos procesados para esta cuenta en el período
-            seleccionado. Puedes cargar el Libro Mayor desde Documentos.
+            {query.data.generalLedgerAvailable
+              ? "El Libro Mayor vigente no contiene movimientos asociados a esta cuenta."
+              : "La cuenta puede investigarse cuando exista una importación utilizable del Libro Mayor para este período."}
           </p>
           <Link
             href={`/companies/${companyId}/periods/${taxPeriodId}/documents`}

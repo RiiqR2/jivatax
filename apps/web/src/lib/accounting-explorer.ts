@@ -33,7 +33,6 @@ export function formatAccountingAmount(value: string | number | null) {
 
 export type BalanceExplorerFilters = {
   search: string;
-  mapping: string;
   section: string;
   reconciliation: string;
   sort: string;
@@ -43,7 +42,6 @@ export type BalanceExplorerFilters = {
 
 export function buildBalanceExplorerParams(filters: BalanceExplorerFilters) {
   const params: Record<string, string | number> = {
-    mapping: filters.mapping,
     page: filters.page,
     pageSize: 25,
     sort: filters.sort,
