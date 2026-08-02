@@ -7,9 +7,8 @@ import type {
   AccountMappingsResponse,
 } from "@/types/accounting.types";
 import type {
-  BalanceAccount,
+  BalanceResponse,
   LedgerResponse,
-  Paginated,
 } from "@/types/accounting-explorer.types";
 
 export const accountingService = {
@@ -17,7 +16,7 @@ export const accountingService = {
     companyId: string,
     periodId: string,
     params: Record<string, string | number>,
-  ): Promise<Paginated<BalanceAccount>> {
+  ): Promise<BalanceResponse> {
     return (
       await api.get(
         `/companies/${companyId}/tax-periods/${periodId}/accounting-explorer/balance`,

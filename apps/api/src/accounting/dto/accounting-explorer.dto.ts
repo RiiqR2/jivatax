@@ -13,6 +13,7 @@ export class ExplorerPaginationDto {
 }
 
 export class BalanceExplorerQueryDto extends ExplorerPaginationDto {
+  @Transform(emptyToUndefined) @IsOptional() @IsString() search?: string;
   @Transform(emptyToUndefined) @IsOptional() @IsString() code?: string;
   @Transform(emptyToUndefined) @IsOptional() @IsString() name?: string;
   @IsOptional() @IsIn(["all", "mapped", "pending"]) mapping = "all";
@@ -20,7 +21,20 @@ export class BalanceExplorerQueryDto extends ExplorerPaginationDto {
   @IsOptional()
   @IsIn(["asset", "liability", "loss", "gain"])
   section?: string;
-  @IsOptional() @IsIn(["code", "name", "debit", "credit"]) sort = "code";
+  @IsOptional()
+  @IsIn([
+    "code",
+    "name",
+    "debit",
+    "credit",
+    "difference",
+    "movements",
+    "lastMovement",
+  ])
+  sort = "code";
+  @IsOptional()
+  @IsIn(["all", "reconciled", "difference", "no_ledger", "unavailable"])
+  reconciliation?: string = "all";
   @IsOptional() @IsIn(["asc", "desc"]) direction = "asc";
 }
 
