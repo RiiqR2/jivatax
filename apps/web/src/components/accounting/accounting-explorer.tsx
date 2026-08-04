@@ -110,6 +110,7 @@ export function BalanceExplorer({
     pathname = usePathname(),
     searchParams = useSearchParams();
   const [filters, setFilters] = useState(() => ({
+    balanceDocumentId: searchParams.get("balanceDocumentId") ?? "",
     search: searchParams.get("search") ?? "",
     section: searchParams.get("section") ?? "",
     reconciliation: searchParams.get("reconciliation") ?? "all",
@@ -163,6 +164,13 @@ export function BalanceExplorer({
     enabled: openingDetailOpen,
   });
   const ledgerAvailable = Boolean(data?.sources.generalLedgerDocument);
+  const selectedVersion = data?.sources.selectedClosingBalanceDocument;
+  const currentVersion = data?.sources.currentClosingBalanceDocument;
+  const historical = Boolean(
+    selectedVersion &&
+    currentVersion &&
+    selectedVersion.id !== currentVersion.id,
+  );
   return (
     <main className="mx-auto max-w-[1600px] p-4 sm:p-6 lg:p-8">
       <nav className="mb-3 text-sm text-slate-500">
@@ -198,6 +206,54 @@ export function BalanceExplorer({
             : "no disponible"}
         </p>
       </header>
+      {data && data.sources.availableClosingBalanceVersions.length > 0 && (
+        <section className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border bg-white p-4">
+          <label
+            htmlFor="closing-balance-version"
+            className="text-sm font-medium"
+          >
+            Balance final:
+          </label>
+          <select
+            id="closing-balance-version"
+            className={input}
+            value={selectedVersion?.id ?? ""}
+            onChange={(event) =>
+              change("balanceDocumentId", event.target.value)
+            }
+          >
+            {data.sources.availableClosingBalanceVersions.map((version) => (
+              <option key={version.id} value={version.id}>
+                v{version.versionNumber} ·{" "}
+                {version.cutoffDate
+                  ? `corte ${formatAccountingDate(version.cutoffDate)}`
+                  : "fecha no informada"}{" "}
+                · {version.isCurrent ? "Vigente" : "Histórica"}
+              </option>
+            ))}
+          </select>
+        </section>
+      )}
+      {historical && currentVersion && (
+        <div
+          role="status"
+          className="mt-4 rounded-lg bg-amber-50 p-4 text-sm text-amber-950"
+        >
+          Estás consultando una versión histórica del Balance final. Los datos
+          vigentes del período corresponden a la versión v
+          {currentVersion.versionNumber}.{" "}
+          <button
+            className="font-medium underline"
+            onClick={() => change("balanceDocumentId", currentVersion.id)}
+          >
+            Volver a la versión vigente
+          </button>
+          <p className="mt-1">
+            La conciliación no puede calcularse para esta versión histórica
+            porque no existe un Libro Mayor con fecha de corte compatible.
+          </p>
+        </div>
+      )}
       {data?.balanceAvailable && (
         <section
           aria-label="Estado de conciliación"
@@ -236,13 +292,13 @@ export function BalanceExplorer({
               </div>
               <AccountingTotals
                 title="Débitos"
-                balance={data.summary.totalBalanceDebit}
+                balance={data.summary.totalBalanceDebits}
                 ledger={data.summary.totalLedgerDebit}
                 difference={data.summary.totalDebitDifference}
               />
               <AccountingTotals
                 title="Créditos"
-                balance={data.summary.totalBalanceCredit}
+                balance={data.summary.totalBalanceCredits}
                 ledger={data.summary.totalLedgerCredit}
                 difference={data.summary.totalCreditDifference}
               />
@@ -421,13 +477,13 @@ export function BalanceExplorer({
       ) : (
         <div className="mt-4 rounded-xl border bg-white">
           <div className="max-h-[65vh] overflow-x-auto overflow-y-auto">
-            <table className="min-w-[1700px] text-left text-sm">
+            <table className="min-w-[2300px] text-left text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50 text-xs uppercase text-slate-600">
                 <tr>
                   <th colSpan={2} className="px-3 py-2 text-center">
                     Cuenta
                   </th>
-                  <th colSpan={4} className="px-3 py-2 text-center">
+                  <th colSpan={8} className="px-3 py-2 text-center">
                     Balance final
                   </th>
                   <th colSpan={4} className="px-3 py-2 text-center">
@@ -445,6 +501,10 @@ export function BalanceExplorer({
                     "Créditos",
                     "Saldo deudor",
                     "Saldo acreedor",
+                    "Activo",
+                    "Pasivo",
+                    "Pérdidas",
+                    "Ganancias",
                     "Debe",
                     "Haber",
                     "Movimientos",
@@ -478,12 +538,20 @@ export function BalanceExplorer({
                     <td className="min-w-28 px-3 py-3 font-medium text-slate-900">
                       {row.code}
                     </td>
-                    <td className="min-w-60 max-w-72 px-3 py-3">{row.name}</td>
+                    <td className="sticky left-28 min-w-60 max-w-72 bg-white px-3 py-3">
+                      <span className="line-clamp-2 [overflow-wrap:anywhere]">
+                        {row.name}
+                      </span>
+                    </td>
                     {[
-                      row.balanceDebit,
-                      row.balanceCredit,
-                      row.debitBalance,
-                      row.creditBalance,
+                      row.balanceDebits,
+                      row.balanceCredits,
+                      row.balanceDebitBalance,
+                      row.balanceCreditBalance,
+                      row.balanceAssets,
+                      row.balanceLiabilities,
+                      row.balanceLosses,
+                      row.balanceGains,
                       row.ledgerDebit,
                       row.ledgerCredit,
                     ].map((v, i) => (

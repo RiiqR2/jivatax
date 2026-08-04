@@ -80,6 +80,9 @@ export class TaxDocumentEntity extends BaseEntity {
   uploadedByUserId!: string;
   @Column({ name: "uploaded_at", type: "datetime", precision: 6 })
   uploadedAt!: Date;
+  /** Accounting cut-off represented by this document; never inferred from upload time. */
+  @Column({ name: "cutoff_date", type: "date", nullable: true })
+  cutoffDate!: string | null;
   @Column({
     name: "validated_at",
     type: "datetime",

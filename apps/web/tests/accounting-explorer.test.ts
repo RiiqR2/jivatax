@@ -23,6 +23,7 @@ const balanceSource = source.slice(
 test("balance filters omit empty optional values and mapping", () => {
   assert.deepEqual(
     buildBalanceExplorerParams({
+      balanceDocumentId: "",
       search: " ",
       section: "",
       reconciliation: "all",
@@ -76,6 +77,10 @@ test("balance table exposes every accounting column with horizontal scrolling", 
     "Créditos",
     "Saldo deudor",
     "Saldo acreedor",
+    "Activo",
+    "Pasivo",
+    "Pérdidas",
+    "Ganancias",
     "Debe",
     "Haber",
     "Diferencia debe",
@@ -86,8 +91,8 @@ test("balance table exposes every accounting column with horizontal scrolling", 
   ])
     assert.match(source, new RegExp(`"${column}"`));
   assert.match(source, /overflow-x-auto/);
-  assert.match(source, /min-w-\[1700px\]/);
-  assert.match(source, /colSpan=\{4\}/);
+  assert.match(source, /min-w-\[2300px\]/);
+  assert.match(source, /colSpan=\{8\}/);
   assert.doesNotMatch(
     balanceSource,
     /overflow-hidden rounded-xl border bg-white/,

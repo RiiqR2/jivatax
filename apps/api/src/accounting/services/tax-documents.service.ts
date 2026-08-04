@@ -192,6 +192,7 @@ export class TaxDocumentsService {
         versionNumber: (latest?.versionNumber ?? 0) + 1,
         uploadedByUserId: userId,
         uploadedAt: new Date(),
+        cutoffDate: dto.cutoffDate ?? null,
         replacesDocumentId: null,
       }),
     );

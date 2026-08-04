@@ -16,6 +16,7 @@ type ExplorerSource = {
   versionNumber: number;
   processedAt: string | null;
   balanceRole: "opening" | "closing" | null;
+  cutoffDate: string | null;
 };
 export const RECONCILIATION_TOLERANCE = "0.0100";
 export function accumulatedBalance(
@@ -33,14 +34,21 @@ export class AccountingExplorerService {
     private readonly periods: TaxPeriodsService,
   ) {}
 
-  private async resolveSources(companyId: string, periodId: string) {
+  private async resolveSources(
+    companyId: string,
+    periodId: string,
+    selectedClosingId?: string,
+  ) {
     const rows = (await this.db.query(
       `SELECT d.id, d.document_type documentType, d.balance_role balanceRole, d.version_number versionNumber,
-        d.processed_at processedAt, c.legal_name companyName, gli.id importId
+        d.processed_at processedAt, d.cutoff_date cutoffDate, c.legal_name companyName,
+        COALESCE(gli.id, bi.id) importId
        FROM tax_documents d
        JOIN companies c ON c.id=d.company_id
        LEFT JOIN general_ledger_imports gli
          ON gli.tax_document_id=d.id AND gli.company_id=d.company_id AND gli.tax_period_id=d.tax_period_id
+       LEFT JOIN balance_imports bi
+         ON bi.tax_document_id=d.id AND bi.company_id=d.company_id AND bi.tax_period_id=d.tax_period_id
        WHERE d.company_id=? AND d.tax_period_id=? AND d.status='processed'
          AND d.discarded_at IS NULL AND d.document_type IN ('balance','general_ledger')
          AND d.version_number=(SELECT MAX(current.version_number) FROM tax_documents current
@@ -62,6 +70,7 @@ export class AccountingExplorerService {
             processedAt:
               row.processedAt === null ? null : String(row.processedAt),
             balanceRole: row.balanceRole as ExplorerSource["balanceRole"],
+            cutoffDate: row.cutoffDate === null ? null : String(row.cutoffDate),
           }
         : null;
     const bySource = new Map<string, ExplorerSource>();
@@ -76,10 +85,46 @@ export class AccountingExplorerService {
             : "unusable_general_ledger";
       if (!bySource.has(key)) bySource.set(key, resolved);
     }
+    const closingVersions = (await this.db.query(
+      `SELECT d.id, d.version_number versionNumber, d.cutoff_date cutoffDate, d.processed_at processedAt,
+        d.status='processed' AND NOT EXISTS (SELECT 1 FROM tax_documents newer WHERE newer.company_id=d.company_id
+          AND newer.tax_period_id=d.tax_period_id AND newer.document_type='balance' AND newer.balance_role='closing'
+          AND newer.status='processed' AND newer.discarded_at IS NULL AND newer.version_number>d.version_number) isCurrent
+       FROM tax_documents d JOIN balance_imports bi ON bi.tax_document_id=d.id
+       WHERE d.company_id=? AND d.tax_period_id=? AND d.document_type='balance' AND d.balance_role='closing'
+         AND d.status IN ('processed','superseded') AND d.discarded_at IS NULL
+       ORDER BY d.cutoff_date IS NULL, d.cutoff_date DESC, d.version_number DESC, d.processed_at DESC`,
+      [companyId, periodId],
+    )) as Row[];
+    let selected = bySource.get("balance:closing") ?? null;
+    if (selectedClosingId) {
+      const allowed = closingVersions.some(
+        (version) => String(version.id) === selectedClosingId,
+      );
+      if (!allowed)
+        throw new NotFoundException(
+          "La versión de Balance final no pertenece al período o no es consultable",
+        );
+      const selectedRows = (await this.db.query(
+        `SELECT d.id, d.document_type documentType, d.balance_role balanceRole, d.version_number versionNumber,
+          d.processed_at processedAt, d.cutoff_date cutoffDate, bi.id importId
+         FROM tax_documents d JOIN balance_imports bi ON bi.tax_document_id=d.id
+         WHERE d.id=? AND d.company_id=? AND d.tax_period_id=? AND d.document_type='balance'
+           AND d.balance_role='closing' AND d.status IN ('processed','superseded') AND d.discarded_at IS NULL`,
+        [selectedClosingId, companyId, periodId],
+      )) as Row[];
+      selected = toSource(selectedRows[0]);
+      if (!selected?.importId)
+        throw new NotFoundException(
+          "La versión no tiene una importación válida",
+        );
+    }
     return {
       companyName: String(rows[0]?.companyName ?? ""),
       openingBalance: bySource.get("balance:opening") ?? null,
-      closingBalance: bySource.get("balance:closing") ?? null,
+      closingBalance: selected,
+      currentClosingBalance: bySource.get("balance:closing") ?? null,
+      closingVersions,
       generalLedger: bySource.get("general_ledger") ?? null,
     };
   }
@@ -93,13 +138,18 @@ export class AccountingExplorerService {
       commercialYear: number;
       taxYear: number;
     };
-    const resolved = await this.resolveSources(companyId, periodId);
+    const resolved = await this.resolveSources(
+      companyId,
+      periodId,
+      query.balanceDocumentId,
+    );
     const source = (row: ExplorerSource | null) =>
       row
         ? {
             id: row.id,
             versionNumber: row.versionNumber,
             processedAt: row.processedAt,
+            cutoffDate: row.cutoffDate,
           }
         : null;
     const sources = {
@@ -108,6 +158,19 @@ export class AccountingExplorerService {
       taxYear: period.taxYear,
       openingBalanceDocument: source(resolved.openingBalance),
       closingBalanceDocument: source(resolved.closingBalance),
+      selectedClosingBalanceDocument: source(resolved.closingBalance),
+      currentClosingBalanceDocument: source(resolved.currentClosingBalance),
+      availableClosingBalanceVersions: resolved.closingVersions.map(
+        (version) => ({
+          id: String(version.id),
+          versionNumber: Number(version.versionNumber),
+          cutoffDate:
+            version.cutoffDate == null ? null : String(version.cutoffDate),
+          processedAt:
+            version.processedAt == null ? null : String(version.processedAt),
+          isCurrent: Number(version.isCurrent) === 1,
+        }),
+      ),
       generalLedgerDocument: source(resolved.generalLedger),
     };
     const openingResult = await this.openingControl(
@@ -141,68 +204,78 @@ export class AccountingExplorerService {
       };
     }
     const where = [
-      "pa.company_id = ?",
-      "pa.tax_period_id = ?",
-      "pa.discarded_at IS NULL",
-      "pa.source_document_id = ?",
+      "entry.company_id = ?",
+      "entry.tax_period_id = ?",
+      "entry.balance_import_id = ?",
     ];
-    const params: unknown[] = [companyId, periodId, resolved.closingBalance.id];
+    const params: unknown[] = [
+      companyId,
+      periodId,
+      resolved.closingBalance.importId,
+    ];
     if (query.search) {
-      where.push(
-        "(pa.account_code_snapshot LIKE ? OR pa.account_name_snapshot LIKE ?)",
-      );
+      where.push("(entry.account_code LIKE ? OR entry.account_name LIKE ?)");
       params.push(`%${query.search}%`, `%${query.search}%`);
     }
     if (query.code) {
-      where.push("pa.account_code_snapshot LIKE ?");
+      where.push("entry.account_code LIKE ?");
       params.push(`%${query.code}%`);
     }
     if (query.name) {
-      where.push("pa.account_name_snapshot LIKE ?");
+      where.push("entry.account_name LIKE ?");
       params.push(`%${query.name}%`);
     }
     if (query.mapping === "mapped") where.push("m.status = 'confirmed'");
     if (query.mapping === "pending")
       where.push("(m.status IS NULL OR m.status <> 'confirmed')");
     const sectionColumns: Record<string, string> = {
-      asset: "asset_amount",
-      liability: "liability_amount",
-      loss: "loss_amount",
-      gain: "gain_amount",
+      asset: "effective_assets",
+      liability: "effective_liabilities",
+      loss: "effective_losses",
+      gain: "effective_gains",
     };
-    if (query.section) where.push(`pa.${sectionColumns[query.section]} <> 0`);
-    const ledgerAvailable = Boolean(resolved.generalLedger?.importId);
+    if (query.section)
+      where.push(`entry.${sectionColumns[query.section]} <> 0`);
+    const isHistorical =
+      resolved.closingBalance.id !== resolved.currentClosingBalance?.id;
+    const ledgerAvailable =
+      Boolean(resolved.generalLedger?.importId) && !isHistorical;
     const ledgerJoin = ledgerAvailable
       ? `LEFT JOIN (SELECT e.company_account_id, CAST(SUM(e.debit) AS DECIMAL(24,4)) ledgerDebit,
           CAST(SUM(e.credit) AS DECIMAL(24,4)) ledgerCredit, COUNT(*) ledgerMovementCount,
           MAX(e.transaction_date) lastLedgerMovementDate
         FROM general_ledger_entries e
         WHERE e.general_ledger_import_id=? AND e.company_id=? AND e.tax_period_id=? GROUP BY e.company_account_id) l
-        ON l.company_account_id=pa.company_account_id`
+        ON l.company_account_id=entry.company_account_id`
       : "LEFT JOIN (SELECT NULL company_account_id, NULL ledgerDebit, NULL ledgerCredit, 0 ledgerMovementCount, NULL lastLedgerMovementDate) l ON 1=0";
     const ledgerParams: unknown[] = ledgerAvailable
       ? [resolved.generalLedger!.importId, companyId, periodId]
       : [];
     const statusSql = ledgerAvailable
       ? `CASE WHEN COALESCE(l.ledgerMovementCount,0)=0 THEN 'no_ledger'
-          WHEN ABS(pa.debit_amount-COALESCE(l.ledgerDebit,0))<=${RECONCILIATION_TOLERANCE}
-           AND ABS(pa.credit_amount-COALESCE(l.ledgerCredit,0))<=${RECONCILIATION_TOLERANCE}
+          WHEN ABS(entry.effective_debits-COALESCE(l.ledgerDebit,0))<=${RECONCILIATION_TOLERANCE}
+           AND ABS(entry.effective_credits-COALESCE(l.ledgerCredit,0))<=${RECONCILIATION_TOLERANCE}
           THEN 'reconciled' ELSE 'difference' END`
       : "'unavailable'";
-    const cte = `WITH explorer AS (SELECT pa.company_account_id accountId, pa.account_code_snapshot code,
-      pa.account_name_snapshot name, CASE WHEN m.status='confirmed' THEN s.code ELSE NULL END siiCode,
+    const cte = `WITH explorer AS (SELECT entry.company_account_id accountId, entry.account_code code,
+      entry.account_name name, CASE WHEN m.status='confirmed' THEN s.code ELSE NULL END siiCode,
       CASE WHEN m.status='confirmed' THEN s.name ELSE NULL END siiName, COALESCE(m.status,'pending') mappingStatus,
-      CAST(pa.debit_amount AS DECIMAL(24,4)) balanceDebit, CAST(pa.credit_amount AS DECIMAL(24,4)) balanceCredit,
-      pa.debit_balance debitBalance, pa.credit_balance creditBalance, pa.asset_amount assetAmount,
-      pa.liability_amount liabilityAmount, pa.loss_amount lossAmount, pa.gain_amount gainAmount,
+      CAST(entry.effective_debits AS DECIMAL(24,4)) balanceDebits,
+      CAST(entry.effective_credits AS DECIMAL(24,4)) balanceCredits,
+      CAST(entry.effective_debit_balance AS DECIMAL(24,4)) balanceDebitBalance,
+      CAST(entry.effective_credit_balance AS DECIMAL(24,4)) balanceCreditBalance,
+      CAST(entry.effective_assets AS DECIMAL(24,4)) balanceAssets,
+      CAST(entry.effective_liabilities AS DECIMAL(24,4)) balanceLiabilities,
+      CAST(entry.effective_losses AS DECIMAL(24,4)) balanceLosses,
+      CAST(entry.effective_gains AS DECIMAL(24,4)) balanceGains,
       ${ledgerAvailable ? "COALESCE(l.ledgerDebit,0)" : "NULL"} ledgerDebit,
       ${ledgerAvailable ? "COALESCE(l.ledgerCredit,0)" : "NULL"} ledgerCredit,
-      ${ledgerAvailable ? "pa.debit_amount-COALESCE(l.ledgerDebit,0)" : "NULL"} debitDifference,
-      ${ledgerAvailable ? "pa.credit_amount-COALESCE(l.ledgerCredit,0)" : "NULL"} creditDifference,
+      ${ledgerAvailable ? "entry.effective_debits-COALESCE(l.ledgerDebit,0)" : "NULL"} debitDifference,
+      ${ledgerAvailable ? "entry.effective_credits-COALESCE(l.ledgerCredit,0)" : "NULL"} creditDifference,
       ${statusSql} reconciliationStatus, COALESCE(l.ledgerMovementCount,0) ledgerMovementCount,
       l.lastLedgerMovementDate, COALESCE(l.ledgerMovementCount,0)>0 hasLedgerMovements, TRUE canOpenLedger
-      FROM tax_period_company_accounts pa
-      LEFT JOIN company_account_mappings m ON m.company_account_id=pa.company_account_id
+      FROM balance_entries entry
+      LEFT JOIN company_account_mappings m ON m.company_account_id=entry.company_account_id
       LEFT JOIN sii_accounts s ON s.id=m.sii_account_id ${ledgerJoin}
       WHERE ${where.join(" AND ")})`;
     const filtered =
@@ -216,8 +289,8 @@ export class AccountingExplorerService {
     const sortColumns: Record<string, string> = {
       code: "code",
       name: "name",
-      debit: "balanceDebit",
-      credit: "balanceCredit",
+      debit: "balanceDebits",
+      credit: "balanceCredits",
       difference:
         "(ABS(COALESCE(debitDifference,0))+ABS(COALESCE(creditDifference,0)))",
       movements: "ledgerMovementCount",
@@ -240,9 +313,15 @@ export class AccountingExplorerService {
        SUM(reconciliationStatus='difference') accountsWithDifferences,
        SUM(reconciliationStatus='no_ledger') accountsWithoutLedgerMovements,
        ${ledgerAvailable ? "FALSE" : "TRUE"} reconciliationUnavailable,
-       CAST(COALESCE(SUM(balanceDebit),0) AS DECIMAL(24,4)) totalBalanceDebit,
+       CAST(COALESCE(SUM(balanceDebits),0) AS DECIMAL(24,4)) totalBalanceDebits,
        CAST(${ledgerAvailable ? "COALESCE(SUM(ledgerDebit),0)" : "NULL"} AS DECIMAL(24,4)) totalLedgerDebit,
-       CAST(COALESCE(SUM(balanceCredit),0) AS DECIMAL(24,4)) totalBalanceCredit,
+       CAST(COALESCE(SUM(balanceCredits),0) AS DECIMAL(24,4)) totalBalanceCredits,
+       CAST(COALESCE(SUM(balanceDebitBalance),0) AS DECIMAL(24,4)) totalBalanceDebitBalance,
+       CAST(COALESCE(SUM(balanceCreditBalance),0) AS DECIMAL(24,4)) totalBalanceCreditBalance,
+       CAST(COALESCE(SUM(balanceAssets),0) AS DECIMAL(24,4)) totalBalanceAssets,
+       CAST(COALESCE(SUM(balanceLiabilities),0) AS DECIMAL(24,4)) totalBalanceLiabilities,
+       CAST(COALESCE(SUM(balanceLosses),0) AS DECIMAL(24,4)) totalBalanceLosses,
+       CAST(COALESCE(SUM(balanceGains),0) AS DECIMAL(24,4)) totalBalanceGains,
        CAST(${ledgerAvailable ? "COALESCE(SUM(ledgerCredit),0)" : "NULL"} AS DECIMAL(24,4)) totalLedgerCredit,
        CAST(${ledgerAvailable ? "COALESCE(SUM(debitDifference),0)" : "NULL"} AS DECIMAL(24,4)) totalDebitDifference,
        CAST(${ledgerAvailable ? "COALESCE(SUM(creditDifference),0)" : "NULL"} AS DECIMAL(24,4)) totalCreditDifference FROM explorer`,
@@ -415,8 +494,14 @@ export class AccountingExplorerService {
       accountsWithDifferences: 0,
       accountsWithoutLedgerMovements: 0,
       reconciliationUnavailable: !ledgerAvailable,
-      totalBalanceDebit: "0.0000",
-      totalBalanceCredit: "0.0000",
+      totalBalanceDebits: "0.0000",
+      totalBalanceCredits: "0.0000",
+      totalBalanceDebitBalance: "0.0000",
+      totalBalanceCreditBalance: "0.0000",
+      totalBalanceAssets: "0.0000",
+      totalBalanceLiabilities: "0.0000",
+      totalBalanceLosses: "0.0000",
+      totalBalanceGains: "0.0000",
       totalLedgerDebit: ledgerAvailable ? "0.0000" : null,
       totalLedgerCredit: ledgerAvailable ? "0.0000" : null,
       totalDebitDifference: ledgerAvailable ? "0.0000" : null,

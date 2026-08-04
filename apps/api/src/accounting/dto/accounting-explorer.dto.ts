@@ -1,5 +1,13 @@
 import { Transform, Type } from "class-transformer";
-import { IsIn, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
+import {
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  Min,
+} from "class-validator";
 
 export const emptyToUndefined = ({ value }: { value: unknown }) => {
   if (typeof value !== "string") return value;
@@ -13,6 +21,10 @@ export class ExplorerPaginationDto {
 }
 
 export class BalanceExplorerQueryDto extends ExplorerPaginationDto {
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsUUID()
+  balanceDocumentId?: string;
   @Transform(emptyToUndefined) @IsOptional() @IsString() search?: string;
   @Transform(emptyToUndefined) @IsOptional() @IsString() code?: string;
   @Transform(emptyToUndefined) @IsOptional() @IsString() name?: string;
