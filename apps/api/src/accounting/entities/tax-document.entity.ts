@@ -43,6 +43,8 @@ export class TaxDocumentEntity extends BaseEntity {
     asExpression: "COALESCE(balance_role,'unclassified')",
     generatedType: "STORED",
     select: false,
+    insert: false,
+    update: false,
   })
   balanceRoleKey!: string;
   @Column({

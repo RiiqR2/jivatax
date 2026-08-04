@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   BadRequestException,
+  HttpException,
   Inject,
   Injectable,
   Logger,
@@ -22,7 +23,7 @@ import {
 } from "../../files/storage/object-storage.service";
 import {
   DOCUMENT_CONTRACTS,
-  normalizeHeader,
+  resolveRequiredHeaders,
 } from "../contracts/document-contracts";
 import { CreateTaxDocumentDto } from "../dto/accounting.dto";
 import { TaxDocumentEntity } from "../entities/tax-document.entity";
@@ -39,7 +40,9 @@ import {
   BALANCE_MONETARY_FIELDS,
   BalanceParsedRow,
   BalanceRowType,
+  normalizeSummaryLabel,
   parseBalanceRows,
+  reportedSummaryType,
 } from "../balance/balance-parser";
 import { TaxPeriodsService } from "./tax-periods.service";
 import { TaxPeriodEntity } from "../entities/tax-period.entity";
@@ -60,7 +63,7 @@ type ImportReport = {
   ignoredRows: number;
   errors: Issue[];
   warnings: Issue[];
-  totals: { debit: number; credit: number };
+  totals: { debit: number | string; credit: number | string };
   reconciliation: Record<string, unknown>;
   detectedSheet: string;
   headerRowNumber: number;
@@ -73,9 +76,13 @@ type ImportReport = {
   unknownRows?: number;
   validAccountRows?: number;
   invalidAccountRows?: number;
-  reportedTotals?: Record<string, number | null> | null;
-  systemTotals?: Record<string, number>;
+  reportedTotals?: Record<string, string | null> | null;
+  systemTotals?: Record<string, string>;
   comparisons?: unknown[];
+  reportedSummaries?: unknown[];
+  calculatedTotals?: Record<string, string>;
+  totalDifferences?: Record<string, string | null>;
+  accountingChecks?: Record<string, boolean | null>;
   parserVersion?: string;
   voucherCount?: number;
   balancedVoucherCount?: number;
@@ -198,8 +205,10 @@ export class TaxDocumentsService {
   ): Promise<Record<string, unknown>> {
     const started = Date.now();
     const document = await this.get(companyId, periodId, id);
-    document.status = TaxDocumentStatus.PROCESSING;
-    await this.documents.save(document);
+    await this.documents.update(
+      { id: document.id, companyId, taxPeriodId: periodId },
+      { status: TaxDocumentStatus.PROCESSING, errorSummary: null },
+    );
     this.logger.log(
       JSON.stringify({
         event: "accounting_processing_started",
@@ -248,10 +257,18 @@ export class TaxDocumentsService {
       );
       return parsed.report;
     } catch (error) {
-      document.status = TaxDocumentStatus.PROCESSING_ERROR;
-      document.errorSummary =
-        error instanceof Error ? error.message : "Error de procesamiento";
-      await this.documents.save(document);
+      const errorSummary =
+        error instanceof HttpException
+          ? typeof error.getResponse() === "string"
+            ? String(error.getResponse())
+            : JSON.stringify(error.getResponse())
+          : error instanceof Error
+            ? error.message
+            : "Error de procesamiento";
+      await this.documents.update(
+        { id: document.id, companyId, taxPeriodId: periodId },
+        { status: TaxDocumentStatus.PROCESSING_ERROR, errorSummary },
+      );
       this.logger.error(
         JSON.stringify({
           event: "accounting_processing_rollback",
@@ -331,24 +348,41 @@ export class TaxDocumentsService {
         { header: 1, raw: true, defval: null },
       );
       for (let row = 0; row < Math.min(matrix.length, 25); row += 1) {
-        const normalized = matrix[row].map(normalizeHeader);
-        const map: Record<string, number> = {};
-        for (const [field, aliases] of Object.entries(contract.required)) {
-          const index = normalized.findIndex((header) =>
-            aliases.map(normalizeHeader).includes(header),
-          );
-          if (index >= 0) map[field] = index;
-        }
-        if (Object.keys(map).length === Object.keys(contract.required).length)
+        const resolved = resolveRequiredHeaders(matrix[row], contract);
+        if (resolved.duplicates.length > 0)
+          throw new BadRequestException({
+            code: "DUPLICATE_CANONICAL_HEADER",
+            message: "Dos o más columnas corresponden al mismo campo canónico.",
+            duplicates: resolved.duplicates,
+          });
+        const map = resolved.map;
+        if (resolved.missingFields.length === 0)
           candidates.push({ sheet, row, map, matrix });
       }
     }
-    if (candidates.length !== 1)
-      throw new BadRequestException(
-        candidates.length > 1
-          ? "MULTIPLE_SHEETS: selecciona una hoja candidata."
-          : "UNSUPPORTED_HEADER: faltan columnas requeridas.",
-      );
+    if (candidates.length !== 1) {
+      if (candidates.length > 1)
+        throw new BadRequestException(
+          "MULTIPLE_SHEETS: selecciona una hoja candidata.",
+        );
+      const diagnostics = workbook.SheetNames.flatMap((sheet) => {
+        const matrix = XLSX.utils.sheet_to_json<unknown[]>(
+          workbook.Sheets[sheet],
+          { header: 1, raw: true, defval: null },
+        );
+        return matrix
+          .slice(0, 25)
+          .map((headers) => resolveRequiredHeaders(headers, contract));
+      });
+      const closest = diagnostics.sort(
+        (left, right) => left.missingFields.length - right.missingFields.length,
+      )[0];
+      throw new BadRequestException({
+        code: "UNSUPPORTED_HEADER",
+        message: "Faltan columnas requeridas.",
+        missingFields: closest?.missingFields ?? Object.keys(contract.required),
+      });
+    }
     const candidate = candidates[0];
     if (type === TaxDocumentType.BALANCE) {
       const parsed = parseBalanceRows(
@@ -370,6 +404,7 @@ export class TaxDocumentsService {
           BalanceRowType.SUBTOTAL,
           BalanceRowType.RESULT,
           BalanceRowType.TOTAL,
+          BalanceRowType.REPORTED_SUMMARY,
         ].includes(row.rowType),
       ).length;
       return {
@@ -400,6 +435,10 @@ export class TaxDocumentsService {
           systemTotals: parsed.systemTotals,
           reportedTotals: parsed.reportedTotals,
           comparisons: parsed.comparisons,
+          reportedSummaries: parsed.reportedSummaries,
+          calculatedTotals: parsed.calculatedTotals,
+          totalDifferences: parsed.totalDifferences,
+          accountingChecks: parsed.accountingChecks,
           reconciliation: parsed.reconciliation,
           parserVersion: "balance-v2-source-preserving",
           detectedSheet: candidate.sheet,
@@ -815,19 +854,27 @@ export class TaxDocumentsService {
           BalanceRowType.SUBTOTAL,
           BalanceRowType.RESULT,
           BalanceRowType.TOTAL,
+          BalanceRowType.REPORTED_SUMMARY,
         ].includes(row.rowType)
       ) {
         await manager.query(
-          "INSERT INTO balance_reported_summaries (id, balance_import_id, source_row_id, summary_type, label, reported_debits, reported_credits, reported_debit_balance, reported_credit_balance, reported_assets, reported_liabilities, reported_losses, reported_gains, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6))",
+          "INSERT INTO balance_reported_summaries (id, balance_import_id, source_row_id, company_id, tax_period_id, tax_document_id, balance_role, source_row_number, summary_type, label, normalized_label, reported_debits, reported_credits, reported_debit_balance, reported_credit_balance, reported_assets, reported_liabilities, reported_losses, reported_gains, raw_data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6))",
           [
             randomUUID(),
             importId,
             sourceRowId,
-            row.rowType,
+            document.companyId,
+            document.taxPeriodId,
+            document.id,
+            document.balanceRole,
+            row.sourceRowNumber,
+            reportedSummaryType(row),
             row.accountName ?? "",
+            normalizeSummaryLabel(row.accountName),
             ...BALANCE_MONETARY_FIELDS.map(
-              (field) => row.money[field].reportedValue,
+              (field) => row.money[field].reportedDecimal,
             ),
+            JSON.stringify(row.rawData),
           ],
         );
       }
@@ -878,10 +925,10 @@ export class TaxDocumentsService {
           row.accountCode,
           row.accountName,
           ...BALANCE_MONETARY_FIELDS.map(
-            (field) => row.money[field].reportedValue,
+            (field) => row.money[field].reportedDecimal,
           ),
           ...BALANCE_MONETARY_FIELDS.map(
-            (field) => row.money[field].effectiveValue,
+            (field) => row.money[field].effectiveDecimal,
           ),
           row.calculatedDebitBalance,
           row.calculatedCreditBalance,
@@ -927,7 +974,7 @@ export class TaxDocumentsService {
           row.accountCode,
           row.accountName,
           ...BALANCE_MONETARY_FIELDS.map(
-            (field) => row.money[field].reportedValue,
+            (field) => row.money[field].reportedDecimal,
           ),
         ],
       );

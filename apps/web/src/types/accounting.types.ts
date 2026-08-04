@@ -40,15 +40,15 @@ export type TaxDocumentReport = {
   totals?: Record<string, unknown>;
   reconciliation?: {
     movements?: {
-      debitTotal: number;
-      creditTotal: number;
-      difference: number;
+      debitTotal: number | string;
+      creditTotal: number | string;
+      difference: number | string;
       isBalanced: boolean;
     };
     equity?: {
-      leftSide: number;
-      rightSide: number;
-      difference: number;
+      leftSide: number | string;
+      rightSide: number | string;
+      difference: number | string;
       isBalanced: boolean;
     };
   };
@@ -61,16 +61,31 @@ export type TaxDocumentReport = {
   unknownRows?: number;
   validAccountRows?: number;
   invalidAccountRows?: number;
-  reportedTotals?: Record<string, number | null> | null;
-  systemTotals?: Record<string, number>;
+  reportedTotals?: Record<string, string | null> | null;
+  systemTotals?: Record<string, string>;
+  calculatedTotals?: Record<string, string>;
+  totalDifferences?: Record<string, string | null>;
+  reportedSummaries?: Array<{
+    type: "subtotal" | "period_result" | "company_total" | "other";
+    label: string;
+    normalizedLabel: string;
+    sourceRowNumber: number;
+    values: Record<string, string | null>;
+  }>;
+  accountingChecks?: {
+    debitCreditBalanced: boolean;
+    equityEquationBalanced: boolean;
+    reportedTotalMatchesCalculated: boolean;
+    reportedRollupMatches: boolean | null;
+  };
   comparisons?: BalanceComparison[];
 };
 
 export type BalanceComparison = {
   field: string;
-  reported: number | null;
-  calculated: number;
-  difference: number | null;
+  reported: string | null;
+  calculated: string;
+  difference: string | null;
   status: "matched" | "mismatched" | "not_reported";
 };
 

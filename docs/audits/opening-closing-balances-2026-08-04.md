@@ -23,3 +23,9 @@
 - Los balances procesados con rol `NULL` se muestran como pendientes y nunca se resuelven como fuente. La clasificación es una acción separada protegida para metausuarios y registra `balance_role_classified_by_user_id` y `balance_role_classified_at`; no altera el archivo ni la importación.
 - El rollback comprueba colisiones de la antigua clave única antes de modificar el esquema. Si coexisten, por ejemplo, `opening v1` y `closing v1`, falla con un mensaje explícito y no renumera datos.
 - El control de apertura calcula estado y diferencias con `DECIMAL(24,4)` en MySQL. El endpoint de Balance expone solamente el resumen; el detalle paginado se solicita por separado al abrir el control.
+
+## Auditoría de resúmenes del Balance
+
+- La tabla publicada `balance_reported_summaries` ya conservaba por importación la etiqueta, fila fuente y las ocho columnas informadas, por lo que se reutilizó. La migración posterior agrega contexto directo de empresa, período, documento, rol, etiqueta normalizada y datos crudos; no se creó otra tabla.
+- `balance_source_rows` conserva todas las filas y ahora admite `reported_summary` para etiquetas genéricas con montos. Solo `account` puede crear `balance_entries`, cuentas internas o proyecciones operativas.
+- Los totales calculados y sus diferencias usan strings DECIMAL escalados a cuatro posiciones mediante `bigint`; no suman floats de JavaScript. Los valores informados nunca se reemplazan.

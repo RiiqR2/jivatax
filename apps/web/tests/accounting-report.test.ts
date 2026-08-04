@@ -9,6 +9,14 @@ import {
   statusPresentation,
 } from "../src/lib/accounting-presentation.ts";
 
+const reportSource = readFileSync(
+  new URL(
+    "../src/components/accounting/document-report-page.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
+
 test("traduce estados y campos contables y presenta valores vacíos", () => {
   assert.equal(statusPresentation("invalid").label, "Inválido");
   assert.equal(statusPresentation("processed").variant, "success");
@@ -93,6 +101,15 @@ test("reporte ofrece resumen, tabla, paginación y descarga JSON", () => {
   assert.match(source, /<table/);
   assert.match(source, /\[25, 50, 100\]/);
   assert.match(source, /new Blob/);
+});
+
+test("reporte de Balance separa totales informados, recalculados y diferencias", () => {
+  assert.match(reportSource, /Totales informados por la empresa/);
+  assert.match(reportSource, /Totales recalculados por JivaTax/);
+  assert.match(reportSource, /title="Diferencia"/);
+  assert.match(reportSource, /Los totales informados coinciden/);
+  assert.match(reportSource, /JivaTax no modificará los valores entregados/);
+  assert.match(reportSource, /const grouped = integer\.replace/);
 });
 
 test("homologación tiene vacío, filtros, búsqueda, confirmación e historial", () => {

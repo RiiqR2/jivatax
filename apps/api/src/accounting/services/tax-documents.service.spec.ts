@@ -209,6 +209,42 @@ describe("TaxDocumentsService document lifecycle", () => {
     );
   });
 
+  it("un error de parser conserva el error original y actualiza solo campos editables", async () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const document = {
+      id: "document",
+      companyId: "company",
+      taxPeriodId: "period",
+      documentType: TaxDocumentType.BALANCE,
+      balanceRole: BalanceRole.OPENING,
+      balanceRoleKey: "opening",
+      storedFile: { bucket: "bucket", objectKey: "key" },
+    };
+    const service = new TaxDocumentsService(
+      {
+        findOne: async () => document,
+        update: async (_criteria: unknown, values: Record<string, unknown>) => {
+          updates.push(values);
+        },
+      } as never,
+      {} as never,
+      {} as never,
+      { getObject: async () => Buffer.from("not-an-xlsx") } as never,
+      { get: async () => ({ id: "period" }) } as never,
+    );
+    await assert.rejects(
+      service.process("company", "period", "document"),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.doesNotMatch(error.message, /generated column|QueryFailedError/);
+        return true;
+      },
+    );
+    assert.equal(updates.at(-1)?.status, "processing_error");
+    assert.equal("balanceRoleKey" in (updates.at(-1) ?? {}), false);
+    assert.equal(document.balanceRole, BalanceRole.OPENING);
+  });
+
   it("solo busca para supersede una versión procesada anterior", () => {
     const source = readFileSync(__filename, "utf8");
     const serviceSource = readFileSync(

@@ -80,7 +80,13 @@ describe("persistencia normalizada de movimientos", () => {
         "gains",
       ].map((field) => [
         field,
-        { reportedValue: "0.0000", effectiveValue: "0.0000", wasBlank: false },
+        {
+          reportedValue: 0,
+          effectiveValue: 0,
+          reportedDecimal: "0.0000",
+          effectiveDecimal: "0.0000",
+          wasBlank: false,
+        },
       ]),
     );
     await (
@@ -123,6 +129,17 @@ describe("persistencia normalizada de movimientos", () => {
           calculatedDebitBalance: "0.0000",
           calculatedCreditBalance: "0.0000",
         },
+        {
+          rowType: "total",
+          sourceRowNumber: 3,
+          sheetName: "Datos",
+          accountCode: null,
+          accountName: "Total empresa",
+          rawData: [],
+          money,
+          calculatedDebitBalance: null,
+          calculatedCreditBalance: null,
+        },
       ],
       report({ detectedColumns: {} }),
       true,
@@ -142,6 +159,15 @@ describe("persistencia normalizada de movimientos", () => {
       calls.some((call) => call.sql.includes("DELETE FROM balance_entries")),
       false,
     );
+    const summary = calls.find((call) =>
+      call.sql.includes("INSERT INTO balance_reported_summaries"),
+    );
+    assert.ok(summary);
+    assert.equal(summary.parameters[3], "company");
+    assert.equal(summary.parameters[4], "period");
+    assert.equal(summary.parameters[5], "closing-v2");
+    assert.equal(summary.parameters[6], BalanceRole.CLOSING);
+    assert.equal(summary.parameters[8], "company_total");
   });
   it("mantiene el primer nombre en company_accounts y conserva el nombre de cada período como snapshot", () => {
     const source = readFileSync(
