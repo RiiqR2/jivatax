@@ -257,6 +257,7 @@ export class TaxDocumentsService {
       );
       return parsed.report;
     } catch (error) {
+      console.log(error);
       const errorSummary =
         error instanceof HttpException
           ? typeof error.getResponse() === "string"
