@@ -12,14 +12,14 @@ export type BalanceAccount = {
   siiName: string | null;
   mappingStatus:
     "pending" | "suggested" | "confirmed" | "rejected" | "unmapped";
-  balanceDebit: string;
-  balanceCredit: string;
-  debitBalance: string;
-  creditBalance: string;
-  assetAmount: string;
-  liabilityAmount: string;
-  lossAmount: string;
-  gainAmount: string;
+  balanceDebits: string;
+  balanceCredits: string;
+  balanceDebitBalance: string;
+  balanceCreditBalance: string;
+  balanceAssets: string;
+  balanceLiabilities: string;
+  balanceLosses: string;
+  balanceGains: string;
   ledgerDebit: string | null;
   ledgerCredit: string | null;
   debitDifference: string | null;
@@ -39,8 +39,14 @@ export type BalanceSummary = {
   accountsWithDifferences: number;
   accountsWithoutLedgerMovements: number;
   reconciliationUnavailable: boolean;
-  totalBalanceDebit: string;
-  totalBalanceCredit: string;
+  totalBalanceDebits: string;
+  totalBalanceCredits: string;
+  totalBalanceDebitBalance: string;
+  totalBalanceCreditBalance: string;
+  totalBalanceAssets: string;
+  totalBalanceLiabilities: string;
+  totalBalanceLosses: string;
+  totalBalanceGains: string;
   totalLedgerDebit: string | null;
   totalLedgerCredit: string | null;
   totalDebitDifference: string | null;
@@ -63,6 +69,11 @@ export type BalanceResponse = Paginated<BalanceAccount> & {
       versionNumber: number;
       processedAt: string;
     } | null;
+    selectedClosingBalanceDocument: BalanceVersion | null;
+    currentClosingBalanceDocument: BalanceVersion | null;
+    availableClosingBalanceVersions: Array<
+      BalanceVersion & { isCurrent: boolean }
+    >;
     generalLedgerDocument: {
       id: string;
       versionNumber: number;
@@ -78,6 +89,12 @@ export type BalanceResponse = Paginated<BalanceAccount> & {
     onlyInPreviousClosing: number;
     warning: string | null;
   };
+};
+export type BalanceVersion = {
+  id: string;
+  versionNumber: number;
+  processedAt: string | null;
+  cutoffDate: string | null;
 };
 export type LedgerEntry = {
   id: string;

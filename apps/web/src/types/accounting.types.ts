@@ -19,6 +19,7 @@ export type TaxDocument = {
   status: string;
   versionNumber: number;
   uploadedAt: string;
+  cutoffDate: string | null;
   uploadedByUserId: string;
   uploadedBy: { id: string; name: string; email: string } | null;
   replacesDocumentId?: string | null;

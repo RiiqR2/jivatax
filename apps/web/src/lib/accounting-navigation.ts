@@ -73,18 +73,24 @@ export function explorerDocumentPath(
   companyId: string,
   taxPeriodId: string,
   document: {
+    id: string;
     documentType: string;
+    balanceRole?: string | null;
     status: string;
     discardedAt?: string | null;
   },
 ): string | null {
   if (
-    document.status !== "processed" ||
+    !["processed", "superseded"].includes(document.status) ||
     document.discardedAt ||
     !["balance", "general_ledger"].includes(document.documentType)
   ) {
     return null;
   }
 
-  return accountingExplorerPath(companyId, taxPeriodId);
+  const path = accountingExplorerPath(companyId, taxPeriodId);
+  return document.documentType === "balance" &&
+    document.balanceRole === "closing"
+    ? `${path}?balanceDocumentId=${encodeURIComponent(document.id)}`
+    : path;
 }

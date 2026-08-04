@@ -38,6 +38,7 @@ export function formatAccountingDate(value: string | null | undefined) {
 }
 
 export type BalanceExplorerFilters = {
+  balanceDocumentId: string;
   search: string;
   section: string;
   reconciliation: string;
@@ -53,6 +54,8 @@ export function buildBalanceExplorerParams(filters: BalanceExplorerFilters) {
     sort: filters.sort,
     direction: filters.direction,
   };
+  if (filters.balanceDocumentId)
+    params.balanceDocumentId = filters.balanceDocumentId;
   const search = filters.search.trim();
   if (search) params.search = search;
   if (filters.section) params.section = filters.section;

@@ -42,6 +42,13 @@ export class CreateTaxDocumentDto {
   @IsEnum(BalanceRole)
   balanceRole?: BalanceRole;
   @IsUUID() storedFileId!: string;
+  @ValidateIf(
+    (value: CreateTaxDocumentDto) =>
+      value.documentType === TaxDocumentType.BALANCE &&
+      value.balanceRole === BalanceRole.CLOSING,
+  )
+  @IsString()
+  cutoffDate?: string;
 }
 
 export class ProcessTaxDocumentDto {
