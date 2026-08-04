@@ -5,11 +5,16 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  ValidateIf,
   Length,
   Max,
   Min,
 } from "class-validator";
-import { TaxDocumentType, TaxPeriodStatus } from "../enums/accounting.enums";
+import {
+  BalanceRole,
+  TaxDocumentType,
+  TaxPeriodStatus,
+} from "../enums/accounting.enums";
 
 export class CreateTaxPeriodDto {
   @IsInt() @Min(1900) @Max(2200) commercialYear!: number;
@@ -29,6 +34,13 @@ export class UpdateTaxPeriodDto {
 
 export class CreateTaxDocumentDto {
   @IsEnum(TaxDocumentType) documentType!: TaxDocumentType;
+  @ValidateIf(
+    (value: CreateTaxDocumentDto) =>
+      value.documentType === TaxDocumentType.BALANCE ||
+      value.balanceRole !== undefined,
+  )
+  @IsEnum(BalanceRole)
+  balanceRole?: BalanceRole;
   @IsUUID() storedFileId!: string;
 }
 
@@ -38,6 +50,10 @@ export class ProcessTaxDocumentDto {
 
 export class DiscardTaxDocumentDto {
   @IsString() @Length(3, 1000) reason!: string;
+}
+
+export class ClassifyHistoricalBalanceDto {
+  @IsEnum(BalanceRole) balanceRole!: BalanceRole;
 }
 
 export class ListTaxDocumentsQueryDto {

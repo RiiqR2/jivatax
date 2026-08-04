@@ -71,22 +71,23 @@ test("explorer uses one compact reconciliation panel without mapping UI", () => 
 test("balance table exposes every accounting column with horizontal scrolling", () => {
   for (const column of [
     "Código",
-    "Cuenta",
-    "Débitos Balance",
-    "Créditos Balance",
+    "Nombre",
+    "Débitos",
+    "Créditos",
     "Saldo deudor",
     "Saldo acreedor",
-    "Débitos Mayor",
-    "Créditos Mayor",
-    "Diferencia",
+    "Debe",
+    "Haber",
+    "Diferencia debe",
+    "Diferencia haber",
     "Movimientos",
     "Último movimiento",
     "Estado",
-    "Acción",
   ])
     assert.match(source, new RegExp(`"${column}"`));
   assert.match(source, /overflow-x-auto/);
-  assert.match(source, /min-w-\[1500px\]/);
+  assert.match(source, /min-w-\[1700px\]/);
+  assert.match(source, /colSpan=\{4\}/);
   assert.doesNotMatch(
     balanceSource,
     /overflow-hidden rounded-xl border bg-white/,
@@ -94,14 +95,21 @@ test("balance table exposes every accounting column with horizontal scrolling", 
 });
 
 test("rows preserve accessible investigation and explicit reconciliation labels", () => {
-  for (const label of [
-    "Conciliada",
-    "Sin movimientos",
-    "No disponible",
-    "Ver movimientos",
-  ])
+  for (const label of ["Conciliado", "Sin movimientos", "No disponible"])
     assert.match(source, new RegExp(label));
   assert.match(source, /role="link"/);
   assert.match(source, /onKeyDown/);
-  assert.match(source, /stopPropagation/);
+  assert.match(source, /e\.key === " "/);
+  assert.doesNotMatch(source, />\s*Ver movimientos/);
+  assert.match(source, /formatAccountingDate/);
+});
+
+test("opening detail is lazy, filterable, and the header uses only explicit sources", () => {
+  assert.match(source, /enabled: openingDetailOpen/);
+  assert.match(source, /accountingService\.openingControl/);
+  assert.match(source, /setOpeningStatus/);
+  assert.match(source, /Revisar diferencias/);
+  assert.match(source, /openingBalanceDocument/);
+  assert.match(source, /closingBalanceDocument/);
+  assert.doesNotMatch(source, /sources\.balanceDocument/);
 });

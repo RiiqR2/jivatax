@@ -5,11 +5,13 @@ import type {
   TaxDocumentType,
   TaxPeriod,
   AccountMappingsResponse,
+  BalanceRole,
 } from "@/types/accounting.types";
 import type {
   BalanceResponse,
   LedgerResponse,
 } from "@/types/accounting-explorer.types";
+import { buildCreateDocumentPayload } from "@/lib/accounting-document-upload";
 
 export const accountingService = {
   async explorerBalance(
@@ -36,6 +38,23 @@ export const accountingService = {
         { params },
       )
     ).data;
+  },
+  async openingControl(
+    companyId: string,
+    periodId: string,
+    params: Record<string, string | number>,
+  ) {
+    return (
+      await api.get(
+        `/companies/${companyId}/tax-periods/${periodId}/accounting-explorer/opening-control`,
+        { params },
+      )
+    ).data as {
+      items: Array<Record<string, string | null>>;
+      page: number;
+      pageSize: number;
+      total: number;
+    };
   },
   async periods(companyId: string): Promise<TaxPeriod[]> {
     const response = await api.get<TaxPeriod[]>(
@@ -86,11 +105,13 @@ export const accountingService = {
     periodId: string,
     documentType: TaxDocumentType,
     storedFileId: string,
+    balanceRole?: BalanceRole,
   ): Promise<TaxDocument> {
-    const payload = {
+    const payload = buildCreateDocumentPayload(
       documentType,
       storedFileId,
-    };
+      balanceRole,
+    );
     const response = await api.post<TaxDocument>(
       `/companies/${companyId}/tax-periods/${periodId}/documents`,
       payload,

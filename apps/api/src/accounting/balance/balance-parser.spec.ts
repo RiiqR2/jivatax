@@ -7,6 +7,11 @@ import {
   interpretBalanceMoney,
   parseBalanceRows,
 } from "./balance-parser";
+import {
+  DOCUMENT_CONTRACTS,
+  resolveRequiredHeaders,
+} from "../contracts/document-contracts";
+import { TaxDocumentType } from "../enums/accounting.enums";
 
 const columns = {
   accountCode: 0,
@@ -22,6 +27,134 @@ const columns = {
 };
 
 describe("Balance de ocho columnas", () => {
+  it("resuelve las cabeceras reales con guiones bajos, Debe/Haber y tildes", () => {
+    const result = resolveRequiredHeaders(
+      [
+        "codigo_cuenta",
+        "nombre_cuenta",
+        "Debe",
+        "Haber",
+        "Saldo Deudor",
+        "Saldo Acreedor",
+        "Activo",
+        "Pasivo",
+        "Pérdida",
+        "Ganancia",
+      ],
+      DOCUMENT_CONTRACTS[TaxDocumentType.BALANCE],
+    );
+    assert.deepEqual(result.missingFields, []);
+    assert.deepEqual(result.duplicates, []);
+    assert.deepEqual(result.map, columns);
+  });
+
+  it("detecta alias duplicado y columnas obligatorias ausentes", () => {
+    const duplicate = resolveRequiredHeaders(
+      ["codigo_cuenta", "Código de cuenta"],
+      DOCUMENT_CONTRACTS[TaxDocumentType.BALANCE],
+    );
+    assert.deepEqual(duplicate.duplicates, [
+      { field: "accountCode", columns: [0, 1] },
+    ]);
+    assert.ok(duplicate.missingFields.includes("creditBalance"));
+    assert.ok(duplicate.missingFields.includes("gains"));
+  });
+
+  it("separa cuentas y resúmenes, conserva decimales y valida total y rollup", () => {
+    const result = parseBalanceRows(
+      [
+        Object.keys(columns),
+        [
+          "001.01-2",
+          "Caja",
+          "999999999999.1234",
+          0,
+          "999999999999.1234",
+          null,
+          "999999999999.1234",
+          null,
+          null,
+          null,
+        ],
+        [
+          "200",
+          "Capital",
+          0,
+          "999999999999.1234",
+          null,
+          "999999999999.1234",
+          null,
+          null,
+          null,
+          "999999999999.1234",
+        ],
+        [
+          null,
+          "Subtotal",
+          "999999999999.1234",
+          "999999999999.1234",
+          "999999999999.1234",
+          "999999999999.1234",
+          "999999999999.1234",
+          null,
+          null,
+          "999999999999.1234",
+        ],
+        [null, "Ganancia (pérd.) ej.fiscal", 0, 0, 0, 0, 0, 0, 0, 0],
+        [
+          null,
+          "Total empresa",
+          "999999999999.1234",
+          "999999999999.1234",
+          "999999999999.1234",
+          "999999999999.1234",
+          "999999999999.1234",
+          null,
+          null,
+          "999999999999.1234",
+        ],
+      ],
+      0,
+      columns,
+      "Balance",
+    );
+    assert.equal(
+      result.rows.filter((row) => row.rowType === "account").length,
+      2,
+    );
+    assert.equal(result.reportedSummaries.length, 3);
+    assert.equal(result.rows[0].accountCode, "001.01-2");
+    assert.equal(result.systemTotals.debits, "999999999999.1234");
+    assert.equal(result.accountingChecks.reportedTotalMatchesCalculated, true);
+    assert.equal(result.accountingChecks.reportedRollupMatches, true);
+  });
+
+  it("genera warnings por total y rollup informados sin alterar las cuentas", () => {
+    const result = parseBalanceRows(
+      [
+        Object.keys(columns),
+        ["100", "Caja", 10, 10, 0, 0, 0, 0, 0, 0],
+        [null, "Subtotal", 10, 10, 0, 0, 0, 0, 0, 0],
+        [null, "Resultado del ejercicio", 0, 0, 0, 0, 0, 0, 0, 0],
+        [null, "Total empresa", 11, 10, 0, 0, 0, 0, 0, 0],
+      ],
+      0,
+      columns,
+      "Balance",
+    );
+    assert.ok(
+      result.warnings.some((issue) => issue.code === "REPORTED_TOTAL_MISMATCH"),
+    );
+    assert.ok(
+      result.warnings.some(
+        (issue) => issue.code === "REPORTED_SUMMARY_ROLLUP_MISMATCH",
+      ),
+    );
+    assert.equal(
+      result.rows.filter((row) => row.rowType === "account").length,
+      1,
+    );
+  });
   it("distingue una celda vacía de un cero explícito", () => {
     const blank = interpretBalanceMoney(null, 2, "debits");
     const zero = interpretBalanceMoney(0, 2, "debits");
@@ -79,8 +212,8 @@ describe("Balance de ocho columnas", () => {
       [],
     );
     assert.equal(result.rows[1].rowType, BalanceRowType.TOTAL);
-    assert.equal(result.reportedTotals?.debits, 10);
-    assert.equal(result.systemTotals.debits, 10);
+    assert.equal(result.reportedTotals?.debits, "10.0000");
+    assert.equal(result.systemTotals.debits, "10.0000");
   });
 
   it("conserva saldo informado y alerta al compararlo con el calculado", () => {
@@ -96,7 +229,7 @@ describe("Balance de ocho columnas", () => {
     const account = result.rows[0];
 
     assert.equal(account.money.debitBalance.reportedValue, 7);
-    assert.equal(account.calculatedDebitBalance, 8);
+    assert.equal(account.calculatedDebitBalance, "8.0000");
     assert.ok(
       result.warnings.some((issue) => issue.code === "DEBIT_BALANCE_MISMATCH"),
     );
@@ -150,8 +283,8 @@ describe("Balance de ocho columnas", () => {
       ).length,
       3,
     );
-    assert.equal(result.reportedTotals?.debits, 200000);
-    assert.equal(result.systemTotals.debits, 200000);
+    assert.equal(result.reportedTotals?.debits, "200000.0000");
+    assert.equal(result.systemTotals.debits, "200000.0000");
     assert.equal(result.reconciliation.movements.isBalanced, true);
   });
 });

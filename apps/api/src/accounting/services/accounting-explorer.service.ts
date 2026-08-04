@@ -4,6 +4,7 @@ import { DataSource } from "typeorm";
 import {
   BalanceExplorerQueryDto,
   GeneralLedgerQueryDto,
+  OpeningControlQueryDto,
 } from "../dto/accounting-explorer.dto";
 import { TaxPeriodsService } from "./tax-periods.service";
 
@@ -14,6 +15,7 @@ type ExplorerSource = {
   documentType: "balance" | "general_ledger";
   versionNumber: number;
   processedAt: string | null;
+  balanceRole: "opening" | "closing" | null;
 };
 export const RECONCILIATION_TOLERANCE = "0.0100";
 export function accumulatedBalance(
@@ -33,7 +35,7 @@ export class AccountingExplorerService {
 
   private async resolveSources(companyId: string, periodId: string) {
     const rows = (await this.db.query(
-      `SELECT d.id, d.document_type documentType, d.version_number versionNumber,
+      `SELECT d.id, d.document_type documentType, d.balance_role balanceRole, d.version_number versionNumber,
         d.processed_at processedAt, c.legal_name companyName, gli.id importId
        FROM tax_documents d
        JOIN companies c ON c.id=d.company_id
@@ -43,7 +45,9 @@ export class AccountingExplorerService {
          AND d.discarded_at IS NULL AND d.document_type IN ('balance','general_ledger')
          AND d.version_number=(SELECT MAX(current.version_number) FROM tax_documents current
            WHERE current.company_id=d.company_id AND current.tax_period_id=d.tax_period_id
-             AND current.document_type=d.document_type AND current.status='processed'
+             AND current.document_type=d.document_type
+             AND (current.balance_role=d.balance_role OR (current.balance_role IS NULL AND d.balance_role IS NULL))
+             AND current.status='processed'
              AND current.discarded_at IS NULL)
        ORDER BY d.document_type, d.version_number DESC`,
       [companyId, periodId],
@@ -57,17 +61,26 @@ export class AccountingExplorerService {
             versionNumber: Number(row.versionNumber),
             processedAt:
               row.processedAt === null ? null : String(row.processedAt),
+            balanceRole: row.balanceRole as ExplorerSource["balanceRole"],
           }
         : null;
+    const bySource = new Map<string, ExplorerSource>();
+    for (const row of rows) {
+      const resolved = toSource(row);
+      if (!resolved) continue;
+      const key =
+        resolved.documentType === "balance"
+          ? `balance:${resolved.balanceRole}`
+          : resolved.importId
+            ? "general_ledger"
+            : "unusable_general_ledger";
+      if (!bySource.has(key)) bySource.set(key, resolved);
+    }
     return {
       companyName: String(rows[0]?.companyName ?? ""),
-      balance: toSource(rows.find((row) => row.documentType === "balance")),
-      generalLedger: toSource(
-        rows.find(
-          (row) =>
-            row.documentType === "general_ledger" && row.importId != null,
-        ),
-      ),
+      openingBalance: bySource.get("balance:opening") ?? null,
+      closingBalance: bySource.get("balance:closing") ?? null,
+      generalLedger: bySource.get("general_ledger") ?? null,
     };
   }
 
@@ -93,10 +106,27 @@ export class AccountingExplorerService {
       companyName: resolved.companyName,
       commercialYear: period.commercialYear,
       taxYear: period.taxYear,
-      balanceDocument: source(resolved.balance),
+      openingBalanceDocument: source(resolved.openingBalance),
+      closingBalanceDocument: source(resolved.closingBalance),
       generalLedgerDocument: source(resolved.generalLedger),
     };
-    if (!resolved.balance) {
+    const openingResult = await this.openingControl(
+      companyId,
+      periodId,
+      period.commercialYear,
+      resolved.openingBalance,
+    );
+    const { items: _openingItems, ...openingControl } = openingResult;
+    const completionStatus = !resolved.openingBalance
+      ? "missing_opening_balance"
+      : !resolved.closingBalance
+        ? "missing_closing_balance"
+        : !resolved.generalLedger
+          ? "missing_general_ledger"
+          : openingControl.warning
+            ? "accounting_review_with_warnings"
+            : "ready_for_accounting_review";
+    if (!resolved.closingBalance) {
       return {
         summary: this.emptySummary(false),
         sources,
@@ -105,6 +135,9 @@ export class AccountingExplorerService {
         pageSize: query.pageSize,
         total: 0,
         balanceAvailable: false,
+        movementReconciliation: this.emptySummary(false),
+        openingControl,
+        completionStatus,
       };
     }
     const where = [
@@ -113,7 +146,7 @@ export class AccountingExplorerService {
       "pa.discarded_at IS NULL",
       "pa.source_document_id = ?",
     ];
-    const params: unknown[] = [companyId, periodId, resolved.balance.id];
+    const params: unknown[] = [companyId, periodId, resolved.closingBalance.id];
     if (query.search) {
       where.push(
         "(pa.account_code_snapshot LIKE ? OR pa.account_name_snapshot LIKE ?)",
@@ -230,12 +263,146 @@ export class AccountingExplorerService {
         };
     return {
       summary,
+      movementReconciliation: summary,
+      openingControl,
+      completionStatus,
       sources,
       items: rows.map(({ total: _, ...row }) => row),
       page: query.page,
       pageSize: query.pageSize,
       total: Number(rows[0]?.total ?? 0),
       balanceAvailable: true,
+    };
+  }
+
+  private async openingControl(
+    companyId: string,
+    periodId: string,
+    commercialYear: number,
+    opening: ExplorerSource | null,
+  ) {
+    const unavailable = (
+      openingAvailable: boolean,
+      previousClosingAvailable = false,
+    ) => ({
+      openingBalanceAvailable: openingAvailable,
+      previousClosingAvailable,
+      matchingAccounts: 0,
+      accountsWithDifferences: 0,
+      onlyInOpening: 0,
+      onlyInPreviousClosing: 0,
+      warning: null,
+      items: [],
+    });
+    if (!opening) return unavailable(false);
+    const previous = (await this.db.query(
+      `SELECT d.id FROM tax_periods p JOIN tax_documents d ON d.tax_period_id=p.id AND d.company_id=p.company_id
+       WHERE p.company_id=? AND p.commercial_year=? AND d.document_type='balance' AND d.balance_role='closing'
+         AND d.status='processed' AND d.discarded_at IS NULL
+       ORDER BY d.version_number DESC LIMIT 1`,
+      [companyId, commercialYear - 1],
+    )) as Row[];
+    if (!previous[0]) return unavailable(true);
+    const rows = (await this.db.query(
+      `WITH compared AS (
+       SELECT COALESCE(o.company_account_id, pc.company_account_id) companyAccountId,
+        COALESCE(o.account_code, pc.account_code) code, o.account_name openingName, pc.account_name previousClosingName,
+        o.reported_debit_balance openingDebitBalance, o.reported_credit_balance openingCreditBalance,
+        pc.reported_debit_balance previousClosingDebitBalance, pc.reported_credit_balance previousClosingCreditBalance
+       FROM (SELECT e.* FROM balance_entries e JOIN balance_imports i ON i.id=e.balance_import_id WHERE i.tax_document_id=? AND e.company_id=? AND e.tax_period_id=?) o
+       LEFT JOIN (SELECT e.* FROM balance_entries e JOIN balance_imports i ON i.id=e.balance_import_id WHERE i.tax_document_id=? AND e.company_id=?) pc
+         ON (o.company_account_id IS NOT NULL AND o.company_account_id=pc.company_account_id) OR ((o.company_account_id IS NULL OR pc.company_account_id IS NULL) AND o.account_code=pc.account_code)
+       UNION ALL
+       SELECT pc.company_account_id, pc.account_code, NULL, pc.account_name, NULL, NULL, pc.reported_debit_balance, pc.reported_credit_balance
+       FROM balance_entries pc JOIN balance_imports i ON i.id=pc.balance_import_id
+       WHERE i.tax_document_id=? AND pc.company_id=? AND NOT EXISTS (SELECT 1 FROM balance_entries o JOIN balance_imports oi ON oi.id=o.balance_import_id WHERE oi.tax_document_id=? AND o.company_id=? AND o.tax_period_id=? AND ((o.company_account_id IS NOT NULL AND o.company_account_id=pc.company_account_id) OR ((o.company_account_id IS NULL OR pc.company_account_id IS NULL) AND o.account_code=pc.account_code))))
+       SELECT compared.*,
+         CASE WHEN openingName IS NULL THEN 'only_in_previous_closing'
+              WHEN previousClosingName IS NULL THEN 'only_in_opening'
+              WHEN ABS(COALESCE(openingDebitBalance,0)-COALESCE(previousClosingDebitBalance,0))<=${RECONCILIATION_TOLERANCE}
+               AND ABS(COALESCE(openingCreditBalance,0)-COALESCE(previousClosingCreditBalance,0))<=${RECONCILIATION_TOLERANCE}
+              THEN 'matching' ELSE 'difference' END status,
+         CASE WHEN openingName IS NULL OR previousClosingName IS NULL THEN NULL ELSE CAST(COALESCE(openingDebitBalance,0)-COALESCE(previousClosingDebitBalance,0) AS DECIMAL(24,4)) END debitDifference,
+         CASE WHEN openingName IS NULL OR previousClosingName IS NULL THEN NULL ELSE CAST(COALESCE(openingCreditBalance,0)-COALESCE(previousClosingCreditBalance,0) AS DECIMAL(24,4)) END creditDifference
+       FROM compared`,
+      [
+        opening.id,
+        companyId,
+        periodId,
+        previous[0].id,
+        companyId,
+        previous[0].id,
+        companyId,
+        opening.id,
+        companyId,
+        periodId,
+      ],
+    )) as Row[];
+    const items = rows;
+    const count = (status: string) =>
+      items.filter((item) => item.status === status).length;
+    const differing =
+      count("difference") +
+      count("only_in_opening") +
+      count("only_in_previous_closing");
+    return {
+      openingBalanceAvailable: true,
+      previousClosingAvailable: true,
+      matchingAccounts: count("matching"),
+      accountsWithDifferences: count("difference"),
+      onlyInOpening: count("only_in_opening"),
+      onlyInPreviousClosing: count("only_in_previous_closing"),
+      warning: differing
+        ? "El Balance inicial informado difiere del Balance final almacenado del período anterior. Revise las diferencias. JivaTax no modificará automáticamente la información proporcionada."
+        : null,
+      items,
+    };
+  }
+
+  async openingControlDetail(
+    companyId: string,
+    periodId: string,
+    query: OpeningControlQueryDto,
+  ) {
+    const period = (await this.periods.get(companyId, periodId)) as unknown as {
+      commercialYear: number;
+    };
+    const sources = await this.resolveSources(companyId, periodId);
+    const result = await this.openingControl(
+      companyId,
+      periodId,
+      period.commercialYear,
+      sources.openingBalance,
+    );
+    let items = result.items;
+    if (query.search) {
+      const search = query.search.toLocaleLowerCase("es-CL");
+      items = items.filter((item) =>
+        [item.code, item.openingName, item.previousClosingName].some((value) =>
+          String(value ?? "")
+            .toLocaleLowerCase("es-CL")
+            .includes(search),
+        ),
+      );
+    }
+    if (query.status)
+      items = items.filter((item) => item.status === query.status);
+    const compare = (left: Row, right: Row) =>
+      String(left[query.sort] ?? "").localeCompare(
+        String(right[query.sort] ?? ""),
+        "es-CL",
+        { numeric: true },
+      );
+    items.sort((left, right) =>
+      query.direction === "asc" ? compare(left, right) : compare(right, left),
+    );
+    const total = items.length;
+    const offset = (query.page - 1) * query.pageSize;
+    return {
+      items: items.slice(offset, offset + query.pageSize),
+      page: query.page,
+      pageSize: query.pageSize,
+      total,
     };
   }
 

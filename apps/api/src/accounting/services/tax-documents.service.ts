@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   BadRequestException,
+  HttpException,
   Inject,
   Injectable,
   Logger,
@@ -8,7 +9,13 @@ import {
 } from "@nestjs/common";
 import { InjectDataSource, InjectRepository } from "@nestjs/typeorm";
 import * as XLSX from "xlsx";
-import { DataSource, EntityManager, LessThan, Repository } from "typeorm";
+import {
+  DataSource,
+  EntityManager,
+  IsNull,
+  LessThan,
+  Repository,
+} from "typeorm";
 import { StoredFileEntity } from "../../files/entities/stored-file.entity";
 import {
   OBJECT_STORAGE,
@@ -16,7 +23,7 @@ import {
 } from "../../files/storage/object-storage.service";
 import {
   DOCUMENT_CONTRACTS,
-  normalizeHeader,
+  resolveRequiredHeaders,
 } from "../contracts/document-contracts";
 import { CreateTaxDocumentDto } from "../dto/accounting.dto";
 import { TaxDocumentEntity } from "../entities/tax-document.entity";
@@ -24,12 +31,18 @@ import {
   CompanyAccountSuggestionEntity,
   CompanyAccountSuggestionStatus,
 } from "../entities/company-account-suggestion.entity";
-import { TaxDocumentStatus, TaxDocumentType } from "../enums/accounting.enums";
+import {
+  BalanceRole,
+  TaxDocumentStatus,
+  TaxDocumentType,
+} from "../enums/accounting.enums";
 import {
   BALANCE_MONETARY_FIELDS,
   BalanceParsedRow,
   BalanceRowType,
+  normalizeSummaryLabel,
   parseBalanceRows,
+  reportedSummaryType,
 } from "../balance/balance-parser";
 import { TaxPeriodsService } from "./tax-periods.service";
 import { TaxPeriodEntity } from "../entities/tax-period.entity";
@@ -50,7 +63,7 @@ type ImportReport = {
   ignoredRows: number;
   errors: Issue[];
   warnings: Issue[];
-  totals: { debit: number; credit: number };
+  totals: { debit: number | string; credit: number | string };
   reconciliation: Record<string, unknown>;
   detectedSheet: string;
   headerRowNumber: number;
@@ -63,9 +76,13 @@ type ImportReport = {
   unknownRows?: number;
   validAccountRows?: number;
   invalidAccountRows?: number;
-  reportedTotals?: Record<string, number | null> | null;
-  systemTotals?: Record<string, number>;
+  reportedTotals?: Record<string, string | null> | null;
+  systemTotals?: Record<string, string>;
   comparisons?: unknown[];
+  reportedSummaries?: unknown[];
+  calculatedTotals?: Record<string, string>;
+  totalDifferences?: Record<string, string | null>;
+  accountingChecks?: Record<string, boolean | null>;
   parserVersion?: string;
   voucherCount?: number;
   balancedVoucherCount?: number;
@@ -139,6 +156,12 @@ export class TaxDocumentsService {
     dto: CreateTaxDocumentDto,
   ): Promise<TaxDocumentEntity> {
     await this.periods.get(companyId, periodId);
+    if (dto.documentType === TaxDocumentType.BALANCE && !dto.balanceRole)
+      throw new BadRequestException("El rol del Balance es obligatorio.");
+    if (dto.documentType !== TaxDocumentType.BALANCE && dto.balanceRole)
+      throw new BadRequestException(
+        "El rol solo corresponde a documentos Balance.",
+      );
     const file = await this.files.findOneBy({
       id: dto.storedFileId,
       companyId,
@@ -152,6 +175,10 @@ export class TaxDocumentsService {
         companyId,
         taxPeriodId: periodId,
         documentType: dto.documentType,
+        balanceRole:
+          dto.documentType === TaxDocumentType.BALANCE
+            ? dto.balanceRole
+            : IsNull(),
       },
       order: { versionNumber: "DESC" },
     });
@@ -161,6 +188,7 @@ export class TaxDocumentsService {
         taxPeriodId: periodId,
         storedFileId: file.id,
         documentType: dto.documentType,
+        balanceRole: dto.balanceRole ?? null,
         versionNumber: (latest?.versionNumber ?? 0) + 1,
         uploadedByUserId: userId,
         uploadedAt: new Date(),
@@ -177,8 +205,10 @@ export class TaxDocumentsService {
   ): Promise<Record<string, unknown>> {
     const started = Date.now();
     const document = await this.get(companyId, periodId, id);
-    document.status = TaxDocumentStatus.PROCESSING;
-    await this.documents.save(document);
+    await this.documents.update(
+      { id: document.id, companyId, taxPeriodId: periodId },
+      { status: TaxDocumentStatus.PROCESSING, errorSummary: null },
+    );
     this.logger.log(
       JSON.stringify({
         event: "accounting_processing_started",
@@ -227,10 +257,19 @@ export class TaxDocumentsService {
       );
       return parsed.report;
     } catch (error) {
-      document.status = TaxDocumentStatus.PROCESSING_ERROR;
-      document.errorSummary =
-        error instanceof Error ? error.message : "Error de procesamiento";
-      await this.documents.save(document);
+      console.log(error);
+      const errorSummary =
+        error instanceof HttpException
+          ? typeof error.getResponse() === "string"
+            ? String(error.getResponse())
+            : JSON.stringify(error.getResponse())
+          : error instanceof Error
+            ? error.message
+            : "Error de procesamiento";
+      await this.documents.update(
+        { id: document.id, companyId, taxPeriodId: periodId },
+        { status: TaxDocumentStatus.PROCESSING_ERROR, errorSummary },
+      );
       this.logger.error(
         JSON.stringify({
           event: "accounting_processing_rollback",
@@ -259,6 +298,9 @@ export class TaxDocumentsService {
       companyId: document.companyId,
       taxPeriodId: document.taxPeriodId,
       documentType: document.documentType,
+      balanceRole: document.balanceRole,
+      balanceRoleClassifiedAt: document.balanceRoleClassifiedAt,
+      balanceRoleClassifiedByUserId: document.balanceRoleClassifiedByUserId,
       status: document.status,
       versionNumber: document.versionNumber,
       replacesDocumentId: document.replacesDocumentId,
@@ -307,24 +349,41 @@ export class TaxDocumentsService {
         { header: 1, raw: true, defval: null },
       );
       for (let row = 0; row < Math.min(matrix.length, 25); row += 1) {
-        const normalized = matrix[row].map(normalizeHeader);
-        const map: Record<string, number> = {};
-        for (const [field, aliases] of Object.entries(contract.required)) {
-          const index = normalized.findIndex((header) =>
-            aliases.map(normalizeHeader).includes(header),
-          );
-          if (index >= 0) map[field] = index;
-        }
-        if (Object.keys(map).length === Object.keys(contract.required).length)
+        const resolved = resolveRequiredHeaders(matrix[row], contract);
+        if (resolved.duplicates.length > 0)
+          throw new BadRequestException({
+            code: "DUPLICATE_CANONICAL_HEADER",
+            message: "Dos o más columnas corresponden al mismo campo canónico.",
+            duplicates: resolved.duplicates,
+          });
+        const map = resolved.map;
+        if (resolved.missingFields.length === 0)
           candidates.push({ sheet, row, map, matrix });
       }
     }
-    if (candidates.length !== 1)
-      throw new BadRequestException(
-        candidates.length > 1
-          ? "MULTIPLE_SHEETS: selecciona una hoja candidata."
-          : "UNSUPPORTED_HEADER: faltan columnas requeridas.",
-      );
+    if (candidates.length !== 1) {
+      if (candidates.length > 1)
+        throw new BadRequestException(
+          "MULTIPLE_SHEETS: selecciona una hoja candidata.",
+        );
+      const diagnostics = workbook.SheetNames.flatMap((sheet) => {
+        const matrix = XLSX.utils.sheet_to_json<unknown[]>(
+          workbook.Sheets[sheet],
+          { header: 1, raw: true, defval: null },
+        );
+        return matrix
+          .slice(0, 25)
+          .map((headers) => resolveRequiredHeaders(headers, contract));
+      });
+      const closest = diagnostics.sort(
+        (left, right) => left.missingFields.length - right.missingFields.length,
+      )[0];
+      throw new BadRequestException({
+        code: "UNSUPPORTED_HEADER",
+        message: "Faltan columnas requeridas.",
+        missingFields: closest?.missingFields ?? Object.keys(contract.required),
+      });
+    }
     const candidate = candidates[0];
     if (type === TaxDocumentType.BALANCE) {
       const parsed = parseBalanceRows(
@@ -346,6 +405,7 @@ export class TaxDocumentsService {
           BalanceRowType.SUBTOTAL,
           BalanceRowType.RESULT,
           BalanceRowType.TOTAL,
+          BalanceRowType.REPORTED_SUMMARY,
         ].includes(row.rowType),
       ).length;
       return {
@@ -376,6 +436,10 @@ export class TaxDocumentsService {
           systemTotals: parsed.systemTotals,
           reportedTotals: parsed.reportedTotals,
           comparisons: parsed.comparisons,
+          reportedSummaries: parsed.reportedSummaries,
+          calculatedTotals: parsed.calculatedTotals,
+          totalDifferences: parsed.totalDifferences,
+          accountingChecks: parsed.accountingChecks,
           reconciliation: parsed.reconciliation,
           parserVersion: "balance-v2-source-preserving",
           detectedSheet: candidate.sheet,
@@ -478,6 +542,7 @@ export class TaxDocumentsService {
        FROM ${sourceTable} e JOIN ${importTable} i ON i.id = e.${importForeignKey}
        JOIN tax_documents d ON d.id = i.tax_document_id
        WHERE e.company_id = ? AND e.tax_period_id = ? AND d.status = 'processed'
+         AND (d.document_type <> 'balance' OR d.balance_role = 'closing')
        GROUP BY e.account_code`,
       [document.companyId, document.taxPeriodId],
     )) as Array<{ account_code: string; debit: string; credit: string }>;
@@ -654,6 +719,7 @@ export class TaxDocumentsService {
           companyId: document.companyId,
           taxPeriodId: document.taxPeriodId,
           documentType: document.documentType,
+          balanceRole: document.balanceRole ?? IsNull(),
           status: TaxDocumentStatus.PROCESSED,
           versionNumber: LessThan(document.versionNumber),
         },
@@ -789,19 +855,27 @@ export class TaxDocumentsService {
           BalanceRowType.SUBTOTAL,
           BalanceRowType.RESULT,
           BalanceRowType.TOTAL,
+          BalanceRowType.REPORTED_SUMMARY,
         ].includes(row.rowType)
       ) {
         await manager.query(
-          "INSERT INTO balance_reported_summaries (id, balance_import_id, source_row_id, summary_type, label, reported_debits, reported_credits, reported_debit_balance, reported_credit_balance, reported_assets, reported_liabilities, reported_losses, reported_gains, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6))",
+          "INSERT INTO balance_reported_summaries (id, balance_import_id, source_row_id, company_id, tax_period_id, tax_document_id, balance_role, source_row_number, summary_type, label, normalized_label, reported_debits, reported_credits, reported_debit_balance, reported_credit_balance, reported_assets, reported_liabilities, reported_losses, reported_gains, raw_data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6))",
           [
             randomUUID(),
             importId,
             sourceRowId,
-            row.rowType,
+            document.companyId,
+            document.taxPeriodId,
+            document.id,
+            document.balanceRole,
+            row.sourceRowNumber,
+            reportedSummaryType(row),
             row.accountName ?? "",
+            normalizeSummaryLabel(row.accountName),
             ...BALANCE_MONETARY_FIELDS.map(
-              (field) => row.money[field].reportedValue,
+              (field) => row.money[field].reportedDecimal,
             ),
+            JSON.stringify(row.rawData),
           ],
         );
       }
@@ -812,38 +886,16 @@ export class TaxDocumentsService {
       )
         continue;
       const entryId = randomUUID();
-      await manager.query(
-        "INSERT INTO balance_entries (id, balance_import_id, company_id, tax_period_id, source_row_id, account_code, account_name, reported_debits, reported_credits, reported_debit_balance, reported_credit_balance, reported_assets, reported_liabilities, reported_losses, reported_gains, effective_debits, effective_credits, effective_debit_balance, effective_credit_balance, effective_assets, effective_liabilities, effective_losses, effective_gains, calculated_debit_balance, calculated_credit_balance, debits_was_blank, credits_was_blank, debit_balance_was_blank, credit_balance_was_blank, assets_was_blank, liabilities_was_blank, losses_was_blank, gains_was_blank, source_row_number, raw_data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6))",
-        [
-          entryId,
-          importId,
-          document.companyId,
-          document.taxPeriodId,
-          sourceRowId,
-          row.accountCode,
-          row.accountName,
-          ...BALANCE_MONETARY_FIELDS.map(
-            (field) => row.money[field].reportedValue,
-          ),
-          ...BALANCE_MONETARY_FIELDS.map(
-            (field) => row.money[field].effectiveValue,
-          ),
-          row.calculatedDebitBalance,
-          row.calculatedCreditBalance,
-          ...BALANCE_MONETARY_FIELDS.map((field) => row.money[field].wasBlank),
-          row.sourceRowNumber,
-          JSON.stringify(row.rawData),
-        ],
-      );
-      if (!operational) continue;
-      const existing = (
-        await manager.query(
-          "SELECT id, name FROM company_accounts WHERE company_id = ? AND internal_code = ? AND deleted_at IS NULL LIMIT 1",
-          [document.companyId, row.accountCode],
-        )
-      )[0];
-      let accountId = existing?.id;
-      if (!accountId) {
+      const existing = operational
+        ? (
+            await manager.query(
+              "SELECT id, name FROM company_accounts WHERE company_id = ? AND internal_code = ? AND deleted_at IS NULL LIMIT 1",
+              [document.companyId, row.accountCode],
+            )
+          )[0]
+        : null;
+      let accountId = existing?.id ?? null;
+      if (operational && !accountId) {
         accountId = randomUUID();
         await manager.query(
           "INSERT INTO company_accounts (id, company_id, internal_code, name, status, sort_order, source_row_number, first_seen_tax_period_id, last_seen_tax_period_id, first_seen_at, last_seen_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', 0, ?, ?, ?, NOW(6), NOW(6), NOW(6), NOW(6))",
@@ -861,7 +913,33 @@ export class TaxDocumentsService {
           "INSERT INTO company_account_mappings (id, company_account_id, status, mapping_method, created_at, updated_at) VALUES (?, ?, 'pending', 'automatic', NOW(6), NOW(6))",
           [randomUUID(), accountId],
         );
-      } else {
+      }
+      await manager.query(
+        "INSERT INTO balance_entries (id, balance_import_id, company_id, tax_period_id, company_account_id, source_row_id, account_code, account_name, reported_debits, reported_credits, reported_debit_balance, reported_credit_balance, reported_assets, reported_liabilities, reported_losses, reported_gains, effective_debits, effective_credits, effective_debit_balance, effective_credit_balance, effective_assets, effective_liabilities, effective_losses, effective_gains, calculated_debit_balance, calculated_credit_balance, debits_was_blank, credits_was_blank, debit_balance_was_blank, credit_balance_was_blank, assets_was_blank, liabilities_was_blank, losses_was_blank, gains_was_blank, source_row_number, raw_data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6))",
+        [
+          entryId,
+          importId,
+          document.companyId,
+          document.taxPeriodId,
+          accountId,
+          sourceRowId,
+          row.accountCode,
+          row.accountName,
+          ...BALANCE_MONETARY_FIELDS.map(
+            (field) => row.money[field].reportedDecimal,
+          ),
+          ...BALANCE_MONETARY_FIELDS.map(
+            (field) => row.money[field].effectiveDecimal,
+          ),
+          row.calculatedDebitBalance,
+          row.calculatedCreditBalance,
+          ...BALANCE_MONETARY_FIELDS.map((field) => row.money[field].wasBlank),
+          row.sourceRowNumber,
+          JSON.stringify(row.rawData),
+        ],
+      );
+      if (!operational) continue;
+      if (existing) {
         await manager.query(
           "UPDATE company_accounts SET last_seen_tax_period_id = ?, last_seen_at = NOW(6), updated_at = NOW(6) WHERE id = ?",
           [document.taxPeriodId, accountId],
@@ -882,8 +960,11 @@ export class TaxDocumentsService {
             },
           });
       }
+      // Opening balances enrich the persistent company account catalogue, but
+      // only the closing balance is published as the period's explorer rows.
+      if (document.balanceRole === BalanceRole.OPENING) continue;
       await manager.query(
-        "INSERT INTO tax_period_company_accounts (id, company_id, tax_period_id, company_account_id, source_document_id, balance_entry_id, account_code_snapshot, account_name_snapshot, debit_amount, credit_amount, debit_balance, credit_balance, asset_amount, liability_amount, loss_amount, gain_amount, first_seen_at, last_seen_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6), NOW(6), NOW(6)) ON DUPLICATE KEY UPDATE source_document_id=VALUES(source_document_id), balance_entry_id=VALUES(balance_entry_id), account_name_snapshot=VALUES(account_name_snapshot), debit_amount=VALUES(debit_amount), credit_amount=VALUES(credit_amount), debit_balance=VALUES(debit_balance), credit_balance=VALUES(credit_balance), asset_amount=VALUES(asset_amount), liability_amount=VALUES(liability_amount), loss_amount=VALUES(loss_amount), gain_amount=VALUES(gain_amount), last_seen_at=NOW(6), updated_at=NOW(6)",
+        "INSERT INTO tax_period_company_accounts (id, company_id, tax_period_id, company_account_id, source_document_id, balance_entry_id, account_code_snapshot, account_name_snapshot, debit_amount, credit_amount, debit_balance, credit_balance, asset_amount, liability_amount, loss_amount, gain_amount, first_seen_at, last_seen_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6), NOW(6), NOW(6)) ON DUPLICATE KEY UPDATE source_document_id=VALUES(source_document_id), balance_entry_id=VALUES(balance_entry_id), account_code_snapshot=VALUES(account_code_snapshot), account_name_snapshot=VALUES(account_name_snapshot), debit_amount=VALUES(debit_amount), credit_amount=VALUES(credit_amount), debit_balance=VALUES(debit_balance), credit_balance=VALUES(credit_balance), asset_amount=VALUES(asset_amount), liability_amount=VALUES(liability_amount), loss_amount=VALUES(loss_amount), gain_amount=VALUES(gain_amount), discarded_at=NULL, discarded_by_document_id=NULL, last_seen_at=NOW(6), updated_at=NOW(6)",
         [
           randomUUID(),
           document.companyId,
@@ -894,11 +975,75 @@ export class TaxDocumentsService {
           row.accountCode,
           row.accountName,
           ...BALANCE_MONETARY_FIELDS.map(
-            (field) => row.money[field].reportedValue,
+            (field) => row.money[field].reportedDecimal,
           ),
         ],
       );
     }
+    if (operational && document.balanceRole === BalanceRole.CLOSING)
+      await manager.query(
+        `UPDATE tax_period_company_accounts
+         SET discarded_at=NOW(6), discarded_by_document_id=?, updated_at=NOW(6)
+         WHERE company_id=? AND tax_period_id=? AND source_document_id<>? AND discarded_at IS NULL`,
+        [document.id, document.companyId, document.taxPeriodId, document.id],
+      );
+  }
+
+  async classifyHistoricalBalance(
+    companyId: string,
+    periodId: string,
+    id: string,
+    userId: string,
+    balanceRole: BalanceRole,
+  ) {
+    await this.periods.get(companyId, periodId);
+    return this.dataSource.transaction(async (manager) => {
+      const document = await manager.findOne(TaxDocumentEntity, {
+        where: { id, companyId, taxPeriodId: periodId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!document || document.documentType !== TaxDocumentType.BALANCE)
+        throw new NotFoundException("Balance histórico no encontrado.");
+      if (document.balanceRole !== null)
+        throw new BadRequestException(
+          "El Balance ya se encuentra clasificado.",
+        );
+      const conflict = await manager.findOne(TaxDocumentEntity, {
+        where: {
+          companyId,
+          taxPeriodId: periodId,
+          documentType: TaxDocumentType.BALANCE,
+          balanceRole,
+          status: TaxDocumentStatus.PROCESSED,
+        },
+      });
+      if (conflict)
+        throw new BadRequestException(
+          "Ya existe una fuente procesada para ese rol en el período.",
+        );
+      const versionConflict = await manager.findOneBy(TaxDocumentEntity, {
+        companyId,
+        taxPeriodId: periodId,
+        documentType: TaxDocumentType.BALANCE,
+        balanceRole,
+        versionNumber: document.versionNumber,
+      });
+      if (versionConflict)
+        throw new BadRequestException(
+          "La clasificación entra en conflicto con una versión existente del rol.",
+        );
+      document.balanceRole = balanceRole;
+      document.balanceRoleClassifiedAt = new Date();
+      document.balanceRoleClassifiedByUserId = userId;
+      const saved = await manager.save(document);
+      if (balanceRole === BalanceRole.OPENING)
+        await manager.query(
+          `UPDATE tax_period_company_accounts SET discarded_at=NOW(6), discarded_by_document_id=?, updated_at=NOW(6)
+           WHERE company_id=? AND tax_period_id=? AND source_document_id=? AND discarded_at IS NULL`,
+          [document.id, companyId, periodId, document.id],
+        );
+      return saved;
+    });
   }
 
   async discard(

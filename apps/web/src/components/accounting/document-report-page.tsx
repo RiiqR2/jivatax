@@ -133,16 +133,30 @@ export function DocumentReportPage({
       {(report.systemTotals || report.reportedTotals) && (
         <div className="mt-5 grid gap-5 lg:grid-cols-2">
           <TotalsSection
-            title="Información entregada"
+            title="Totales informados por la empresa"
             description="Valores declarados por la contabilidad; los vacíos permanecen vacíos."
             totals={report.reportedTotals ?? {}}
           />
           <TotalsSection
-            title="Cálculos de JivaTax"
+            title="Totales recalculados por JivaTax"
             description="Valores interpretados y sumados exclusivamente desde filas de cuentas."
             totals={report.systemTotals ?? {}}
           />
         </div>
+      )}
+      {report.totalDifferences && (
+        <section className="mt-5 rounded-xl border bg-white p-5">
+          <TotalsSection
+            title="Diferencia"
+            description="Diferencia entre los totales informados y el detalle recalculado."
+            totals={report.totalDifferences}
+          />
+          <p className="mt-3 text-sm font-medium text-slate-700">
+            {report.accountingChecks?.reportedTotalMatchesCalculated
+              ? "Los totales informados coinciden con el detalle recalculado."
+              : "Se detectaron diferencias entre los totales informados y el detalle de cuentas. JivaTax no modificará los valores entregados por la empresa."}
+          </p>
+        </section>
       )}
       {(report.comparisons?.length ?? 0) > 0 && (
         <section className="mt-5 rounded-xl border bg-white p-5">
@@ -459,10 +473,13 @@ function Metric({ label, value }: { label: string; value: unknown }) {
   );
 }
 
-function formatAmount(value: number): string {
-  return new Intl.NumberFormat("es-CL", { maximumFractionDigits: 4 }).format(
-    value,
-  );
+function formatAmount(value: number | string): string {
+  const text = String(value);
+  const negative = text.startsWith("-");
+  const [integer, fraction = ""] = (negative ? text.slice(1) : text).split(".");
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const decimals = fraction.replace(/0+$/, "");
+  return `${negative ? "-" : ""}${grouped}${decimals ? `,${decimals}` : ""}`;
 }
 
 function TotalsSection({
@@ -472,10 +489,10 @@ function TotalsSection({
 }: {
   title: string;
   description: string;
-  totals: Record<string, number | null>;
+  totals: Record<string, string | null>;
 }) {
   return (
-    <section className="rounded-xl border bg-white p-5">
+    <div className="rounded-xl border bg-white p-5">
       <h2 className="font-semibold">{title}</h2>
       <p className="mt-1 text-sm text-slate-600">{description}</p>
       <dl className="mt-4 grid grid-cols-2 gap-4">
@@ -483,11 +500,11 @@ function TotalsSection({
           <Metric
             key={field}
             label={fieldLabel(field)}
-            value={value === null ? "Vacío en archivo" : value}
+            value={value === null ? "Vacío en archivo" : formatAmount(value)}
           />
         ))}
       </dl>
-    </section>
+    </div>
   );
 }
 function Filter({

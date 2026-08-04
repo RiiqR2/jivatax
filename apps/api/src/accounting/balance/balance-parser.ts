@@ -8,6 +8,7 @@ export enum BalanceRowType {
   NOTE = "note",
   EMPTY = "empty",
   UNKNOWN = "unknown",
+  REPORTED_SUMMARY = "reported_summary",
 }
 
 export const BALANCE_MONETARY_FIELDS = [
@@ -29,12 +30,18 @@ export type BalanceIssue = {
   code: string;
   message: string;
   rawValue: unknown;
+  severity?: "error" | "warning";
+  reportedValue?: string | null;
+  calculatedValue?: string;
+  difference?: string | null;
 };
 
 export type InterpretedMoney = {
   reportedValue: number | null;
   effectiveValue: number;
   wasBlank: boolean;
+  reportedDecimal: string | null;
+  effectiveDecimal: string;
   error?: BalanceIssue;
   warning?: BalanceIssue;
 };
@@ -47,30 +54,79 @@ export type BalanceParsedRow = {
   accountName: string | null;
   rawData: unknown[];
   money: Record<BalanceMonetaryField, InterpretedMoney>;
-  calculatedDebitBalance: number | null;
-  calculatedCreditBalance: number | null;
+  calculatedDebitBalance: string | null;
+  calculatedCreditBalance: string | null;
 };
 
-export type BalanceTotals = Record<BalanceMonetaryField, number>;
+export type BalanceTotals = Record<BalanceMonetaryField, string>;
 
 export type BalanceComparison = {
   field: BalanceMonetaryField;
-  reported: number | null;
-  calculated: number;
-  difference: number | null;
+  reported: string | null;
+  calculated: string;
+  difference: string | null;
   status: "matched" | "mismatched" | "not_reported";
 };
 
+export type ReportedSummaryType =
+  "subtotal" | "period_result" | "company_total" | "other";
+
+export function reportedSummaryType(
+  row: BalanceParsedRow,
+): ReportedSummaryType {
+  if (row.rowType === BalanceRowType.SUBTOTAL) return "subtotal";
+  if (row.rowType === BalanceRowType.RESULT) return "period_result";
+  if (row.rowType === BalanceRowType.TOTAL) return "company_total";
+  return "other";
+}
+
+export function normalizeSummaryLabel(value: unknown): string {
+  return normalizeHeader(value)
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+export const BALANCE_TOLERANCE = "0.0100";
+const SCALE = 10_000n;
 const emptyTotals = (): BalanceTotals => ({
-  debits: 0,
-  credits: 0,
-  debitBalance: 0,
-  creditBalance: 0,
-  assets: 0,
-  liabilities: 0,
-  losses: 0,
-  gains: 0,
+  debits: "0.0000",
+  credits: "0.0000",
+  debitBalance: "0.0000",
+  creditBalance: "0.0000",
+  assets: "0.0000",
+  liabilities: "0.0000",
+  losses: "0.0000",
+  gains: "0.0000",
 });
+
+function decimalToScaled(value: string): bigint {
+  const negative = value.startsWith("-");
+  const unsigned = negative ? value.slice(1) : value;
+  const [integer, fraction = ""] = unsigned.split(".");
+  const scaled =
+    BigInt(integer || "0") * SCALE + BigInt(fraction.padEnd(4, "0"));
+  return negative ? -scaled : scaled;
+}
+
+function scaledToDecimal(value: bigint): string {
+  const negative = value < 0n;
+  const absolute = negative ? -value : value;
+  return `${negative ? "-" : ""}${absolute / SCALE}.${String(absolute % SCALE).padStart(4, "0")}`;
+}
+
+function addDecimal(left: string, right: string): string {
+  return scaledToDecimal(decimalToScaled(left) + decimalToScaled(right));
+}
+
+function subtractDecimal(left: string, right: string): string {
+  return scaledToDecimal(decimalToScaled(left) - decimalToScaled(right));
+}
+
+function exceedsTolerance(value: string, tolerance: string): boolean {
+  const scaled = decimalToScaled(value);
+  const absolute = scaled < 0n ? -scaled : scaled;
+  return absolute > decimalToScaled(tolerance);
+}
 
 function isBlank(value: unknown): boolean {
   return value === null || value === undefined || String(value).trim() === "";
@@ -84,19 +140,25 @@ export function classifyBalanceRow(
   if (relevantCells.every(isBlank)) return BalanceRowType.EMPTY;
   const codePresent = !isBlank(accountCodeRaw);
   const namePresent = !isBlank(accountNameRaw);
-  const comparableName = normalizeHeader(accountNameRaw).toUpperCase();
+  const comparableName = normalizeSummaryLabel(accountNameRaw).toUpperCase();
+  const hasMoney = relevantCells.slice(2).some((value) => !isBlank(value));
 
   if (
     !codePresent &&
-    /RESULTADO DEL EJERCICIO|UTILIDAD DEL EJERCICIO|PERDIDA DEL EJERCICIO/.test(
+    /RESULTADO DEL EJERCICIO|UTILIDAD DEL EJERCICIO|PERDIDA DEL EJERCICIO|GANANCIA PERD(IDA)? (DEL )?(EJERCICIO|EJ FISCAL)|GANANCIA PERD EJ FISCAL/.test(
       comparableName,
     )
   )
     return BalanceRowType.RESULT;
   if (!codePresent && /(^|\s)(SUMA|SUBTOTAL)(\s|$)/.test(comparableName))
     return BalanceRowType.SUBTOTAL;
-  if (!codePresent && /(^|\s)TOTAL(ES)?( GENERAL)?(\s|$)/.test(comparableName))
+  if (
+    !codePresent &&
+    /(^|\s)TOTAL(ES)?( EMPRESA| GENERAL)?(\s|$)/.test(comparableName)
+  )
     return BalanceRowType.TOTAL;
+  if (!codePresent && namePresent && hasMoney)
+    return BalanceRowType.REPORTED_SUMMARY;
   if (codePresent || namePresent) {
     if (codePresent && namePresent) return BalanceRowType.ACCOUNT;
     if (!codePresent && namePresent && relevantCells.slice(2).every(isBlank))
@@ -112,21 +174,24 @@ export function interpretBalanceMoney(
   field: BalanceMonetaryField,
 ): InterpretedMoney {
   if (isBlank(rawValue))
-    return { reportedValue: null, effectiveValue: 0, wasBlank: true };
-
-  let value: number;
-  if (typeof rawValue === "number") value = rawValue;
-  else {
-    const rawText = String(rawValue).trim();
-    const normalized = /^-?\d{1,3}(\.\d{3})+$/.test(rawText)
-      ? rawText.replaceAll(".", "")
-      : rawText;
-    value = Number(normalized);
-  }
-  if (!Number.isFinite(value))
     return {
       reportedValue: null,
       effectiveValue: 0,
+      reportedDecimal: null,
+      effectiveDecimal: "0.0000",
+      wasBlank: true,
+    };
+
+  const rawText = String(rawValue).trim();
+  const normalized = /^-?\d{1,3}(\.\d{3})+$/.test(rawText)
+    ? rawText.replaceAll(".", "")
+    : rawText.replace(",", ".");
+  if (!/^-?\d+(\.\d{1,4})?$/.test(normalized))
+    return {
+      reportedValue: null,
+      effectiveValue: 0,
+      reportedDecimal: null,
+      effectiveDecimal: "0.0000",
       wasBlank: false,
       error: {
         sourceRowNumber,
@@ -136,12 +201,16 @@ export function interpretBalanceMoney(
         rawValue,
       },
     };
+  const decimal = scaledToDecimal(decimalToScaled(normalized));
+  const value = Number(decimal);
   return {
     reportedValue: value,
     effectiveValue: value,
+    reportedDecimal: decimal,
+    effectiveDecimal: decimal,
     wasBlank: false,
     warning:
-      value < 0
+      decimalToScaled(decimal) < 0n
         ? {
             sourceRowNumber,
             field,
@@ -158,7 +227,7 @@ export function parseBalanceRows(
   headerRowIndex: number,
   columnMap: Record<string, number>,
   sheetName: string,
-  tolerance = 0,
+  tolerance = BALANCE_TOLERANCE,
 ) {
   const errors: BalanceIssue[] = [];
   const warnings: BalanceIssue[] = [];
@@ -224,14 +293,36 @@ export function parseBalanceRows(
     }
     if (rowType !== BalanceRowType.ACCOUNT || !accountCode) return;
 
-    row.calculatedDebitBalance = Math.max(
-      money.debits.effectiveValue - money.credits.effectiveValue,
-      0,
+    for (const [left, right, code] of [
+      ["debitBalance", "creditBalance", "BOTH_DEBIT_AND_CREDIT_BALANCE"],
+      ["assets", "liabilities", "BOTH_ASSET_AND_LIABILITY"],
+      ["losses", "gains", "BOTH_LOSS_AND_GAIN"],
+    ] as const)
+      if (
+        decimalToScaled(money[left].effectiveDecimal) > 0n &&
+        decimalToScaled(money[right].effectiveDecimal) > 0n
+      )
+        errors.push({
+          sourceRowNumber,
+          field: `${left},${right}`,
+          code,
+          message: "La fila informa importes positivos incompatibles entre sí.",
+          rawValue: {
+            [left]: money[left].reportedDecimal,
+            [right]: money[right].reportedDecimal,
+          },
+        });
+
+    const movementBalance = subtractDecimal(
+      money.debits.effectiveDecimal,
+      money.credits.effectiveDecimal,
     );
-    row.calculatedCreditBalance = Math.max(
-      money.credits.effectiveValue - money.debits.effectiveValue,
-      0,
-    );
+    row.calculatedDebitBalance =
+      decimalToScaled(movementBalance) > 0n ? movementBalance : "0.0000";
+    row.calculatedCreditBalance =
+      decimalToScaled(movementBalance) < 0n
+        ? scaledToDecimal(-decimalToScaled(movementBalance))
+        : "0.0000";
     compareAccountBalance(
       row,
       "debitBalance",
@@ -241,16 +332,16 @@ export function parseBalanceRows(
     );
 
     const hasBalance =
-      money.debitBalance.effectiveValue > tolerance ||
-      money.creditBalance.effectiveValue > tolerance;
-    const classifiedAmount =
-      money.assets.effectiveValue +
-      money.liabilities.effectiveValue +
-      money.losses.effectiveValue +
-      money.gains.effectiveValue;
-    if (hasBalance && Math.abs(classifiedAmount) <= tolerance) {
+      exceedsTolerance(money.debitBalance.effectiveDecimal, tolerance) ||
+      exceedsTolerance(money.creditBalance.effectiveDecimal, tolerance);
+    const classifiedAmount = BALANCE_MONETARY_FIELDS.slice(4).reduce(
+      (total, field) => addDecimal(total, money[field].effectiveDecimal),
+      "0.0000",
+    );
+    if (hasBalance && !exceedsTolerance(classifiedAmount, tolerance)) {
       const unclassifiedDifference =
-        money.debitBalance.effectiveValue || money.creditBalance.effectiveValue;
+        money.debitBalance.reportedDecimal ??
+        money.creditBalance.reportedDecimal;
       errors.push({
         sourceRowNumber,
         field: "classification",
@@ -298,10 +389,33 @@ export function parseBalanceRows(
   const accountRows = rows.filter(
     (row) => row.rowType === BalanceRowType.ACCOUNT,
   );
+  const summaryRows = rows.filter((row) =>
+    [
+      BalanceRowType.SUBTOTAL,
+      BalanceRowType.RESULT,
+      BalanceRowType.TOTAL,
+      BalanceRowType.REPORTED_SUMMARY,
+    ].includes(row.rowType),
+  );
+  const reportedSummaries = summaryRows.map((row) => ({
+    type: reportedSummaryType(row),
+    label: row.accountName ?? "",
+    normalizedLabel: normalizeSummaryLabel(row.accountName),
+    sourceRowNumber: row.sourceRowNumber,
+    values: Object.fromEntries(
+      BALANCE_MONETARY_FIELDS.map((field) => [
+        field,
+        row.money[field].reportedDecimal,
+      ]),
+    ),
+  }));
   const systemTotals = emptyTotals();
   for (const row of accountRows)
     for (const field of BALANCE_MONETARY_FIELDS)
-      systemTotals[field] += row.money[field].effectiveValue;
+      systemTotals[field] = addDecimal(
+        systemTotals[field],
+        row.money[field].effectiveDecimal,
+      );
   const totalRow = [...rows]
     .reverse()
     .find((row) => row.rowType === BalanceRowType.TOTAL);
@@ -309,22 +423,27 @@ export function parseBalanceRows(
     ? (Object.fromEntries(
         BALANCE_MONETARY_FIELDS.map((field) => [
           field,
-          totalRow.money[field].reportedValue,
+          totalRow.money[field].reportedDecimal,
         ]),
-      ) as Record<BalanceMonetaryField, number | null>)
+      ) as Record<BalanceMonetaryField, string | null>)
     : null;
   const comparisons = reportedTotals
     ? BALANCE_MONETARY_FIELDS.map((field): BalanceComparison => {
         const reported = reportedTotals[field];
         const difference =
-          reported === null ? null : reported - systemTotals[field];
-        if (difference !== null && Math.abs(difference) > tolerance)
+          reported === null
+            ? null
+            : subtractDecimal(reported, systemTotals[field]);
+        if (difference !== null && exceedsTolerance(difference, tolerance))
           warnings.push({
             sourceRowNumber: totalRow?.sourceRowNumber ?? 0,
             field,
             code: "REPORTED_TOTAL_MISMATCH",
-            message:
-              "El total informado difiere del total calculado por JivaTax.",
+            severity: "warning",
+            reportedValue: reported,
+            calculatedValue: systemTotals[field],
+            difference,
+            message: `El total de ${field} informado por la empresa no coincide con la suma calculada desde las cuentas.`,
             rawValue: { reported, calculated: systemTotals[field], difference },
           });
         return {
@@ -335,31 +454,75 @@ export function parseBalanceRows(
           status:
             reported === null
               ? "not_reported"
-              : Math.abs(difference ?? 0) <= tolerance
+              : !exceedsTolerance(difference ?? "0.0000", tolerance)
                 ? "matched"
                 : "mismatched",
         };
       })
     : [];
-  const movementDifference = systemTotals.debits - systemTotals.credits;
-  const equityLeft = systemTotals.assets + systemTotals.losses;
-  const equityRight = systemTotals.liabilities + systemTotals.gains;
-  if (Math.abs(movementDifference) > tolerance)
-    warnings.push({
+  const subtotal = summaryRows.find(
+    (row) => reportedSummaryType(row) === "subtotal",
+  );
+  const periodResult = summaryRows.find(
+    (row) => reportedSummaryType(row) === "period_result",
+  );
+  const companyTotal = summaryRows.find(
+    (row) => reportedSummaryType(row) === "company_total",
+  );
+  let reportedRollupMatches: boolean | null = null;
+  if (subtotal && periodResult && companyTotal) {
+    reportedRollupMatches = true;
+    for (const field of BALANCE_MONETARY_FIELDS) {
+      const subtotalValue = subtotal.money[field].reportedDecimal;
+      const resultValue = periodResult.money[field].reportedDecimal;
+      const totalValue = companyTotal.money[field].reportedDecimal;
+      if (subtotalValue === null || resultValue === null || totalValue === null)
+        continue;
+      const difference = subtractDecimal(
+        addDecimal(subtotalValue, resultValue),
+        totalValue,
+      );
+      if (exceedsTolerance(difference, tolerance)) {
+        reportedRollupMatches = false;
+        warnings.push({
+          sourceRowNumber: companyTotal.sourceRowNumber,
+          field,
+          code: "REPORTED_SUMMARY_ROLLUP_MISMATCH",
+          message:
+            "El subtotal más el resultado informado no coincide con el total empresa.",
+          rawValue: {
+            subtotal: subtotalValue,
+            periodResult: resultValue,
+            companyTotal: totalValue,
+            difference,
+          },
+        });
+      }
+    }
+  }
+  const movementDifference = subtractDecimal(
+    systemTotals.debits,
+    systemTotals.credits,
+  );
+  const equityLeft = addDecimal(systemTotals.assets, systemTotals.losses);
+  const equityRight = addDecimal(systemTotals.liabilities, systemTotals.gains);
+  const equityDifference = subtractDecimal(equityLeft, equityRight);
+  if (exceedsTolerance(movementDifference, tolerance))
+    errors.push({
       sourceRowNumber: 0,
       field: "movements",
-      code: "DEBIT_CREDIT_NOT_BALANCED",
+      code: "BALANCE_DEBIT_CREDIT_MISMATCH",
       message: "Los débitos y créditos calculados no cuadran.",
       rawValue: {
         debitTotal: systemTotals.debits,
         creditTotal: systemTotals.credits,
       },
     });
-  if (Math.abs(equityLeft - equityRight) > tolerance)
+  if (exceedsTolerance(equityDifference, tolerance))
     errors.push({
       sourceRowNumber: 0,
       field: "equity",
-      code: "BALANCE_EQUATION_NOT_BALANCED",
+      code: "BALANCE_EQUITY_EQUATION_MISMATCH",
       message: "La ecuación patrimonial calculada no cuadra.",
       rawValue: {
         assets: systemTotals.assets,
@@ -368,7 +531,7 @@ export function parseBalanceRows(
         gains: systemTotals.gains,
         leftSide: equityLeft,
         rightSide: equityRight,
-        difference: equityLeft - equityRight,
+        difference: equityDifference,
       },
     });
 
@@ -379,18 +542,34 @@ export function parseBalanceRows(
     systemTotals,
     reportedTotals,
     comparisons,
+    reportedSummaries,
+    calculatedTotals: systemTotals,
+    totalDifferences: Object.fromEntries(
+      comparisons.map((comparison) => [
+        comparison.field,
+        comparison.difference,
+      ]),
+    ),
+    accountingChecks: {
+      debitCreditBalanced: !exceedsTolerance(movementDifference, tolerance),
+      equityEquationBalanced: !exceedsTolerance(equityDifference, tolerance),
+      reportedTotalMatchesCalculated: comparisons.every(
+        (comparison) => comparison.status !== "mismatched",
+      ),
+      reportedRollupMatches,
+    },
     reconciliation: {
       movements: {
         debitTotal: systemTotals.debits,
         creditTotal: systemTotals.credits,
         difference: movementDifference,
-        isBalanced: Math.abs(movementDifference) <= tolerance,
+        isBalanced: !exceedsTolerance(movementDifference, tolerance),
       },
       equity: {
         leftSide: equityLeft,
         rightSide: equityRight,
-        difference: equityLeft - equityRight,
-        isBalanced: Math.abs(equityLeft - equityRight) <= tolerance,
+        difference: equityDifference,
+        isBalanced: !exceedsTolerance(equityDifference, tolerance),
       },
     },
   };
@@ -399,12 +578,12 @@ export function parseBalanceRows(
 function compareAccountBalance(
   row: BalanceParsedRow,
   field: "debitBalance" | "creditBalance",
-  calculated: number,
-  tolerance: number,
+  calculated: string,
+  tolerance: string,
   warnings: BalanceIssue[],
 ) {
-  const reported = row.money[field].reportedValue;
-  if (reported === null && calculated > tolerance)
+  const reported = row.money[field].reportedDecimal;
+  if (reported === null && exceedsTolerance(calculated, tolerance))
     warnings.push({
       sourceRowNumber: row.sourceRowNumber,
       field,
@@ -415,7 +594,10 @@ function compareAccountBalance(
       message: "El saldo calculado existe, pero la celda informada está vacía.",
       rawValue: { reported, calculated, difference: null },
     });
-  else if (reported !== null && Math.abs(reported - calculated) > tolerance)
+  else if (
+    reported !== null &&
+    exceedsTolerance(subtractDecimal(reported, calculated), tolerance)
+  )
     warnings.push({
       sourceRowNumber: row.sourceRowNumber,
       field,
@@ -424,7 +606,11 @@ function compareAccountBalance(
           ? "DEBIT_BALANCE_MISMATCH"
           : "CREDIT_BALANCE_MISMATCH",
       message: "El saldo informado difiere del saldo calculado.",
-      rawValue: { reported, calculated, difference: reported - calculated },
+      rawValue: {
+        reported,
+        calculated,
+        difference: subtractDecimal(reported, calculated),
+      },
     });
 }
 

@@ -17,6 +17,8 @@ export const DOCUMENT_CONTRACTS: Record<TaxDocumentType, DocumentContract> = {
         "cod cuenta",
         "nro cuenta",
         "numero cuenta",
+        "id cuenta",
+        "codigo de cuenta",
       ],
       accountName: [
         "nombre cuenta",
@@ -24,20 +26,28 @@ export const DOCUMENT_CONTRACTS: Record<TaxDocumentType, DocumentContract> = {
         "nombre",
         "glosa",
         "descripcion",
+        "glosa cuenta",
       ],
-      debits: ["debitos", "debe movimientos", "movimiento debe", "total debe"],
+      debits: [
+        "debitos",
+        "debe",
+        "debe movimientos",
+        "movimiento debe",
+        "total debe",
+      ],
       credits: [
         "creditos",
+        "haber",
         "haber movimientos",
         "movimiento haber",
         "total haber",
       ],
       debitBalance: ["saldo deudor", "deudor", "saldo debe"],
       creditBalance: ["saldo acreedor", "acreedor", "saldo haber"],
-      assets: ["activo", "inventario activo"],
-      liabilities: ["pasivo", "inventario pasivo"],
-      losses: ["perdidas", "resultado perdida"],
-      gains: ["ganancias", "resultado ganancia"],
+      assets: ["activos", "activo", "inventario activo"],
+      liabilities: ["pasivos", "pasivo", "inventario pasivo"],
+      losses: ["perdida", "perdidas", "resultado perdida"],
+      gains: ["ganancia", "ganancias", "resultado ganancia"],
     },
     optional: [
       "Código padre",
@@ -129,5 +139,27 @@ export function normalizeHeader(value: unknown): string {
     .toLowerCase()
     .trim()
     .replace(/\s+/g, " ")
-    .replace(/_/g, " ");
+    .replace(/[_-]+/g, " ");
+}
+
+export function resolveRequiredHeaders(
+  headers: unknown[],
+  contract: DocumentContract,
+) {
+  const normalized = headers.map(normalizeHeader);
+  const map: Record<string, number> = {};
+  const duplicates: Array<{ field: string; columns: number[] }> = [];
+  const missingFields: string[] = [];
+  for (const [field, aliases] of Object.entries(contract.required)) {
+    const accepted = new Set(aliases.map(normalizeHeader));
+    const columns = normalized.flatMap((header, index) =>
+      accepted.has(header) ? [index] : [],
+    );
+    if (columns.length === 0) missingFields.push(field);
+    else {
+      map[field] = columns[0];
+      if (columns.length > 1) duplicates.push({ field, columns });
+    }
+  }
+  return { map, duplicates, missingFields };
 }

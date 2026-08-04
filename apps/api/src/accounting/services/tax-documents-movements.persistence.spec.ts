@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { TaxDocumentStatus, TaxDocumentType } from "../enums/accounting.enums";
+import {
+  BalanceRole,
+  TaxDocumentStatus,
+  TaxDocumentType,
+} from "../enums/accounting.enums";
 import { TaxDocumentsService } from "./tax-documents.service";
 
 type QueryCall = { sql: string; parameters: unknown[] };
@@ -62,6 +66,109 @@ function report(overrides: Record<string, unknown> = {}) {
 type TestReport = ReturnType<typeof report>;
 
 describe("persistencia normalizada de movimientos", () => {
+  it("publica el cierre completo y luego descarta las cuentas ausentes de la fotografía anterior", async () => {
+    const { service, calls } = serviceHarness();
+    const money = Object.fromEntries(
+      [
+        "debits",
+        "credits",
+        "debitBalance",
+        "creditBalance",
+        "assets",
+        "liabilities",
+        "losses",
+        "gains",
+      ].map((field) => [
+        field,
+        {
+          reportedValue: 0,
+          effectiveValue: 0,
+          reportedDecimal: "0.0000",
+          effectiveDecimal: "0.0000",
+          wasBlank: false,
+        },
+      ]),
+    );
+    await (
+      service as unknown as {
+        persistBalance(
+          manager: unknown,
+          document: Record<string, unknown>,
+          importId: string,
+          rows: Record<string, unknown>[],
+          report: TestReport,
+          operational: boolean,
+        ): Promise<void>;
+      }
+    ).persistBalance(
+      {
+        query: async (sql: string, parameters: unknown[] = []) => {
+          calls.push({ sql, parameters });
+          if (sql.includes("SELECT id, name FROM company_accounts"))
+            return [{ id: "account-id", name: "Caja" }];
+          return [];
+        },
+      },
+      {
+        id: "closing-v2",
+        companyId: "company",
+        taxPeriodId: "period",
+        documentType: TaxDocumentType.BALANCE,
+        balanceRole: BalanceRole.CLOSING,
+      },
+      "import-v2",
+      [
+        {
+          rowType: "account",
+          sourceRowNumber: 2,
+          sheetName: "Datos",
+          accountCode: "1.01",
+          accountName: "Caja",
+          rawData: [],
+          money,
+          calculatedDebitBalance: "0.0000",
+          calculatedCreditBalance: "0.0000",
+        },
+        {
+          rowType: "total",
+          sourceRowNumber: 3,
+          sheetName: "Datos",
+          accountCode: null,
+          accountName: "Total empresa",
+          rawData: [],
+          money,
+          calculatedDebitBalance: null,
+          calculatedCreditBalance: null,
+        },
+      ],
+      report({ detectedColumns: {} }),
+      true,
+    );
+    const discard = calls.findIndex((call) =>
+      call.sql.includes("UPDATE tax_period_company_accounts"),
+    );
+    const publish = calls.findIndex((call) =>
+      call.sql.includes("INSERT INTO tax_period_company_accounts"),
+    );
+    assert.ok(publish >= 0 && discard > publish);
+    assert.match(calls[discard].sql, /discarded_at=NOW/);
+    assert.match(calls[discard].sql, /source_document_id<>\?/);
+    assert.match(calls[publish].sql, /discarded_at=NULL/);
+    assert.match(calls[publish].sql, /discarded_by_document_id=NULL/);
+    assert.equal(
+      calls.some((call) => call.sql.includes("DELETE FROM balance_entries")),
+      false,
+    );
+    const summary = calls.find((call) =>
+      call.sql.includes("INSERT INTO balance_reported_summaries"),
+    );
+    assert.ok(summary);
+    assert.equal(summary.parameters[3], "company");
+    assert.equal(summary.parameters[4], "period");
+    assert.equal(summary.parameters[5], "closing-v2");
+    assert.equal(summary.parameters[6], BalanceRole.CLOSING);
+    assert.equal(summary.parameters[8], "company_total");
+  });
   it("mantiene el primer nombre en company_accounts y conserva el nombre de cada período como snapshot", () => {
     const source = readFileSync(
       join(__dirname, "tax-documents.service.ts"),

@@ -45,6 +45,7 @@ const balanceSource = {
   id: "balance-v2",
   importId: null,
   documentType: "balance",
+  balanceRole: "closing",
   versionNumber: 2,
   processedAt: "2026-01-01",
   companyName: "Empresa",
@@ -174,6 +175,69 @@ test("source resolution chooses only the latest processed, non-discarded documen
   assert.match(calls[0].sql, /d\.discarded_at IS NULL/);
   assert.match(calls[0].sql, /MAX\(current\.version_number\)/);
   assert.match(calls[0].sql, /current\.status='processed'/);
+});
+
+test("opening summary omits detail and detail preserves DECIMAL strings with pagination", async () => {
+  const sourceRows = [
+    { ...balanceSource, id: "opening-v1", balanceRole: "opening" },
+    balanceSource,
+  ];
+  const compared = [
+    {
+      code: "1.01",
+      openingName: "Caja",
+      previousClosingName: "Caja",
+      openingDebitBalance: "9999999999999999.1234",
+      previousClosingDebitBalance: "9999999999999999.1200",
+      openingCreditBalance: "0.0000",
+      previousClosingCreditBalance: "0.0000",
+      debitDifference: "0.0034",
+      creditDifference: "0.0000",
+      status: "matching",
+    },
+    {
+      code: "2.01",
+      openingName: "Banco",
+      previousClosingName: "Banco",
+      openingDebitBalance: "10.0200",
+      previousClosingDebitBalance: "10.0000",
+      openingCreditBalance: "0.0000",
+      previousClosingCreditBalance: "0.0000",
+      debitDifference: "0.0200",
+      creditDifference: "0.0000",
+      status: "difference",
+    },
+  ];
+  const db = {
+    query: async (sql: string) => {
+      if (sql.includes("FROM tax_documents d")) return sourceRows;
+      if (sql.includes("FROM tax_periods p")) return [{ id: "previous" }];
+      if (sql.includes("WITH compared AS")) return compared;
+      if (sql.includes("SELECT explorer.*")) return [];
+      if (sql.includes("COUNT(*) totalAccounts")) return [{}];
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+  const service = new AccountingExplorerService(
+    db as never,
+    {
+      get: async () => ({ commercialYear: 2025, taxYear: 2026 }),
+    } as never,
+  );
+  const summary = await service.balance("company", "period", query);
+  assert.equal("items" in summary.openingControl, false);
+  assert.equal(summary.openingControl.matchingAccounts, 1);
+  assert.equal(summary.openingControl.accountsWithDifferences, 1);
+  const detail = await service.openingControlDetail("company", "period", {
+    page: 1,
+    pageSize: 1,
+    status: "difference",
+    sort: "code",
+    direction: "asc",
+  });
+  assert.equal(detail.total, 1);
+  assert.equal(detail.items[0].debitDifference, "0.0200");
+  assert.equal(typeof detail.items[0].openingDebitBalance, "string");
 });
 
 test("ledger detail reuses the resolved import and keeps the chronological window", async () => {

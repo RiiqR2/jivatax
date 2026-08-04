@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   MAX_ACCOUNTING_FILE_SIZE,
+  buildCreateDocumentPayload,
   processAccountingFile,
   validateAccountingFile,
 } from "../src/lib/accounting-document-upload.ts";
@@ -36,6 +37,27 @@ test("valida extensión, archivo vacío y tamaño", () => {
     validateAccountingFile(makeFile("balance.csv", 10, "text/csv")),
     null,
   );
+});
+
+test("construye el payload explícito por rol y omite balanceRole en libros", () => {
+  assert.deepEqual(buildCreateDocumentPayload("balance", "file", "opening"), {
+    documentType: "balance",
+    storedFileId: "file",
+    balanceRole: "opening",
+  });
+  assert.deepEqual(buildCreateDocumentPayload("balance", "file", "closing"), {
+    documentType: "balance",
+    storedFileId: "file",
+    balanceRole: "closing",
+  });
+  assert.deepEqual(buildCreateDocumentPayload("general_ledger", "file"), {
+    documentType: "general_ledger",
+    storedFileId: "file",
+  });
+  assert.deepEqual(buildCreateDocumentPayload("journal", "file"), {
+    documentType: "journal",
+    storedFileId: "file",
+  });
 });
 
 test("ejecuta signed URL, storage, stored_file, tax_document y procesamiento en orden", async () => {
@@ -170,6 +192,13 @@ test("la UI deja formato cerrado y ofrece dropzone, Procesar e historial primero
   assert.match(source, /aria-expanded=\{formatOpen\}/);
   assert.match(source, /onDrop=/);
   assert.match(source, /Procesar \{contract\.shortName\}/);
+  assert.match(source, /useState<BalanceRole \| null>\(null\)/);
+  assert.match(
+    source,
+    /Selecciona si el archivo corresponde a Balance inicial/,
+  );
+  assert.match(source, /balanceRole === null/);
+  assert.match(source, /Balance pendiente de clasificación/);
   assert.ok(
     source.indexOf("<History") < source.indexOf("aria-expanded={formatOpen}"),
   );
