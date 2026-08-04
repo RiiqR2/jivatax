@@ -8,7 +8,6 @@ import {
   buildBalanceExplorerParams,
   buildLedgerExplorerParams,
   formatAccountingAmount,
-  formatAccountingDate,
   ledgerPath,
   safeBalanceReturnTo,
 } from "@/lib/accounting-explorer";
@@ -67,38 +66,6 @@ const statusClasses = {
   unavailable: "bg-slate-100 text-slate-700",
 };
 
-function AccountingTotals({
-  title,
-  balance,
-  ledger,
-  difference,
-}: {
-  title: string;
-  balance: string;
-  ledger: string | null;
-  difference: string | null;
-}) {
-  return (
-    <div className="text-sm">
-      <p className="font-medium text-slate-800">{title}</p>
-      <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 text-slate-600">
-        <dt>Balance</dt>
-        <dd className="text-right tabular-nums">
-          {formatAccountingAmount(balance)}
-        </dd>
-        <dt>Mayor</dt>
-        <dd className="text-right tabular-nums">
-          {formatAccountingAmount(ledger)}
-        </dd>
-        <dt>Diferencia</dt>
-        <dd className="text-right font-medium tabular-nums">
-          {formatAccountingAmount(difference)}
-        </dd>
-      </dl>
-    </div>
-  );
-}
-
 export function BalanceExplorer({
   companyId,
   taxPeriodId,
@@ -116,7 +83,9 @@ export function BalanceExplorer({
     sort: searchParams.get("sort") ?? "code",
     direction: searchParams.get("direction") ?? "asc",
     page: Number(searchParams.get("page") ?? 1),
+    balanceDocumentId: searchParams.get("balanceDocumentId") ?? undefined,
   }));
+  const [mode, setMode] = useState<"balance" | "reconciliation">("balance");
   const [openingDetailOpen, setOpeningDetailOpen] = useState(false);
   const [openingStatus, setOpeningStatus] = useState("");
   useEffect(() => {
@@ -163,6 +132,17 @@ export function BalanceExplorer({
     enabled: openingDetailOpen,
   });
   const ledgerAvailable = Boolean(data?.sources.generalLedgerDocument);
+  const amount = (label: string, value: string, count?: number) => (
+    <div>
+      <dt className="text-xs text-slate-500">
+        {label}
+        {count === undefined ? "" : ` · ${count} cuentas`}
+      </dt>
+      <dd className="mt-1 font-medium tabular-nums">
+        {formatAccountingAmount(value)}
+      </dd>
+    </div>
+  );
   return (
     <main className="mx-auto max-w-[1600px] p-4 sm:p-6 lg:p-8">
       <nav className="mb-3 text-sm text-slate-500">
@@ -200,54 +180,155 @@ export function BalanceExplorer({
       </header>
       {data?.balanceAvailable && (
         <section
-          aria-label="Estado de conciliación"
+          aria-label="Navegación del explorador"
           className="mt-5 rounded-xl border border-slate-200 bg-white p-4"
         >
-          <h2 className="font-semibold text-slate-950">
-            Conciliación de movimientos del período
-          </h2>
-          <p className="mt-1 text-sm text-slate-600">
-            {data.summary.totalAccounts} cuentas del Balance final
-          </p>
-          {!ledgerAvailable ? (
-            <div className="mt-3" role="status">
-              <p className="font-medium text-slate-800">
-                Libro Mayor no disponible
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              aria-pressed={mode === "balance"}
+              onClick={() => setMode("balance")}
+              className={`rounded-lg px-3 py-2 text-sm font-medium ${mode === "balance" ? "bg-emerald-700 text-white" : "border"}`}
+            >
+              Balance
+            </button>
+            <button
+              type="button"
+              disabled={!ledgerAvailable}
+              aria-pressed={mode === "reconciliation"}
+              onClick={() => setMode("reconciliation")}
+              className="rounded-lg border px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Conciliación con Libro Mayor
+            </button>
+            {!ledgerAvailable && (
+              <p className="text-sm text-slate-600">
+                Carga un Libro Mayor para habilitar la conciliación de
+                movimientos.
               </p>
-              <p className="mt-1 text-sm text-slate-600">
-                La conciliación todavía no puede calcularse.
-              </p>
+            )}
+            {!ledgerAvailable && (
               <Link
-                className="mt-3 inline-flex text-sm font-medium text-emerald-800 underline"
+                className="text-sm font-medium text-emerald-800 underline"
                 href={`/companies/${companyId}/periods/${taxPeriodId}/documents`}
               >
                 Cargar Libro Mayor
               </Link>
+            )}
+          </div>
+        </section>
+      )}
+      {data?.balanceAvailable && mode === "balance" && (
+        <section
+          aria-labelledby="balance-summary-title"
+          className="mt-5 rounded-xl border border-slate-200 bg-white p-4"
+        >
+          <h2
+            id="balance-summary-title"
+            className="font-semibold text-slate-950"
+          >
+            Resumen del Balance
+          </h2>
+          <p className="mt-1 text-sm text-slate-600">
+            {data.summary.totalAccounts} cuentas en la importación seleccionada
+          </p>
+          <div className="mt-4 grid gap-5 lg:grid-cols-4">
+            <div>
+              <h3 className="mb-2 text-sm font-semibold">
+                Movimiento acumulado
+              </h3>
+              <dl className="grid gap-2">
+                {amount("Débitos", data.summary.totalBalanceDebits)}
+                {amount("Créditos", data.summary.totalBalanceCredits)}
+                {amount("Diferencia", data.summary.debitCreditDifference)}
+              </dl>
             </div>
-          ) : (
-            <div className="mt-3 grid gap-4 md:grid-cols-3">
-              <div className="text-sm">
-                <p className="font-medium text-slate-800">Cuentas</p>
-                <p className="mt-1 text-slate-600">
-                  {data.summary.reconciledAccounts} conciliadas ·{" "}
-                  {data.summary.accountsWithDifferences} con diferencias ·{" "}
-                  {data.summary.accountsWithoutLedgerMovements} sin movimientos
-                </p>
-              </div>
-              <AccountingTotals
-                title="Débitos"
-                balance={data.summary.totalBalanceDebit}
-                ledger={data.summary.totalLedgerDebit}
-                difference={data.summary.totalDebitDifference}
-              />
-              <AccountingTotals
-                title="Créditos"
-                balance={data.summary.totalBalanceCredit}
-                ledger={data.summary.totalLedgerCredit}
-                difference={data.summary.totalCreditDifference}
-              />
+            <div>
+              <h3 className="mb-2 text-sm font-semibold">Saldos</h3>
+              <dl className="grid gap-2">
+                {amount("Saldo deudor", data.summary.totalBalanceDebitBalance)}
+                {amount(
+                  "Saldo acreedor",
+                  data.summary.totalBalanceCreditBalance,
+                )}
+                {amount(
+                  "Diferencia",
+                  data.summary.debitCreditBalanceDifference,
+                )}
+              </dl>
             </div>
-          )}
+            <div>
+              <h3 className="mb-2 text-sm font-semibold">Clasificación</h3>
+              <dl className="grid grid-cols-2 gap-2">
+                {amount(
+                  "Activo",
+                  data.summary.totalBalanceAssets,
+                  data.summary.assetAccountCount,
+                )}
+                {amount(
+                  "Pasivo",
+                  data.summary.totalBalanceLiabilities,
+                  data.summary.liabilityAccountCount,
+                )}
+                {amount(
+                  "Pérdidas",
+                  data.summary.totalBalanceLosses,
+                  data.summary.lossAccountCount,
+                )}
+                {amount(
+                  "Ganancias",
+                  data.summary.totalBalanceGains,
+                  data.summary.gainAccountCount,
+                )}
+              </dl>
+            </div>
+            <div>
+              <h3 className="mb-2 text-sm font-semibold">
+                Control de cuadratura
+              </h3>
+              <dl className="grid gap-2">
+                {amount(
+                  "Activo + Pérdidas",
+                  data.summary.accountingEquationLeft,
+                )}
+                {amount(
+                  "Pasivo + Ganancias",
+                  data.summary.accountingEquationRight,
+                )}
+                {amount(
+                  "Diferencia",
+                  data.summary.accountingEquationDifference,
+                )}
+                <div className="text-sm font-semibold">
+                  Estado:{" "}
+                  {data.summary.accountingEquationBalanced
+                    ? "Cuadrado"
+                    : "Con diferencia"}
+                </div>
+              </dl>
+            </div>
+          </div>
+          <div className="mt-4 rounded-lg bg-emerald-50 p-3">
+            <h3 className="text-sm font-semibold">
+              Resultado contable según columnas del Balance
+            </h3>
+            <p className="mt-1 tabular-nums">
+              {data.summary.netResultType === "profit"
+                ? "Ganancia neta"
+                : data.summary.netResultType === "loss"
+                  ? "Pérdida neta"
+                  : "Resultado cero"}
+              : {formatAccountingAmount(data.summary.netResultAmount)}
+            </p>
+          </div>
+          <details className="mt-4 text-sm">
+            <summary className="cursor-pointer font-medium">
+              Totales informados por la empresa
+            </summary>
+            <p className="mt-2 text-slate-600">
+              No se detectaron filas de totales informados en esta versión.
+            </p>
+          </details>
         </section>
       )}
       {data && (
@@ -354,7 +435,7 @@ export function BalanceExplorer({
       )}
       <section
         aria-label="Filtros de Balance"
-        className="mt-5 grid gap-3 rounded-xl border bg-white p-4 md:grid-cols-4"
+        className="mt-5 grid gap-3 rounded-xl border bg-white p-4 md:grid-cols-3"
       >
         <input
           aria-label="Buscar por código o nombre"
@@ -375,18 +456,20 @@ export function BalanceExplorer({
           <option value="loss">Pérdida</option>
           <option value="gain">Ganancia</option>
         </select>
-        <select
-          aria-label="Estado de conciliación"
-          value={filters.reconciliation}
-          onChange={(e) => change("reconciliation", e.target.value)}
-          className={input}
-        >
-          <option value="all">Toda conciliación</option>
-          <option value="reconciled">Conciliadas</option>
-          <option value="difference">Con diferencias</option>
-          <option value="no_ledger">Sin movimientos</option>
-          <option value="unavailable">No disponible</option>
-        </select>
+        {mode === "reconciliation" && (
+          <select
+            aria-label="Estado de conciliación"
+            value={filters.reconciliation}
+            onChange={(e) => change("reconciliation", e.target.value)}
+            className={input}
+          >
+            <option value="all">Toda conciliación</option>
+            <option value="reconciled">Conciliadas</option>
+            <option value="difference">Con diferencias</option>
+            <option value="no_ledger">Sin movimientos</option>
+            <option value="unavailable">No disponible</option>
+          </select>
+        )}
         <select
           aria-label="Ordenar Balance"
           value={filters.sort}
@@ -397,9 +480,15 @@ export function BalanceExplorer({
           <option value="name">Nombre</option>
           <option value="debit">Débito Balance</option>
           <option value="credit">Crédito Balance</option>
-          <option value="difference">Diferencia absoluta</option>
-          <option value="movements">Movimientos</option>
-          <option value="lastMovement">Último movimiento</option>
+          {mode === "reconciliation" && (
+            <option value="difference">Diferencia absoluta</option>
+          )}
+          {mode === "reconciliation" && (
+            <option value="movements">Movimientos</option>
+          )}
+          {mode === "reconciliation" && (
+            <option value="lastMovement">Último movimiento</option>
+          )}
         </select>
       </section>
       {data && !data.balanceAvailable ? (
@@ -421,38 +510,52 @@ export function BalanceExplorer({
       ) : (
         <div className="mt-4 rounded-xl border bg-white">
           <div className="max-h-[65vh] overflow-x-auto overflow-y-auto">
-            <table className="min-w-[1700px] text-left text-sm">
+            <table
+              className={
+                mode === "balance"
+                  ? "min-w-[1500px] table-fixed text-left text-sm"
+                  : "min-w-[1250px] table-fixed text-left text-sm"
+              }
+            >
               <thead className="sticky top-0 z-10 bg-slate-50 text-xs uppercase text-slate-600">
                 <tr>
                   <th colSpan={2} className="px-3 py-2 text-center">
                     Cuenta
                   </th>
-                  <th colSpan={4} className="px-3 py-2 text-center">
+                  <th
+                    colSpan={mode === "balance" ? 8 : 6}
+                    className="px-3 py-2 text-center"
+                  >
                     Balance final
-                  </th>
-                  <th colSpan={4} className="px-3 py-2 text-center">
-                    Libro Mayor
-                  </th>
-                  <th colSpan={3} className="px-3 py-2 text-center">
-                    Conciliación
                   </th>
                 </tr>
                 <tr>
-                  {[
-                    "Código",
-                    "Nombre",
-                    "Débitos",
-                    "Créditos",
-                    "Saldo deudor",
-                    "Saldo acreedor",
-                    "Debe",
-                    "Haber",
-                    "Movimientos",
-                    "Último movimiento",
-                    "Diferencia debe",
-                    "Diferencia haber",
-                    "Estado",
-                  ].map((h) => (
+                  {(mode === "balance"
+                    ? [
+                        "Código",
+                        "Nombre",
+                        "Débitos",
+                        "Créditos",
+                        "Saldo deudor",
+                        "Saldo acreedor",
+                        "Activo",
+                        "Pasivo",
+                        "Pérdidas",
+                        "Ganancias",
+                      ]
+                    : [
+                        "Código",
+                        "Nombre",
+                        "Débitos Balance",
+                        "Debe Mayor",
+                        "Diferencia debe",
+                        "Créditos Balance",
+                        "Haber Mayor",
+                        "Diferencia haber",
+                        "Movimientos",
+                        "Estado",
+                      ]
+                  ).map((h) => (
                     <th key={h} className="whitespace-nowrap px-3 py-3">
                       {h}
                     </th>
@@ -466,27 +569,52 @@ export function BalanceExplorer({
                     tabIndex={0}
                     role="link"
                     aria-label={`Ver movimientos de ${row.code} ${row.name}`}
-                    onClick={() => open(row.accountId)}
+                    onClick={() =>
+                      mode === "reconciliation" && open(row.accountId)
+                    }
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
                         open(row.accountId);
                       }
                     }}
-                    className="cursor-pointer hover:bg-emerald-50 focus:bg-emerald-50"
+                    className={
+                      mode === "reconciliation"
+                        ? "cursor-pointer hover:bg-emerald-50 focus:bg-emerald-50"
+                        : "hover:bg-slate-50"
+                    }
                   >
-                    <td className="min-w-28 px-3 py-3 font-medium text-slate-900">
+                    <td className="w-[130px] px-3 py-3 align-top font-medium text-slate-900">
                       {row.code}
                     </td>
-                    <td className="min-w-60 max-w-72 px-3 py-3">{row.name}</td>
-                    {[
-                      row.balanceDebit,
-                      row.balanceCredit,
-                      row.debitBalance,
-                      row.creditBalance,
-                      row.ledgerDebit,
-                      row.ledgerCredit,
-                    ].map((v, i) => (
+                    <td
+                      className="w-[290px] px-3 py-3 align-top"
+                      title={row.name}
+                    >
+                      <span className="line-clamp-2 whitespace-normal [overflow-wrap:anywhere]">
+                        {row.name}
+                      </span>
+                    </td>
+                    {(mode === "balance"
+                      ? [
+                          row.balanceDebits,
+                          row.balanceCredits,
+                          row.balanceDebitBalance,
+                          row.balanceCreditBalance,
+                          row.balanceAssets,
+                          row.balanceLiabilities,
+                          row.balanceLosses,
+                          row.balanceGains,
+                        ]
+                      : [
+                          row.balanceDebits,
+                          row.ledgerDebit,
+                          row.debitDifference,
+                          row.balanceCredits,
+                          row.ledgerCredit,
+                          row.creditDifference,
+                        ]
+                    ).map((v, i) => (
                       <td
                         key={i}
                         className="min-w-36 whitespace-nowrap px-3 py-3 text-right tabular-nums"
@@ -494,36 +622,20 @@ export function BalanceExplorer({
                         {formatAccountingAmount(v)}
                       </td>
                     ))}
-                    <td className="px-3 py-3 text-right">
-                      <strong>{row.ledgerMovementCount}</strong>
-                    </td>
-                    <td className="min-w-36 whitespace-nowrap px-3 py-3 text-slate-600">
-                      {formatAccountingDate(row.lastLedgerMovementDate)}
-                    </td>
-                    {[row.debitDifference, row.creditDifference].map(
-                      (value, index) => (
-                        <td
-                          key={index}
-                          className="px-3 py-3 text-right tabular-nums"
-                        >
-                          {value === null ? (
-                            "—"
-                          ) : (
-                            <span>
-                              {Number(value) !== 0 ? "Diferencia: " : ""}
-                              {formatAccountingAmount(value)}
-                            </span>
-                          )}
-                        </td>
-                      ),
+                    {mode === "reconciliation" && (
+                      <td className="px-3 py-3 text-right">
+                        <strong>{row.ledgerMovementCount}</strong>
+                      </td>
                     )}
-                    <td className="px-3 py-3">
-                      <span
-                        className={`whitespace-nowrap rounded-full px-2 py-1 text-xs font-medium ${statusClasses[row.reconciliationStatus]}`}
-                      >
-                        {statusLabels[row.reconciliationStatus]}
-                      </span>
-                    </td>
+                    {mode === "reconciliation" && (
+                      <td className="px-3 py-3">
+                        <span
+                          className={`whitespace-nowrap rounded-full px-2 py-1 text-xs font-medium ${statusClasses[row.reconciliationStatus]}`}
+                        >
+                          {statusLabels[row.reconciliationStatus]}
+                        </span>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

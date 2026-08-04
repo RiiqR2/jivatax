@@ -129,8 +129,8 @@ test("an imported ledger without movements classifies balance accounts as no_led
     },
   });
   const result = await service.balance("company", "period", query);
-  assert.equal(result.summary.reconciliationUnavailable, 0);
-  assert.equal(result.summary.reconciledAccounts, "0");
+  assert.equal(result.summary.reconciliationUnavailable, false);
+  assert.equal(result.summary.reconciledAccounts, 0);
   assert.equal(result.items[0].reconciliationStatus, "no_ledger");
   assert.equal(result.sources.generalLedgerDocument?.versionNumber, 3);
 });
@@ -155,8 +155,8 @@ test("an imported ledger reports reconciled accounts and differences from the sa
     },
   });
   const result = await service.balance("company", "period", query);
-  assert.equal(result.summary.reconciledAccounts, "1");
-  assert.equal(result.summary.accountsWithDifferences, "1");
+  assert.equal(result.summary.reconciledAccounts, 1);
+  assert.equal(result.summary.accountsWithDifferences, 1);
   const pageQuery = calls.find((call) =>
     call.sql.includes("SELECT explorer.*"),
   )!;
@@ -171,10 +171,10 @@ test("source resolution chooses only the latest processed, non-discarded documen
     summary: { totalAccounts: "0" },
   });
   await service.balance("company", "period", query);
-  assert.match(calls[0].sql, /d\.status='processed'/);
+  assert.match(calls[0].sql, /d\.status IN \('processed','superseded'\)/);
   assert.match(calls[0].sql, /d\.discarded_at IS NULL/);
   assert.match(calls[0].sql, /MAX\(current\.version_number\)/);
-  assert.match(calls[0].sql, /current\.status='processed'/);
+  assert.match(calls[0].sql, /current\.status IN \('processed','superseded'\)/);
 });
 
 test("opening summary omits detail and detail preserves DECIMAL strings with pagination", async () => {
