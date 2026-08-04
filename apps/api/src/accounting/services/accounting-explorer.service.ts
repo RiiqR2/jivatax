@@ -16,6 +16,8 @@ type ExplorerSource = {
   versionNumber: number;
   processedAt: string | null;
   balanceRole: "opening" | "closing" | null;
+  originalName: string;
+  status: "processed";
 };
 export const RECONCILIATION_TOLERANCE = "0.0100";
 export function accumulatedBalance(
@@ -36,9 +38,10 @@ export class AccountingExplorerService {
   private async resolveSources(companyId: string, periodId: string) {
     const rows = (await this.db.query(
       `SELECT d.id, d.document_type documentType, d.balance_role balanceRole, d.version_number versionNumber,
-        d.processed_at processedAt, c.legal_name companyName, gli.id importId
+        d.processed_at processedAt, d.status, f.original_name originalName, c.legal_name companyName, gli.id importId
        FROM tax_documents d
        JOIN companies c ON c.id=d.company_id
+       JOIN stored_files f ON f.id=d.stored_file_id
        LEFT JOIN general_ledger_imports gli
          ON gli.tax_document_id=d.id AND gli.company_id=d.company_id AND gli.tax_period_id=d.tax_period_id
        WHERE d.company_id=? AND d.tax_period_id=? AND d.status='processed'
@@ -62,6 +65,8 @@ export class AccountingExplorerService {
             processedAt:
               row.processedAt === null ? null : String(row.processedAt),
             balanceRole: row.balanceRole as ExplorerSource["balanceRole"],
+            originalName: String(row.originalName),
+            status: "processed",
           }
         : null;
     const bySource = new Map<string, ExplorerSource>();
@@ -84,6 +89,24 @@ export class AccountingExplorerService {
     };
   }
 
+  private async resolvePreviousClosing(
+    companyId: string,
+    commercialYear: number,
+  ): Promise<{ id: string; versionNumber: number } | null> {
+    const rows = (await this.db.query(
+      `SELECT d.id, d.version_number versionNumber
+       FROM tax_periods p
+       JOIN tax_documents d ON d.tax_period_id=p.id AND d.company_id=p.company_id
+       WHERE p.company_id=? AND p.commercial_year=? AND d.document_type='balance'
+         AND d.balance_role='closing' AND d.status='processed' AND d.discarded_at IS NULL
+       ORDER BY d.version_number DESC LIMIT 1`,
+      [companyId, commercialYear - 1],
+    )) as Row[];
+    return rows[0]
+      ? { id: String(rows[0].id), versionNumber: Number(rows[0].versionNumber) }
+      : null;
+  }
+
   async balance(
     companyId: string,
     periodId: string,
@@ -94,12 +117,18 @@ export class AccountingExplorerService {
       taxYear: number;
     };
     const resolved = await this.resolveSources(companyId, periodId);
+    const previousClosingDocument = await this.resolvePreviousClosing(
+      companyId,
+      period.commercialYear,
+    );
     const source = (row: ExplorerSource | null) =>
       row
         ? {
             id: row.id,
             versionNumber: row.versionNumber,
             processedAt: row.processedAt,
+            originalName: row.originalName,
+            status: row.status,
           }
         : null;
     const sources = {
@@ -109,12 +138,13 @@ export class AccountingExplorerService {
       openingBalanceDocument: source(resolved.openingBalance),
       closingBalanceDocument: source(resolved.closingBalance),
       generalLedgerDocument: source(resolved.generalLedger),
+      previousClosingDocument,
     };
     const openingResult = await this.openingControl(
       companyId,
       periodId,
-      period.commercialYear,
       resolved.openingBalance,
+      previousClosingDocument,
     );
     const { items: _openingItems, ...openingControl } = openingResult;
     const completionStatus = !resolved.openingBalance
@@ -278,8 +308,8 @@ export class AccountingExplorerService {
   private async openingControl(
     companyId: string,
     periodId: string,
-    commercialYear: number,
     opening: ExplorerSource | null,
+    previousClosing: { id: string; versionNumber: number } | null,
   ) {
     const unavailable = (
       openingAvailable: boolean,
@@ -295,14 +325,7 @@ export class AccountingExplorerService {
       items: [],
     });
     if (!opening) return unavailable(false);
-    const previous = (await this.db.query(
-      `SELECT d.id FROM tax_periods p JOIN tax_documents d ON d.tax_period_id=p.id AND d.company_id=p.company_id
-       WHERE p.company_id=? AND p.commercial_year=? AND d.document_type='balance' AND d.balance_role='closing'
-         AND d.status='processed' AND d.discarded_at IS NULL
-       ORDER BY d.version_number DESC LIMIT 1`,
-      [companyId, commercialYear - 1],
-    )) as Row[];
-    if (!previous[0]) return unavailable(true);
+    if (!previousClosing) return unavailable(true);
     const rows = (await this.db.query(
       `WITH compared AS (
        SELECT COALESCE(o.company_account_id, pc.company_account_id) companyAccountId,
@@ -329,9 +352,9 @@ export class AccountingExplorerService {
         opening.id,
         companyId,
         periodId,
-        previous[0].id,
+        previousClosing.id,
         companyId,
-        previous[0].id,
+        previousClosing.id,
         companyId,
         opening.id,
         companyId,
@@ -368,11 +391,15 @@ export class AccountingExplorerService {
       commercialYear: number;
     };
     const sources = await this.resolveSources(companyId, periodId);
+    const previousClosing = await this.resolvePreviousClosing(
+      companyId,
+      period.commercialYear,
+    );
     const result = await this.openingControl(
       companyId,
       periodId,
-      period.commercialYear,
       sources.openingBalance,
+      previousClosing,
     );
     let items = result.items;
     if (query.search) {

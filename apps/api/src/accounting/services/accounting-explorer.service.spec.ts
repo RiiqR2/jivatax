@@ -17,6 +17,7 @@ function serviceWithFixture(fixture: QueryFixture) {
     query: async (sql: string, params: unknown[]) => {
       calls.push({ sql, params });
       if (sql.includes("FROM tax_documents d")) return fixture.sources;
+      if (sql.includes("FROM tax_periods p")) return [];
       if (sql.includes("COUNT(*) totalAccounts")) return [fixture.summary];
       if (sql.includes("SELECT explorer.*")) return fixture.items;
       if (sql.includes("FROM company_accounts"))
@@ -49,6 +50,8 @@ const balanceSource = {
   versionNumber: 2,
   processedAt: "2026-01-01",
   companyName: "Empresa",
+  originalName: "balance-final.xlsx",
+  status: "processed",
 };
 const ledgerSource = {
   id: "ledger-v3",
@@ -57,6 +60,8 @@ const ledgerSource = {
   versionNumber: 3,
   processedAt: "2026-01-02",
   companyName: "Empresa",
+  originalName: "libro-mayor.xlsx",
+  status: "processed",
 };
 
 test("calculates a chronological accumulated balance", () => {
@@ -177,6 +182,81 @@ test("source resolution chooses only the latest processed, non-discarded documen
   assert.match(calls[0].sql, /current\.status='processed'/);
 });
 
+test("opening and closing are independent current-period sources without a historical closing", async () => {
+  const openingSource = {
+    ...balanceSource,
+    id: "opening-v3",
+    balanceRole: "opening",
+    versionNumber: 3,
+    originalName: "balance-inicial.xlsx",
+  };
+  const { service, calls } = serviceWithFixture({
+    sources: [openingSource, balanceSource, ledgerSource],
+    items: [],
+    summary: { totalAccounts: "0" },
+  });
+  const result = await service.balance("company", "period", query);
+
+  assert.equal(result.sources.openingBalanceDocument?.versionNumber, 3);
+  assert.equal(result.sources.closingBalanceDocument?.versionNumber, 2);
+  assert.equal(result.sources.previousClosingDocument, null);
+  assert.equal(result.openingControl.openingBalanceAvailable, true);
+  assert.equal(result.openingControl.previousClosingAvailable, false);
+  assert.equal(result.completionStatus, "ready_for_accounting_review");
+  assert.equal(result.balanceAvailable, true);
+  assert.equal(
+    calls.some(
+      ({ sql, params }) =>
+        sql.includes("WITH compared AS") && params.includes("balance-v2"),
+    ),
+    false,
+    "the opening must never be compared with the current-period closing",
+  );
+  assert.doesNotMatch(
+    calls.map(({ sql }) => sql).join("\n"),
+    /CURRENT_DATE|CURDATE|NOW\(\).*commercial_year/i,
+  );
+});
+
+test("a previous processed closing enables the optional historical comparison", async () => {
+  const sourceRows = [
+    {
+      ...balanceSource,
+      id: "opening-v3",
+      balanceRole: "opening",
+      versionNumber: 3,
+    },
+    balanceSource,
+    ledgerSource,
+  ];
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  const db = {
+    query: async (sql: string, params: unknown[]) => {
+      calls.push({ sql, params });
+      if (sql.includes("FROM tax_documents d")) return sourceRows;
+      if (sql.includes("FROM tax_periods p"))
+        return [{ id: "previous-closing-v4", versionNumber: 4 }];
+      if (sql.includes("WITH compared AS")) return [];
+      if (sql.includes("SELECT explorer.*")) return [];
+      if (sql.includes("COUNT(*) totalAccounts")) return [{}];
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+  const service = new AccountingExplorerService(
+    db as never,
+    {
+      get: async () => ({ commercialYear: 2026, taxYear: 2027 }),
+    } as never,
+  );
+  const result = await service.balance("company", "period-2026", query);
+  assert.equal(result.openingControl.previousClosingAvailable, true);
+  assert.equal(result.sources.previousClosingDocument?.versionNumber, 4);
+  const comparison = calls.find(({ sql }) => sql.includes("WITH compared AS"));
+  assert.ok(comparison);
+  assert.ok(comparison.params.includes("previous-closing-v4"));
+  assert.equal(comparison.params.includes("balance-v2"), false);
+});
+
 test("opening summary omits detail and detail preserves DECIMAL strings with pagination", async () => {
   const sourceRows = [
     { ...balanceSource, id: "opening-v1", balanceRole: "opening" },
@@ -211,7 +291,8 @@ test("opening summary omits detail and detail preserves DECIMAL strings with pag
   const db = {
     query: async (sql: string) => {
       if (sql.includes("FROM tax_documents d")) return sourceRows;
-      if (sql.includes("FROM tax_periods p")) return [{ id: "previous" }];
+      if (sql.includes("FROM tax_periods p"))
+        return [{ id: "previous", versionNumber: 1 }];
       if (sql.includes("WITH compared AS")) return compared;
       if (sql.includes("SELECT explorer.*")) return [];
       if (sql.includes("COUNT(*) totalAccounts")) return [{}];

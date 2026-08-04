@@ -256,13 +256,43 @@ export function BalanceExplorer({
           className="mt-5 rounded-xl border border-slate-200 bg-white p-4"
         >
           <h2 className="font-semibold">Control de apertura</h2>
-          {!data.openingControl.previousClosingAvailable ? (
+          {data.sources.openingBalanceDocument ? (
+            <div className="mt-2 text-sm text-slate-600">
+              <p>
+                <span className="font-medium text-slate-800">
+                  Fuente de apertura:
+                </span>{" "}
+                Balance inicial v
+                {data.sources.openingBalanceDocument.versionNumber} disponible.
+              </p>
+              <p className="mt-1">
+                Archivo: {data.sources.openingBalanceDocument.originalName} ·
+                Estado: procesado
+              </p>
+            </div>
+          ) : (
             <p className="mt-2 text-sm text-slate-600">
-              No existe un Balance final anterior disponible para comparación.
+              Fuente de apertura: Balance inicial no disponible.
             </p>
+          )}
+          {!data.openingControl.previousClosingAvailable ? (
+            data.openingControl.openingBalanceAvailable ? (
+              <p className="mt-3 text-sm text-slate-600">
+                <span className="font-medium text-slate-800">
+                  Comparación histórica:
+                </span>{" "}
+                No existe un cierre histórico anterior almacenado para realizar
+                una comparación adicional. El Balance inicial informado por la
+                empresa se encuentra disponible y seguirá siendo utilizado como
+                fuente de apertura.
+              </p>
+            ) : null
           ) : (
             <>
-              <p className="mt-2 text-sm text-slate-600">
+              <p className="mt-3 text-sm text-slate-600">
+                <span className="font-medium text-slate-800">
+                  Comparación histórica:
+                </span>{" "}
                 {data.openingControl.matchingAccounts} cuentas coincidentes ·{" "}
                 {data.openingControl.accountsWithDifferences} con diferencias ·{" "}
                 {data.openingControl.onlyInOpening} solo en apertura ·{" "}
