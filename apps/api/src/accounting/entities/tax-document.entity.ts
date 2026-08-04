@@ -1,14 +1,24 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne } from "typeorm";
 import { BaseEntity } from "../../common/entities/base.entity";
 import { StoredFileEntity } from "../../files/entities/stored-file.entity";
-import { TaxDocumentStatus, TaxDocumentType } from "../enums/accounting.enums";
+import {
+  BalanceRole,
+  TaxDocumentStatus,
+  TaxDocumentType,
+} from "../enums/accounting.enums";
 import { TaxPeriodEntity } from "./tax-period.entity";
 import { UserEntity } from "../../users/entities/user.entity";
 
 @Entity({ name: "tax_documents" })
 @Index(
   "uq_tax_documents_version",
-  ["companyId", "taxPeriodId", "documentType", "versionNumber"],
+  [
+    "companyId",
+    "taxPeriodId",
+    "documentType",
+    "balanceRoleKey",
+    "versionNumber",
+  ],
   { unique: true },
 )
 export class TaxDocumentEntity extends BaseEntity {
@@ -19,6 +29,36 @@ export class TaxDocumentEntity extends BaseEntity {
   storedFileId!: string;
   @Column({ name: "document_type", type: "enum", enum: TaxDocumentType })
   documentType!: TaxDocumentType;
+  @Column({
+    name: "balance_role",
+    type: "enum",
+    enum: BalanceRole,
+    nullable: true,
+  })
+  balanceRole!: BalanceRole | null;
+  @Column({
+    name: "balance_role_key",
+    type: "varchar",
+    length: 20,
+    asExpression: "COALESCE(balance_role,'unclassified')",
+    generatedType: "STORED",
+    select: false,
+  })
+  balanceRoleKey!: string;
+  @Column({
+    name: "balance_role_classified_at",
+    type: "datetime",
+    precision: 6,
+    nullable: true,
+  })
+  balanceRoleClassifiedAt!: Date | null;
+  @Column({
+    name: "balance_role_classified_by_user_id",
+    type: "char",
+    length: 36,
+    nullable: true,
+  })
+  balanceRoleClassifiedByUserId!: string | null;
   @Column({
     type: "enum",
     enum: TaxDocumentStatus,

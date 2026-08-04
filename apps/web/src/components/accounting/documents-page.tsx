@@ -23,6 +23,7 @@ import type {
   TaxDocument,
   TaxDocumentReport,
   TaxDocumentType,
+  BalanceRole,
 } from "@/types/accounting.types";
 import {
   canReviewMappings,
@@ -140,6 +141,28 @@ const stageLabels: Record<AccountingUploadStage, string> = {
   processing_error: "Error de procesamiento",
 };
 
+export function latestProcessedDocument(
+  documents: TaxDocument[],
+  documentType: TaxDocumentType,
+  balanceRole: BalanceRole | null,
+) {
+  return documents
+    .filter(
+      (document) =>
+        document.documentType === documentType &&
+        document.balanceRole === balanceRole &&
+        document.status === "processed" &&
+        !document.discardedAt,
+    )
+    .reduce<TaxDocument | null>(
+      (latest, document) =>
+        !latest || document.versionNumber > latest.versionNumber
+          ? document
+          : latest,
+      null,
+    );
+}
+
 export function AccountingDocumentsPage({
   companyId,
   taxPeriodId,
@@ -150,6 +173,7 @@ export function AccountingDocumentsPage({
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [type, setType] = useState<TaxDocumentType>("balance");
+  const [balanceRole, setBalanceRole] = useState<BalanceRole | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [stage, setStage] = useState<AccountingUploadStage>("idle");
@@ -174,7 +198,19 @@ export function AccountingDocumentsPage({
     queryKey: ["tax-documents", companyId, taxPeriodId, type],
     queryFn: () => accountingService.documents(companyId, taxPeriodId, type),
   });
-  const history = documents.data ?? [];
+  const history = (documents.data ?? []).filter(
+    (document) => type !== "balance" || document.balanceRole === balanceRole,
+  );
+  const unclassifiedBalances = (documents.data ?? []).filter(
+    (document) =>
+      type === "balance" &&
+      document.balanceRole === null &&
+      document.status === "processed",
+  );
+  const allDocuments = useQuery({
+    queryKey: ["tax-documents", companyId, taxPeriodId, "all"],
+    queryFn: () => accountingService.documents(companyId, taxPeriodId),
+  });
 
   const resetSelection = () => {
     setFile(null);
@@ -199,7 +235,13 @@ export function AccountingDocumentsPage({
     setStage(error ? "idle" : "selected");
   };
   const process = async () => {
-    if (!file || fileError || busy) return;
+    if (
+      !file ||
+      fileError ||
+      busy ||
+      (type === "balance" && balanceRole === null)
+    )
+      return;
     setFileError(null);
     try {
       const uploadResult = await processAccountingFile(
@@ -212,6 +254,7 @@ export function AccountingDocumentsPage({
           files: filesApi,
           accounting: accountingService,
         },
+        type === "balance" ? (balanceRole ?? undefined) : undefined,
       );
       setResult(uploadResult);
       await queryClient.invalidateQueries({
@@ -286,7 +329,7 @@ export function AccountingDocumentsPage({
         </p>
       )}
       <div className="mt-4 flex gap-2 overflow-x-auto pb-1" role="tablist">
-        {(Object.keys(contracts) as TaxDocumentType[]).map((value) => (
+        {(["balance", "general_ledger"] as TaxDocumentType[]).map((value) => (
           <button
             key={value}
             type="button"
@@ -299,6 +342,76 @@ export function AccountingDocumentsPage({
           </button>
         ))}
       </div>
+
+      <section
+        aria-label="Completitud contable"
+        className="mt-4 grid gap-3 md:grid-cols-3"
+      >
+        {(
+          [
+            ["Balance inicial", "balance", "opening"],
+            ["Balance final", "balance", "closing"],
+            ["Libro Mayor", "general_ledger", null],
+          ] as const
+        ).map(([label, documentType, role]) => {
+          const current = latestProcessedDocument(
+            allDocuments.data ?? [],
+            documentType,
+            role,
+          );
+          return (
+            <div key={label} className="rounded-xl border bg-white p-4">
+              <strong>{label}</strong>
+              <p className="mt-1 text-sm text-slate-600">
+                {current
+                  ? `Procesado · versión ${current.versionNumber} · ${current.storedFile.originalName}`
+                  : "Pendiente de carga"}
+              </p>
+            </div>
+          );
+        })}
+      </section>
+
+      {type === "balance" && (
+        <fieldset className="mt-4 rounded-xl border bg-white p-4">
+          <legend className="px-1 text-sm font-semibold">
+            Rol del Balance (obligatorio)
+          </legend>
+          <div className="mt-2 flex gap-4">
+            {(["opening", "closing"] as BalanceRole[]).map((role) => (
+              <label key={role} className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="balance-role"
+                  checked={balanceRole === role}
+                  onChange={() => {
+                    setBalanceRole(role);
+                    resetSelection();
+                  }}
+                />
+                {role === "opening" ? "Balance inicial" : "Balance final"}
+              </label>
+            ))}
+          </div>
+          {balanceRole === null && (
+            <p role="alert" className="mt-2 text-sm text-amber-800">
+              Selecciona si el archivo corresponde a Balance inicial o Balance
+              final
+            </p>
+          )}
+        </fieldset>
+      )}
+
+      {unclassifiedBalances.length > 0 && (
+        <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <h2 className="font-semibold">Balance pendiente de clasificación</h2>
+          <p className="mt-1 text-sm text-slate-700">
+            {unclassifiedBalances.length} documento(s) histórico(s) procesado(s)
+            requieren clasificación administrativa como Balance inicial o final.
+            No se usarán como fuente operativa hasta entonces.
+          </p>
+        </section>
+      )}
 
       <History
         companyId={companyId}
@@ -457,7 +570,15 @@ export function AccountingDocumentsPage({
               {(file.size / 1024).toLocaleString("es-CL", {
                 maximumFractionDigits: 1,
               })}{" "}
-              KB · {contract.title} · período seleccionado
+              KB ·{" "}
+              {type === "balance"
+                ? balanceRole === "opening"
+                  ? "Balance inicial"
+                  : balanceRole === "closing"
+                    ? "Balance final"
+                    : "Rol no seleccionado"
+                : contract.title}{" "}
+              · período seleccionado
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -480,7 +601,13 @@ export function AccountingDocumentsPage({
             </button>
             <button
               type="button"
-              disabled={!file || Boolean(fileError) || busy || !taxPeriodId}
+              disabled={
+                !file ||
+                Boolean(fileError) ||
+                busy ||
+                !taxPeriodId ||
+                (type === "balance" && balanceRole === null)
+              }
               onClick={() => void process()}
               className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >

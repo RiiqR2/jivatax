@@ -9,9 +9,11 @@ import {
 } from "@nestjs/common";
 import { CurrentUser } from "../../auth/decorators/current-user.decorator";
 import { CompanyAccessGuard } from "../../auth/guards/company-access.guard";
+import { MetaUserGuard } from "../../admin/guards/meta-user.guard";
 import type { AuthenticatedUser } from "../../auth/interfaces/authenticated-user.interface";
 import {
   CreateTaxDocumentDto,
+  ClassifyHistoricalBalanceDto,
   DiscardTaxDocumentDto,
   ListTaxDocumentsQueryDto,
   ProcessTaxDocumentDto,
@@ -67,5 +69,23 @@ export class TaxDocumentsController {
     @Body() dto: DiscardTaxDocumentDto,
   ) {
     return this.service.discard(companyId, periodId, id, user.id, dto.reason);
+  }
+
+  @Post(":documentId/classify-balance")
+  @UseGuards(MetaUserGuard)
+  classifyBalance(
+    @Param("companyId") companyId: string,
+    @Param("taxPeriodId") periodId: string,
+    @Param("documentId") id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: ClassifyHistoricalBalanceDto,
+  ) {
+    return this.service.classifyHistoricalBalance(
+      companyId,
+      periodId,
+      id,
+      user.id,
+      dto.balanceRole,
+    );
   }
 }

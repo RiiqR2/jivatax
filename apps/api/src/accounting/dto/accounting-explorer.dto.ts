@@ -63,3 +63,19 @@ export class GeneralLedgerQueryDto extends ExplorerPaginationDto {
   @IsIn(["asc", "desc"])
   direction = "asc";
 }
+
+export class OpeningControlQueryDto extends ExplorerPaginationDto {
+  @Transform(emptyToUndefined) @IsOptional() @IsString() search?: string;
+  @IsOptional()
+  @IsIn([
+    "matching",
+    "difference",
+    "only_in_opening",
+    "only_in_previous_closing",
+  ])
+  status?: string;
+  @IsOptional()
+  @IsIn(["code", "debitDifference", "creditDifference", "status"])
+  sort = "code";
+  @IsOptional() @IsIn(["asc", "desc"]) direction = "asc";
+}

@@ -11,6 +11,11 @@ export enum TaxDocumentType {
   JOURNAL = "journal",
 }
 
+export enum BalanceRole {
+  OPENING = "opening",
+  CLOSING = "closing",
+}
+
 export enum TaxDocumentStatus {
   UPLOADED = "uploaded",
   VALIDATING = "validating",

@@ -1,11 +1,6 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
-import {
-  ArrowLeft,
-  ChevronLeft,
-  ChevronRight,
-  ExternalLink,
-} from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -13,6 +8,7 @@ import {
   buildBalanceExplorerParams,
   buildLedgerExplorerParams,
   formatAccountingAmount,
+  formatAccountingDate,
   ledgerPath,
   safeBalanceReturnTo,
 } from "@/lib/accounting-explorer";
@@ -121,6 +117,8 @@ export function BalanceExplorer({
     direction: searchParams.get("direction") ?? "asc",
     page: Number(searchParams.get("page") ?? 1),
   }));
+  const [openingDetailOpen, setOpeningDetailOpen] = useState(false);
+  const [openingStatus, setOpeningStatus] = useState("");
   useEffect(() => {
     const params = new URLSearchParams();
     const api = buildBalanceExplorerParams(filters);
@@ -152,6 +150,18 @@ export function BalanceExplorer({
       ),
     );
   const data = query.data;
+  const openingDetail = useQuery({
+    queryKey: ["opening-control", companyId, taxPeriodId, openingStatus],
+    queryFn: () =>
+      accountingService.openingControl(companyId, taxPeriodId, {
+        page: 1,
+        pageSize: 25,
+        sort: "code",
+        direction: "asc",
+        ...(openingStatus ? { status: openingStatus } : {}),
+      }),
+    enabled: openingDetailOpen,
+  });
   const ledgerAvailable = Boolean(data?.sources.generalLedgerDocument);
   return (
     <main className="mx-auto max-w-[1600px] p-4 sm:p-6 lg:p-8">
@@ -175,9 +185,13 @@ export function BalanceExplorer({
           {data?.sources.taxYear ?? "—"}
         </p>
         <p className="mt-1 text-xs text-slate-500">
-          {data?.sources.balanceDocument
-            ? `Balance v${data.sources.balanceDocument.versionNumber}`
-            : "Balance no disponible"}{" "}
+          {data?.sources.openingBalanceDocument
+            ? `Balance inicial v${data.sources.openingBalanceDocument.versionNumber}`
+            : "Balance inicial no disponible"}{" "}
+          ·{" "}
+          {data?.sources.closingBalanceDocument
+            ? `Balance final v${data.sources.closingBalanceDocument.versionNumber}`
+            : "Balance final no disponible"}{" "}
           · Libro Mayor{" "}
           {data?.sources.generalLedgerDocument
             ? `v${data.sources.generalLedgerDocument.versionNumber}`
@@ -190,10 +204,10 @@ export function BalanceExplorer({
           className="mt-5 rounded-xl border border-slate-200 bg-white p-4"
         >
           <h2 className="font-semibold text-slate-950">
-            Estado de conciliación
+            Conciliación de movimientos del período
           </h2>
           <p className="mt-1 text-sm text-slate-600">
-            {data.summary.totalAccounts} cuentas del Balance
+            {data.summary.totalAccounts} cuentas del Balance final
           </p>
           {!ledgerAvailable ? (
             <div className="mt-3" role="status">
@@ -233,6 +247,108 @@ export function BalanceExplorer({
                 difference={data.summary.totalCreditDifference}
               />
             </div>
+          )}
+        </section>
+      )}
+      {data && (
+        <section
+          aria-label="Control de apertura"
+          className="mt-5 rounded-xl border border-slate-200 bg-white p-4"
+        >
+          <h2 className="font-semibold">Control de apertura</h2>
+          {!data.openingControl.previousClosingAvailable ? (
+            <p className="mt-2 text-sm text-slate-600">
+              No existe un Balance final anterior disponible para comparación.
+            </p>
+          ) : (
+            <>
+              <p className="mt-2 text-sm text-slate-600">
+                {data.openingControl.matchingAccounts} cuentas coincidentes ·{" "}
+                {data.openingControl.accountsWithDifferences} con diferencias ·{" "}
+                {data.openingControl.onlyInOpening} solo en apertura ·{" "}
+                {data.openingControl.onlyInPreviousClosing} solo en cierre
+                anterior
+              </p>
+              {data.openingControl.warning && (
+                <p
+                  role="status"
+                  className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900"
+                >
+                  {data.openingControl.warning}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={() => setOpeningDetailOpen((open) => !open)}
+                className="mt-3 rounded-lg border px-3 py-2 text-sm font-medium"
+              >
+                {openingDetailOpen
+                  ? "Ocultar diferencias"
+                  : "Revisar diferencias"}
+              </button>
+              {openingDetailOpen && (
+                <div className="mt-3 overflow-x-auto">
+                  <label className="text-sm">
+                    Estado{" "}
+                    <select
+                      value={openingStatus}
+                      onChange={(event) => setOpeningStatus(event.target.value)}
+                      className={input}
+                    >
+                      <option value="">Todos</option>
+                      <option value="difference">Con diferencias</option>
+                      <option value="only_in_opening">Solo en apertura</option>
+                      <option value="only_in_previous_closing">
+                        Solo en cierre anterior
+                      </option>
+                      <option value="matching">Coincidentes</option>
+                    </select>
+                  </label>
+                  {openingDetail.isLoading ? (
+                    <p className="mt-3 text-sm">Cargando detalle…</p>
+                  ) : (
+                    <table className="mt-3 min-w-[900px] text-sm">
+                      <thead>
+                        <tr>
+                          {[
+                            "Código",
+                            "Nombre apertura",
+                            "Nombre cierre anterior",
+                            "Diferencia deudora",
+                            "Diferencia acreedora",
+                            "Estado",
+                          ].map((heading) => (
+                            <th key={heading} className="px-2 py-2 text-left">
+                              {heading}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {openingDetail.data?.items.map((item, index) => (
+                          <tr key={`${item.code}-${index}`}>
+                            <td className="px-2 py-2">{item.code}</td>
+                            <td className="px-2 py-2">
+                              {item.openingName ?? "—"}
+                            </td>
+                            <td className="px-2 py-2">
+                              {item.previousClosingName ?? "—"}
+                            </td>
+                            <td className="px-2 py-2 text-right">
+                              {formatAccountingAmount(item.debitDifference)}
+                            </td>
+                            <td className="px-2 py-2 text-right">
+                              {formatAccountingAmount(item.creditDifference)}
+                            </td>
+                            <td className="px-2 py-2">{item.status}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </section>
       )}
@@ -305,23 +421,37 @@ export function BalanceExplorer({
       ) : (
         <div className="mt-4 rounded-xl border bg-white">
           <div className="max-h-[65vh] overflow-x-auto overflow-y-auto">
-            <table className="min-w-[1500px] text-left text-sm">
+            <table className="min-w-[1700px] text-left text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50 text-xs uppercase text-slate-600">
+                <tr>
+                  <th colSpan={2} className="px-3 py-2 text-center">
+                    Cuenta
+                  </th>
+                  <th colSpan={4} className="px-3 py-2 text-center">
+                    Balance final
+                  </th>
+                  <th colSpan={4} className="px-3 py-2 text-center">
+                    Libro Mayor
+                  </th>
+                  <th colSpan={3} className="px-3 py-2 text-center">
+                    Conciliación
+                  </th>
+                </tr>
                 <tr>
                   {[
                     "Código",
-                    "Cuenta",
-                    "Débitos Balance",
-                    "Créditos Balance",
+                    "Nombre",
+                    "Débitos",
+                    "Créditos",
                     "Saldo deudor",
                     "Saldo acreedor",
-                    "Débitos Mayor",
-                    "Créditos Mayor",
-                    "Diferencia",
+                    "Debe",
+                    "Haber",
                     "Movimientos",
                     "Último movimiento",
+                    "Diferencia debe",
+                    "Diferencia haber",
                     "Estado",
-                    "Acción",
                   ].map((h) => (
                     <th key={h} className="whitespace-nowrap px-3 py-3">
                       {h}
@@ -338,7 +468,10 @@ export function BalanceExplorer({
                     aria-label={`Ver movimientos de ${row.code} ${row.name}`}
                     onClick={() => open(row.accountId)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") open(row.accountId);
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        open(row.accountId);
+                      }
                     }}
                     className="cursor-pointer hover:bg-emerald-50 focus:bg-emerald-50"
                   >
@@ -361,44 +494,35 @@ export function BalanceExplorer({
                         {formatAccountingAmount(v)}
                       </td>
                     ))}
-                    <td className="px-3 py-3 text-right text-xs tabular-nums">
-                      {row.reconciliationStatus === "reconciled" ? (
-                        "Conciliada"
-                      ) : row.reconciliationStatus === "difference" ? (
-                        <>
-                          Debe: {formatAccountingAmount(row.debitDifference)}
-                          <br />
-                          Haber: {formatAccountingAmount(row.creditDifference)}
-                        </>
-                      ) : row.reconciliationStatus === "no_ledger" ? (
-                        "Sin movimientos"
-                      ) : (
-                        "No disponible"
-                      )}
-                    </td>
                     <td className="px-3 py-3 text-right">
                       <strong>{row.ledgerMovementCount}</strong>
                     </td>
                     <td className="min-w-36 whitespace-nowrap px-3 py-3 text-slate-600">
-                      {row.lastLedgerMovementDate ?? "—"}
+                      {formatAccountingDate(row.lastLedgerMovementDate)}
                     </td>
+                    {[row.debitDifference, row.creditDifference].map(
+                      (value, index) => (
+                        <td
+                          key={index}
+                          className="px-3 py-3 text-right tabular-nums"
+                        >
+                          {value === null ? (
+                            "—"
+                          ) : (
+                            <span>
+                              {Number(value) !== 0 ? "Diferencia: " : ""}
+                              {formatAccountingAmount(value)}
+                            </span>
+                          )}
+                        </td>
+                      ),
+                    )}
                     <td className="px-3 py-3">
                       <span
                         className={`whitespace-nowrap rounded-full px-2 py-1 text-xs font-medium ${statusClasses[row.reconciliationStatus]}`}
                       >
                         {statusLabels[row.reconciliationStatus]}
                       </span>
-                    </td>
-                    <td className="px-3 py-3">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          open(row.accountId);
-                        }}
-                        className="inline-flex items-center gap-1 whitespace-nowrap text-emerald-800"
-                      >
-                        Ver movimientos <ExternalLink className="size-3" />
-                      </button>
                     </td>
                   </tr>
                 ))}

@@ -3,6 +3,7 @@ import { CompanyAccessGuard } from "../../auth/guards/company-access.guard";
 import {
   BalanceExplorerQueryDto,
   GeneralLedgerQueryDto,
+  OpeningControlQueryDto,
 } from "../dto/accounting-explorer.dto";
 import { AccountingExplorerService } from "../services/accounting-explorer.service";
 
@@ -33,5 +34,14 @@ export class AccountingExplorerController {
       accountId,
       query,
     );
+  }
+
+  @Get("opening-control")
+  openingControl(
+    @Param("companyId") companyId: string,
+    @Param("taxPeriodId") taxPeriodId: string,
+    @Query() query: OpeningControlQueryDto,
+  ) {
+    return this.explorer.openingControlDetail(companyId, taxPeriodId, query);
   }
 }

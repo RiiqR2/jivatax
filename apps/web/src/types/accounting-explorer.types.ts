@@ -53,7 +53,12 @@ export type BalanceResponse = Paginated<BalanceAccount> & {
     companyName: string;
     commercialYear: number;
     taxYear: number;
-    balanceDocument: {
+    openingBalanceDocument: {
+      id: string;
+      versionNumber: number;
+      processedAt: string;
+    } | null;
+    closingBalanceDocument: {
       id: string;
       versionNumber: number;
       processedAt: string;
@@ -63,6 +68,15 @@ export type BalanceResponse = Paginated<BalanceAccount> & {
       versionNumber: number;
       processedAt: string;
     } | null;
+  };
+  openingControl: {
+    openingBalanceAvailable: boolean;
+    previousClosingAvailable: boolean;
+    matchingAccounts: number;
+    accountsWithDifferences: number;
+    onlyInOpening: number;
+    onlyInPreviousClosing: number;
+    warning: string | null;
   };
 };
 export type LedgerEntry = {

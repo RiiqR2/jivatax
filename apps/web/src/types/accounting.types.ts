@@ -10,10 +10,12 @@ export type TaxPeriod = {
 };
 
 export type TaxDocumentType = "balance" | "general_ledger" | "journal";
+export type BalanceRole = "opening" | "closing";
 
 export type TaxDocument = {
   id: string;
   documentType: TaxDocumentType;
+  balanceRole: BalanceRole | null;
   status: string;
   versionNumber: number;
   uploadedAt: string;

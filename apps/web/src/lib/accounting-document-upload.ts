@@ -4,9 +4,25 @@ import type {
   TaxDocument,
   TaxDocumentReport,
   TaxDocumentType,
+  BalanceRole,
 } from "../types/accounting.types.ts";
 
 export const MAX_ACCOUNTING_FILE_SIZE = 25 * 1024 * 1024;
+
+export function buildCreateDocumentPayload(
+  documentType: TaxDocumentType,
+  storedFileId: string,
+  balanceRole?: BalanceRole,
+) {
+  const payload: {
+    documentType: TaxDocumentType;
+    storedFileId: string;
+    balanceRole?: BalanceRole;
+  } = { documentType, storedFileId };
+  if (documentType === "balance" && balanceRole)
+    payload.balanceRole = balanceRole;
+  return payload;
+}
 const allowedExtensions = ["xls", "xlsx", "csv"];
 const allowedMimeTypes = [
   "application/vnd.ms-excel",
@@ -53,6 +69,7 @@ type UploadDependencies = {
       periodId: string,
       documentType: TaxDocumentType,
       storedFileId: string,
+      balanceRole?: BalanceRole,
     ) => Promise<TaxDocument>;
     processDocument: (
       companyId: string,
@@ -77,6 +94,7 @@ export async function processAccountingFile(
     onProgress: (percentage: number) => void;
   },
   dependencies: UploadDependencies,
+  balanceRole?: BalanceRole,
 ): Promise<{ document: TaxDocument; report: TaxDocumentReport }> {
   const validationError = validateAccountingFile(file);
   if (validationError) throw new Error(validationError);
@@ -115,6 +133,7 @@ export async function processAccountingFile(
     taxPeriodId,
     documentType,
     storedFile.id,
+    balanceRole,
   );
   callbacks.onStage("validating");
   await Promise.resolve();
