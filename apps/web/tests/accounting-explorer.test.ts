@@ -113,3 +113,31 @@ test("opening detail is lazy, filterable, and the header uses only explicit sour
   assert.match(source, /closingBalanceDocument/);
   assert.doesNotMatch(source, /sources\.balanceDocument/);
 });
+
+test("opening presentation recognizes both current balances without a ledger or historical closing", () => {
+  assert.match(
+    source,
+    /Balance inicial v\$\{data\.sources\.openingBalanceDocument\.versionNumber\}/,
+  );
+  assert.match(
+    source,
+    /Balance final v\$\{data\.sources\.closingBalanceDocument\.versionNumber\}/,
+  );
+  assert.match(source, /Libro Mayor[\s\S]*?"no disponible"/);
+  assert.match(source, /Fuente de apertura:/);
+  assert.match(source, /Balance inicial v[\s\S]*?versionNumber\} disponible\./);
+  assert.match(
+    source,
+    /Archivo: \{data\.sources\.openingBalanceDocument\.originalName\}/,
+  );
+  assert.match(source, /Comparación histórica:/);
+  assert.match(source, /No existe un cierre histórico anterior almacenado/);
+  assert.match(
+    source,
+    /seguirá siendo utilizado como[\s\S]*?fuente de apertura/,
+  );
+  assert.doesNotMatch(
+    source,
+    /No existe un Balance final anterior disponible para comparación\./,
+  );
+});

@@ -57,16 +57,26 @@ export type BalanceResponse = Paginated<BalanceAccount> & {
       id: string;
       versionNumber: number;
       processedAt: string;
+      originalName: string;
+      status: "processed";
     } | null;
     closingBalanceDocument: {
       id: string;
       versionNumber: number;
       processedAt: string;
+      originalName: string;
+      status: "processed";
     } | null;
     generalLedgerDocument: {
       id: string;
       versionNumber: number;
       processedAt: string;
+      originalName: string;
+      status: "processed";
+    } | null;
+    previousClosingDocument: {
+      id: string;
+      versionNumber: number;
     } | null;
   };
   openingControl: {
