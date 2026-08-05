@@ -23,8 +23,10 @@ export function safeBalanceReturnTo(
     : expected;
 }
 
-export function formatAccountingAmount(value: string | number | null) {
-  if (value === null) return "—";
+export function formatAccountingAmount(
+  value: string | number | null | undefined,
+) {
+  if (value === null || value === undefined) return "—";
   const [rawInteger, rawDecimals = ""] = String(value).split(".");
   const sign = rawInteger.startsWith("-") ? "-" : "";
   const integer = rawInteger.replace(/^-/, "").replace(/^0+(?=\d)/, "");

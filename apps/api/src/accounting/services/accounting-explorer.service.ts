@@ -18,6 +18,47 @@ type ExplorerSource = {
   balanceRole: "opening" | "closing" | null;
 };
 export const RECONCILIATION_TOLERANCE = "0.0100";
+
+const BALANCE_ITEM_AMOUNT_FIELDS = [
+  "balanceDebits",
+  "balanceCredits",
+  "balanceDebitBalance",
+  "balanceCreditBalance",
+  "balanceAssets",
+  "balanceLiabilities",
+  "balanceLosses",
+  "balanceGains",
+  "ledgerDebit",
+  "ledgerCredit",
+  "debitDifference",
+  "creditDifference",
+] as const;
+
+function coalescedBalanceAmount(
+  periodColumn: string,
+  entryColumn: string,
+  alias: string,
+) {
+  return `CAST(COALESCE(pa.${periodColumn}, be.${entryColumn}, 0) AS DECIMAL(24,4)) ${alias}`;
+}
+
+function normalizeExplorerAmount(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return String(value);
+}
+
+function normalizeBalanceItem(row: Row): Row {
+  const normalized: Row = { ...row };
+  for (const field of BALANCE_ITEM_AMOUNT_FIELDS) {
+    const value =
+      row[field] ??
+      row[field.toLowerCase()] ??
+      row[field.replace(/([A-Z])/g, "_$1").toLowerCase()];
+    if (value !== undefined) normalized[field] = normalizeExplorerAmount(value);
+  }
+  return normalized;
+}
+
 export function accumulatedBalance(
   rows: Array<{ debit: number; credit: number }>,
   opening = 0,
@@ -184,7 +225,19 @@ export class AccountingExplorerService {
       loss: "loss_amount",
       gain: "gain_amount",
     };
-    if (query.section) where.push(`pa.${sectionColumns[query.section]} <> 0`);
+    const effectiveSectionColumns: Record<string, string> = {
+      asset: "effective_assets",
+      liability: "effective_liabilities",
+      loss: "effective_losses",
+      gain: "effective_gains",
+    };
+    if (query.section) {
+      const periodColumn = sectionColumns[query.section];
+      const entryColumn = effectiveSectionColumns[query.section];
+      where.push(
+        `COALESCE(pa.${periodColumn}, be.${entryColumn}, 0) <> 0`,
+      );
+    }
     const ledgerAvailable = Boolean(resolved.generalLedger?.importId);
     const ledgerJoin = ledgerAvailable
       ? `LEFT JOIN (SELECT e.company_account_id, CAST(SUM(e.debit) AS DECIMAL(24,4)) ledgerDebit,
@@ -199,22 +252,29 @@ export class AccountingExplorerService {
       : [];
     const statusSql = ledgerAvailable
       ? `CASE WHEN COALESCE(l.ledgerMovementCount,0)=0 THEN 'no_ledger'
-          WHEN ABS(pa.debit_amount-COALESCE(l.ledgerDebit,0))<=${RECONCILIATION_TOLERANCE}
-           AND ABS(pa.credit_amount-COALESCE(l.ledgerCredit,0))<=${RECONCILIATION_TOLERANCE}
+          WHEN ABS(COALESCE(pa.debit_amount, be.effective_debits, 0)-COALESCE(l.ledgerDebit,0))<=${RECONCILIATION_TOLERANCE}
+           AND ABS(COALESCE(pa.credit_amount, be.effective_credits, 0)-COALESCE(l.ledgerCredit,0))<=${RECONCILIATION_TOLERANCE}
           THEN 'reconciled' ELSE 'difference' END`
       : "'unavailable'";
     const cte = `WITH explorer AS (SELECT pa.company_account_id accountId, pa.account_code_snapshot code,
       pa.account_name_snapshot name,
-      CAST(pa.debit_amount AS DECIMAL(24,4)) balanceDebits, CAST(pa.credit_amount AS DECIMAL(24,4)) balanceCredits,
-      pa.debit_balance balanceDebitBalance, pa.credit_balance balanceCreditBalance, pa.asset_amount balanceAssets,
-      pa.liability_amount balanceLiabilities, pa.loss_amount balanceLosses, pa.gain_amount balanceGains,
+      ${coalescedBalanceAmount("debit_amount", "effective_debits", "balanceDebits")},
+      ${coalescedBalanceAmount("credit_amount", "effective_credits", "balanceCredits")},
+      ${coalescedBalanceAmount("debit_balance", "effective_debit_balance", "balanceDebitBalance")},
+      ${coalescedBalanceAmount("credit_balance", "effective_credit_balance", "balanceCreditBalance")},
+      ${coalescedBalanceAmount("asset_amount", "effective_assets", "balanceAssets")},
+      ${coalescedBalanceAmount("liability_amount", "effective_liabilities", "balanceLiabilities")},
+      ${coalescedBalanceAmount("loss_amount", "effective_losses", "balanceLosses")},
+      ${coalescedBalanceAmount("gain_amount", "effective_gains", "balanceGains")},
       ${ledgerAvailable ? "COALESCE(l.ledgerDebit,0)" : "NULL"} ledgerDebit,
       ${ledgerAvailable ? "COALESCE(l.ledgerCredit,0)" : "NULL"} ledgerCredit,
-      ${ledgerAvailable ? "pa.debit_amount-COALESCE(l.ledgerDebit,0)" : "NULL"} debitDifference,
-      ${ledgerAvailable ? "pa.credit_amount-COALESCE(l.ledgerCredit,0)" : "NULL"} creditDifference,
+      ${ledgerAvailable ? "COALESCE(pa.debit_amount, be.effective_debits, 0)-COALESCE(l.ledgerDebit,0)" : "NULL"} debitDifference,
+      ${ledgerAvailable ? "COALESCE(pa.credit_amount, be.effective_credits, 0)-COALESCE(l.ledgerCredit,0)" : "NULL"} creditDifference,
       ${statusSql} reconciliationStatus, COALESCE(l.ledgerMovementCount,0) ledgerMovementCount,
       l.lastLedgerMovementDate, COALESCE(l.ledgerMovementCount,0)>0 hasLedgerMovements, TRUE canOpenLedger
-      FROM tax_period_company_accounts pa ${ledgerJoin}
+      FROM tax_period_company_accounts pa
+      LEFT JOIN balance_entries be ON be.id = pa.balance_entry_id
+      ${ledgerJoin}
       WHERE ${where.join(" AND ")})`;
     const filtered =
       query.reconciliation && query.reconciliation !== "all"
@@ -331,7 +391,7 @@ export class AccountingExplorerService {
           hasLedgerMovements: boolean;
           canOpenLedger: boolean;
         } = {
-          ...row,
+          ...normalizeBalanceItem(row),
           ledgerMovementCount: Number(row.ledgerMovementCount ?? 0),
           hasLedgerMovements: Boolean(Number(row.hasLedgerMovements ?? 0)),
           canOpenLedger: Boolean(Number(row.canOpenLedger ?? 0)),

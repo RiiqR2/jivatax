@@ -164,6 +164,53 @@ test("an imported ledger reports reconciled accounts and differences from the sa
   assert.equal(pageQuery.params[0], "ledger-import-v3");
 });
 
+test("balance explorer coalesces losses and gains from balance entries", async () => {
+  const { service, calls } = serviceWithFixture({
+    sources: [balanceSource],
+    items: [
+      {
+        accountId: "account-1",
+        code: "410100",
+        name: "Gastos generales",
+        balanceDebits: "30000.0000",
+        balanceCredits: "0.0000",
+        balanceDebitBalance: "30000.0000",
+        balanceCreditBalance: "0.0000",
+        balanceAssets: "0.0000",
+        balanceLiabilities: "0.0000",
+        balanceLosses: "30000.0000",
+        balanceGains: "0.0000",
+        reconciliationStatus: "unavailable",
+        total: "1",
+      },
+    ],
+    summary: {
+      totalAccounts: "1",
+      totalBalanceLosses: "30000.0000",
+      totalBalanceGains: "0.0000",
+      lossAccountCount: "1",
+      gainAccountCount: "0",
+      reconciliationUnavailable: 1,
+    },
+  });
+  const result = await service.balance("company", "period", query);
+  assert.equal(result.items[0].balanceLosses, "30000.0000");
+  assert.equal(result.items[0].balanceGains, "0.0000");
+  assert.equal(result.summary.totalBalanceLosses, "30000.0000");
+  const pageQuery = calls.find((call) =>
+    call.sql.includes("SELECT explorer.*"),
+  )!;
+  assert.match(pageQuery.sql, /LEFT JOIN balance_entries be ON be\.id = pa\.balance_entry_id/);
+  assert.match(
+    pageQuery.sql,
+    /COALESCE\(pa\.loss_amount, be\.effective_losses, 0\)/,
+  );
+  assert.match(
+    pageQuery.sql,
+    /COALESCE\(pa\.gain_amount, be\.effective_gains, 0\)/,
+  );
+});
+
 test("source resolution chooses only the latest processed, non-discarded document", async () => {
   const { service, calls } = serviceWithFixture({
     sources: [balanceSource],

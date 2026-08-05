@@ -46,6 +46,7 @@ test("ledger navigation preserves a safe balance return URL", () => {
 
 test("null accounting totals remain unavailable", () => {
   assert.equal(formatAccountingAmount(null), "—");
+  assert.equal(formatAccountingAmount(undefined), "—");
 });
 
 test("balance and reconciliation are separated without mapping UI", () => {

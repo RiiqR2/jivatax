@@ -975,7 +975,7 @@ export class TaxDocumentsService {
           row.accountCode,
           row.accountName,
           ...BALANCE_MONETARY_FIELDS.map(
-            (field) => row.money[field].reportedDecimal,
+            (field) => row.money[field].effectiveDecimal,
           ),
         ],
       );
