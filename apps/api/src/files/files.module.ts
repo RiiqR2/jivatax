@@ -13,7 +13,11 @@ import { OrganizationMemberEntity } from "../organizations/entities/organization
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([StoredFileEntity, CompanyEntity, OrganizationMemberEntity]),
+    TypeOrmModule.forFeature([
+      StoredFileEntity,
+      CompanyEntity,
+      OrganizationMemberEntity,
+    ]),
     CompaniesModule,
     ConfigModule.forFeature(storageConfig),
     StorageModule,

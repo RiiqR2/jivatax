@@ -52,10 +52,16 @@ export interface GeneratedCandidate {
   account: SiiAccountEntity;
   metadata: AccountingMetadata;
   terms: SiiAccountTermEntity[];
+  negativeTerms: SiiAccountTermEntity[];
   concepts: SiiAccountConceptEntity[];
   knowledge?: SiiAccountKnowledgeEntity;
   learning?: AccountLearningEvidence[];
 }
+
+export type RankingOptions = {
+  /** Prior confirmed mapping for this company account; evidence only. */
+  historicalCompanyMappingSiiAccountId?: string | null;
+};
 
 export type MatchingSignalKind = "evidence" | "penalty" | "rule";
 

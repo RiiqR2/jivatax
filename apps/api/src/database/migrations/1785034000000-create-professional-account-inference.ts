@@ -34,9 +34,7 @@ const auditColumns = [
   },
 ];
 
-export class CreateProfessionalAccountInference1785034000000
-  implements MigrationInterface
-{
+export class CreateProfessionalAccountInference1785034000000 implements MigrationInterface {
   name = "CreateProfessionalAccountInference1785034000000";
 
   async up(queryRunner: QueryRunner): Promise<void> {

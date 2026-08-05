@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
 import type { RankedCandidate } from "../account-matching.types";
 
 @Injectable()
@@ -14,13 +15,24 @@ export class AccountConfidenceCalibratorService {
       (item) => item.kind === "rule" && item.points >= 40,
     ).length;
     const gap = Math.max(0, candidate.score - secondScore);
-    const scoreComponent = Math.min(0.55, Math.max(0, candidate.score) / 180);
+    const scoreDenominator =
+      ACCOUNT_SUGGESTION_CONFIG.scoreForFullConfidence * 1.8;
+    const scoreComponent = Math.min(
+      0.55,
+      Math.max(0, candidate.score) / scoreDenominator,
+    );
     const signalComponent = Math.min(0.18, evidence.length * 0.025);
     const gapComponent = Math.min(0.18, gap / 100);
     const historyComponent = candidate.reasons.some(
-      (item) => item.source === "history",
+      (item) => item.source === "history" && item.points > 0,
     )
-      ? 0.08
+      ? 0.1
+      : 0;
+    const expertComponent = candidate.reasons.some(
+      (item) =>
+        item.signal.startsWith("supervised_learning_expert") && item.points > 0,
+    )
+      ? 0.04
       : 0;
     const ruleComponent = Math.min(0.08, strongRules * 0.04);
     const penalty = Math.min(
@@ -42,6 +54,7 @@ export class AccountConfidenceCalibratorService {
             signalComponent +
             gapComponent +
             historyComponent +
+            expertComponent +
             ruleComponent -
             penalty -
             competitionPenalty,

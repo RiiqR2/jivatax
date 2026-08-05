@@ -4,16 +4,8 @@
     "baseUrl": ".",
     "rootDir": "./src",
     "outDir": "./dist",
-    "types": [
-      "node"
-    ]
+    "types": ["node"]
   },
-  "include": [
-    "src/**/*.ts"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "test"
-  ]
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test"]
 }

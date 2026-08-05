@@ -1,15 +1,15 @@
-import eslint from '@eslint/js';
-import globals from 'globals';
-import tseslint from 'typescript-eslint';
+import eslint from "@eslint/js";
+import globals from "globals";
+import tseslint from "typescript-eslint";
 
 const config = tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**'],
+    ignores: ["dist/**", "node_modules/**"],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['src/**/*.ts'],
+    files: ["src/**/*.ts"],
     languageOptions: {
       globals: {
         ...globals.node,
@@ -20,14 +20,14 @@ const config = tseslint.config(
       },
     },
     rules: {
-      '@typescript-eslint/explicit-function-return-type': 'off',
-      '@typescript-eslint/explicit-module-boundary-types': 'off',
-      '@typescript-eslint/no-explicit-any': 'error',
-      '@typescript-eslint/no-unused-vars': [
-        'error',
+      "@typescript-eslint/explicit-function-return-type": "off",
+      "@typescript-eslint/explicit-module-boundary-types": "off",
+      "@typescript-eslint/no-explicit-any": "error",
+      "@typescript-eslint/no-unused-vars": [
+        "error",
         {
-          argsIgnorePattern: '^_',
-          varsIgnorePattern: '^_',
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
         },
       ],
     },

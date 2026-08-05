@@ -28,6 +28,7 @@ const candidate = (
     attributes: null,
     active: true,
   } as SiiAccountKnowledgeEntity,
+  negativeTerms: [],
 });
 
 describe("AccountRuleEngineService", () => {

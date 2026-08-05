@@ -16,15 +16,8 @@ import { CompanyAccountEntity } from "../../company-account-plan/entities/compan
 import { CompanyAccountMappingStatus } from "../../company-account-plan/enums/company-account-plan.enums";
 import { SiiAccountEntity } from "../../sii-account-plan/entities/sii-account.entity";
 import { CurrentSiiAccountCatalogService } from "../../sii-account-plan/services/current-sii-account-catalog.service";
-import {
-  SiiAccountTermEntity,
-  type SiiAccountTermType,
-} from "../entities/sii-account-term.entity";
-import {
-  normalizeAccountTerm,
-  relevantWords,
-  weightedTokenSimilarity,
-} from "../normalization/account-term-normalizer";
+import { SiiAccountTermEntity } from "../entities/sii-account-term.entity";
+import { normalizeAccountTerm } from "../normalization/account-term-normalizer";
 import { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
 import { AccountCandidateGeneratorService } from "./account-candidate-generator.service";
 import { AccountSuggestionRankingService } from "./account-suggestion-ranking.service";
@@ -35,27 +28,14 @@ import { AccountMatchingRuleEntity } from "../entities/account-matching-rule.ent
 import { AccountMatchingLearningEntity } from "../entities/account-matching-learning.entity";
 import { AccountMatchingLearningIndustryEntity } from "../entities/account-matching-learning-industry.entity";
 import { AccountMatchingDiagnosticEntity } from "../entities/account-matching-diagnostic.entity";
+import { CompanyAccountMappingHistoryEntity } from "../../accounting/entities/company-account-mapping-history.entity";
 import { CompanyEntity } from "../../companies/entities/company.entity";
 import { TaxPeriodEntity } from "../../accounting/entities/tax-period.entity";
 import type { AccountLearningEvidence } from "../account-matching.types";
 export { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
 
-const POSITIVE_TERM_TYPES = new Set<SiiAccountTermType>([
-  "official_name",
-  "alias",
-  "abbreviation",
-  "manual_term",
-  "erp_term",
-  "industry_term",
-]);
-
-type Candidate = {
-  account: SiiAccountEntity;
-  score: number;
-  confidence: number;
-  exact: boolean;
-  reasons: Array<{ signal: string; description: string; points: number }>;
-};
+const EXACT_TERM_SIGNAL =
+  /^exact_(alias|official_name|company_alias|erp_term|industry_term|manual_term|abbreviation)$/;
 
 type BalanceContext = {
   assetAmount: string;
@@ -72,11 +52,6 @@ type PeriodMatchingContext = BalanceContext & {
 
 type AccountWithContext = CompanyAccountEntity & {
   matchingContext?: PeriodMatchingContext;
-};
-
-type TermIndexes = {
-  positiveTermsByNormalizedTerm: Map<string, SiiAccountTermEntity[]>;
-  negativeTermsByNormalizedTerm: Map<string, SiiAccountTermEntity[]>;
 };
 
 type DiscardReason =
@@ -124,6 +99,9 @@ export class AccountSuggestionService {
     const expenseKnowledge = resolveCatalogExpenseKnowledge(siiAccounts);
     const siiAccountsById = new Map(
       siiAccounts.map((account) => [account.id, account]),
+    );
+    const historicalMappings = await this.loadHistoricalCompanyMappings(
+      accounts.map((account) => account.id),
     );
     const foundAccountIds = Array.from(siiAccountsById.keys());
     const missingAccountIds = siiAccountIds.filter(
@@ -236,6 +214,10 @@ export class AccountSuggestionService {
           generatedCandidates,
           companyAccount.matchingContext,
           loadedRules,
+          {
+            historicalCompanyMappingSiiAccountId:
+              historicalMappings.get(companyAccount.id) ?? null,
+          },
         );
         this.logSuggestionAudit({
           companyAccount,
@@ -288,12 +270,14 @@ export class AccountSuggestionService {
         const ranked = {
           candidates: deterministic.candidates.map((candidate) => ({
             ...candidate,
-            exact: candidate.reasons.some(
-              (reason) => reason.signal === "exact_alias",
+            exact: candidate.reasons.some((reason) =>
+              EXACT_TERM_SIGNAL.test(reason.signal),
             ),
           })),
           exactMatches: deterministic.candidates.filter((candidate) =>
-            candidate.reasons.some((reason) => reason.signal === "exact_alias"),
+            candidate.reasons.some((reason) =>
+              EXACT_TERM_SIGNAL.test(reason.signal),
+            ),
           ).length,
           discardedByScore:
             deterministic.decision === "review"
@@ -637,7 +621,7 @@ export class AccountSuggestionService {
               type: "official_name",
               scope: "catalog",
               companyId: null,
-              weight: ACCOUNT_SUGGESTION_CONFIG.weights.exactAlias,
+              weight: ACCOUNT_SUGGESTION_CONFIG.weights.exactOfficialName,
             })),
           ...exactTerms
             .filter((term) => term.type === "official_name")
@@ -728,308 +712,30 @@ export class AccountSuggestionService {
     });
   }
 
-  private rank(
-    siiAccountsById: Map<string, SiiAccountEntity>,
-    positiveTerms: SiiAccountTermEntity[],
-    negativeTerms: SiiAccountTermEntity[],
-    normalizedName?: string,
-    context?: BalanceContext,
-  ) {
-    let exactMatches = 0;
-    let discardedByScore = 0;
-    let positiveTermsSeen = 0;
-    let penalizedCandidates = 0;
-    const debugTerms: Array<{ type: string; weight: number; term: string }> =
-      [];
-    const candidates: Candidate[] = [];
-
-    const matchedTermsByAccount = new Map<string, SiiAccountTermEntity[]>();
-    for (const term of [...positiveTerms, ...negativeTerms]) {
-      const accountTerms = matchedTermsByAccount.get(term.siiAccountId) ?? [];
-      accountTerms.push(term);
-      matchedTermsByAccount.set(term.siiAccountId, accountTerms);
+  private async loadHistoricalCompanyMappings(companyAccountIds: string[]) {
+    if (
+      !companyAccountIds.length ||
+      typeof this.dataSource.getRepository !== "function"
+    )
+      return new Map<string, string>();
+    const rows = await this.dataSource
+      .getRepository(CompanyAccountMappingHistoryEntity)
+      .createQueryBuilder("history")
+      .where("history.companyAccountId IN (:...ids)", {
+        ids: companyAccountIds,
+      })
+      .andWhere("history.newStatus = :status", {
+        status: CompanyAccountMappingStatus.CONFIRMED,
+      })
+      .andWhere("history.newSiiAccountId IS NOT NULL")
+      .orderBy("history.createdAt", "DESC")
+      .getMany();
+    const byAccount = new Map<string, string>();
+    for (const row of rows) {
+      if (!byAccount.has(row.companyAccountId) && row.newSiiAccountId)
+        byAccount.set(row.companyAccountId, row.newSiiAccountId);
     }
-
-    for (const [siiAccountId, matchedTerms] of matchedTermsByAccount) {
-      const account = siiAccountsById.get(siiAccountId);
-      if (!account) continue;
-      const reasons: Candidate["reasons"] = [];
-      let exact = false;
-      const exactByText = new Map<string, SiiAccountTermEntity>();
-      let bestToken: { term: SiiAccountTermEntity; similarity: number } | null =
-        null;
-      let bestLexical: {
-        term: SiiAccountTermEntity;
-        similarity: number;
-      } | null = null;
-      for (const term of matchedTerms) {
-        const weight = Number(term.weight);
-        debugTerms.push({ type: term.type, weight, term: term.term });
-        if (term.type === "negative_term") {
-          reasons.push({
-            signal: "negative_term",
-            description: `Penalización por término negativo: ${term.term}`,
-            points: -Math.abs(weight),
-          });
-        } else if (POSITIVE_TERM_TYPES.has(term.type)) {
-          const similarity = normalizedName
-            ? this.tokenSimilarity(normalizedName, term.normalizedTerm)
-            : 1;
-          positiveTermsSeen++;
-          const isExact =
-            !normalizedName || normalizedName === term.normalizedTerm;
-          if (isExact) {
-            const prior = exactByText.get(term.normalizedTerm);
-            if (!prior || this.exactWeight(term) > this.exactWeight(prior))
-              exactByText.set(term.normalizedTerm, term);
-          } else {
-            if (!bestToken || similarity > bestToken.similarity)
-              bestToken = { term, similarity };
-            const lexical = this.lexicalSimilarity(
-              normalizedName ?? "",
-              term.normalizedTerm,
-            );
-            if (!bestLexical || lexical > bestLexical.similarity)
-              bestLexical = { term, similarity: lexical };
-          }
-        }
-      }
-      for (const term of exactByText.values()) {
-        exactMatches++;
-        exact = true;
-        reasons.push({
-          signal:
-            term.scope === "company"
-              ? "exact_company_alias"
-              : `exact_${term.type}`,
-          description: `Coincidencia exacta con ${term.type}: ${term.term}`,
-          points: this.exactWeight(term),
-        });
-      }
-      if (
-        bestToken &&
-        bestToken.similarity >=
-          ACCOUNT_SUGGESTION_CONFIG.lexicalCandidateThreshold
-      )
-        reasons.push({
-          signal: "token_similarity",
-          description: `Similitud ponderada de tokens (${Math.round(bestToken.similarity * 100)}%) con: ${bestToken.term.term}`,
-          points: Math.round(
-            ACCOUNT_SUGGESTION_CONFIG.weights.tokenSimilarityMaximum *
-              bestToken.similarity,
-          ),
-        });
-      if (
-        bestLexical &&
-        bestLexical.similarity >=
-          ACCOUNT_SUGGESTION_CONFIG.lexicalCandidateThreshold
-      )
-        reasons.push({
-          signal: "lexical_similarity",
-          description: `Similitud léxica (${Math.round(bestLexical.similarity * 100)}%) con: ${bestLexical.term.term}`,
-          points: Math.round(
-            ACCOUNT_SUGGESTION_CONFIG.weights.lexicalSimilarityMaximum *
-              bestLexical.similarity,
-          ),
-        });
-      reasons.push(...this.contextReasons(account, context));
-      const score = reasons.reduce((sum, reason) => sum + reason.points, 0);
-      if (reasons.some((reason) => reason.points < 0) && score <= 0)
-        penalizedCandidates++;
-      if (score < ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore) {
-        if (reasons.some((reason) => reason.points > 0)) discardedByScore++;
-        continue;
-      }
-      candidates.push({
-        account,
-        score,
-        exact,
-        confidence: Math.min(
-          1,
-          score / ACCOUNT_SUGGESTION_CONFIG.scoreForFullConfidence,
-        ),
-        reasons,
-      });
-    }
-    candidates.sort(
-      (left, right) =>
-        right.score - left.score ||
-        left.account.code.localeCompare(right.account.code),
-    );
-    const difference = candidates[0]
-      ? candidates[0].score - (candidates[1]?.score ?? 0)
-      : 0;
-    const relativeDifference = candidates[0]?.score
-      ? difference / candidates[0].score
-      : 0;
-    const discardReason: DiscardReason | undefined = !candidates.length
-      ? positiveTermsSeen === 0
-        ? penalizedCandidates > 0
-          ? "all_candidates_penalized"
-          : "no_positive_terms"
-        : "below_minimum_score"
-      : candidates.length > 1 &&
-          (difference < ACCOUNT_SUGGESTION_CONFIG.minimumAbsoluteDifference ||
-            relativeDifference <
-              ACCOUNT_SUGGESTION_CONFIG.minimumRelativeDifference)
-        ? "ambiguous_candidates"
-        : undefined;
-    if (discardReason === "ambiguous_candidates") {
-      for (const candidate of candidates)
-        candidate.reasons.push({
-          signal: "ambiguous_candidates",
-          description:
-            "Los dos primeros candidatos tienen puntajes demasiado próximos",
-          points: 0,
-        });
-    }
-    return {
-      candidates,
-      exactMatches,
-      discardedByScore,
-      debugTerms,
-      discardReason,
-    };
-  }
-
-  private tokenSimilarity(left: string, right: string): number {
-    return weightedTokenSimilarity(left, right);
-  }
-
-  private exactWeight(term: SiiAccountTermEntity): number {
-    const weights = ACCOUNT_SUGGESTION_CONFIG.weights;
-    if (term.scope === "company") return weights.exactCompanyAlias;
-    return (
-      (
-        {
-          official_name: weights.exactOfficialName,
-          alias: weights.exactAlias,
-          erp_term: weights.exactErpTerm,
-          abbreviation: weights.exactAbbreviation,
-          manual_term: weights.exactManualTerm,
-          industry_term: weights.exactIndustryTerm,
-        } as Partial<Record<SiiAccountTermType, number>>
-      )[term.type] ?? Number(term.weight)
-    );
-  }
-
-  private lexicalSimilarity(left: string, right: string): number {
-    if (!left || !right) return 0;
-    const rows = Array.from({ length: left.length + 1 }, (_, index) => index);
-    for (let column = 1; column <= right.length; column++) {
-      let previous = rows[0];
-      rows[0] = column;
-      for (let row = 1; row <= left.length; row++) {
-        const saved = rows[row];
-        rows[row] = Math.min(
-          rows[row] + 1,
-          rows[row - 1] + 1,
-          previous + (left[row - 1] === right[column - 1] ? 0 : 1),
-        );
-        previous = saved;
-      }
-    }
-    return 1 - rows[left.length] / Math.max(left.length, right.length);
-  }
-
-  private contextReasons(
-    account: SiiAccountEntity,
-    context?: BalanceContext,
-  ): Candidate["reasons"] {
-    if (!context) return [];
-    const name = normalizeAccountTerm(account.name);
-    const isComplementary =
-      name.includes("depreciacion acumulada") ||
-      name.includes("depreciacion menos");
-    const family = /ingreso|venta|ganancia/.test(name)
-      ? "income"
-      : /gasto|costo|perdida/.test(name)
-        ? "expense"
-        : /proveedor|pagar|pasivo|obligacion|deuda|retencion/.test(name)
-          ? "liability"
-          : "asset";
-    const amounts = {
-      asset: Number(context.assetAmount),
-      liability: Number(context.liabilityAmount),
-      loss: Number(context.lossAmount),
-      gain: Number(context.gainAmount),
-      debit: Number(context.debitBalance),
-      credit: Number(context.creditBalance),
-    };
-    const observed = amounts.liability
-      ? "liability"
-      : amounts.asset
-        ? "asset"
-        : amounts.loss
-          ? "expense"
-          : amounts.gain
-            ? "income"
-            : null;
-    const reasons: Candidate["reasons"] = [];
-    if (observed)
-      reasons.push({
-        signal:
-          observed === family || (isComplementary && observed === "asset")
-            ? "compatible_classification"
-            : "incompatible_classification",
-        description: `${observed === family || (isComplementary && observed === "asset") ? "Clasificación contable compatible" : "Clasificación contable incompatible"} con ${account.name}`,
-        points:
-          observed === family || (isComplementary && observed === "asset")
-            ? ACCOUNT_SUGGESTION_CONFIG.weights.compatibleClassification
-            : ACCOUNT_SUGGESTION_CONFIG.weights.incompatibleClassification,
-      });
-    const expectedDebit =
-      (family === "asset" && !isComplementary) || family === "expense";
-    if (amounts.debit || amounts.credit) {
-      const compatible = expectedDebit ? amounts.debit > 0 : amounts.credit > 0;
-      reasons.push({
-        signal: compatible
-          ? "compatible_balance_nature"
-          : "incompatible_balance_nature",
-        description: compatible
-          ? "Naturaleza del saldo compatible"
-          : "Naturaleza del saldo incompatible",
-        points: compatible
-          ? ACCOUNT_SUGGESTION_CONFIG.weights.compatibleBalanceNature
-          : ACCOUNT_SUGGESTION_CONFIG.weights.incompatibleBalanceNature,
-      });
-    }
-    return reasons;
-  }
-
-  private termOccurs(name: string, term: string): boolean {
-    if (!term) return false;
-    const nameWords = relevantWords(name);
-    const termWords = relevantWords(term);
-    return (
-      termWords.size > 0 && [...termWords].every((word) => nameWords.has(word))
-    );
-  }
-
-  private buildTermIndexes(terms: SiiAccountTermEntity[]): TermIndexes {
-    const positiveTermsByNormalizedTerm = new Map<
-      string,
-      SiiAccountTermEntity[]
-    >();
-    const negativeTermsByNormalizedTerm = new Map<
-      string,
-      SiiAccountTermEntity[]
-    >();
-
-    for (const term of terms) {
-      const key = term.normalizedTerm;
-      if (!key) continue;
-
-      const targetMap =
-        term.type === "negative_term"
-          ? negativeTermsByNormalizedTerm
-          : positiveTermsByNormalizedTerm;
-      const existingTerms = targetMap.get(key) ?? [];
-      existingTerms.push(term);
-      targetMap.set(key, existingTerms);
-    }
-
-    return { positiveTermsByNormalizedTerm, negativeTermsByNormalizedTerm };
+    return byAccount;
   }
 
   private discard(

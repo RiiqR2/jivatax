@@ -6,6 +6,7 @@ import type {
   GeneratedCandidate,
   RankedCandidate,
   ObservedAccountSection,
+  RankingOptions,
 } from "../account-matching.types";
 import { singularize } from "../metadata/accounting-metadata";
 import {
@@ -13,6 +14,13 @@ import {
   relevantWords,
   weightedTokenSimilarity,
 } from "../normalization/account-term-normalizer";
+import {
+  exactTermSignal,
+  exactTermWeight,
+  negativeTermMatches,
+  partialTermSimilarity,
+} from "../scoring/account-suggestion-scoring";
+import type { SiiAccountTermEntity } from "../entities/sii-account-term.entity";
 import { AccountAttributeParserService } from "./account-attribute-parser.service";
 import { normalizeAccountConcept } from "../normalization/account-concept-normalizer";
 import { AccountRuleEngineService } from "../rules/account-rule-engine.service";
@@ -46,6 +54,7 @@ export class AccountSuggestionRankingService {
     candidates: GeneratedCandidate[],
     context?: BalanceContext,
     configuredRules: AccountMatchingRuleEntity[] = [],
+    options: RankingOptions = {},
   ) {
     const { observedAccountName, canonicalAccountName } =
       typeof names === "string"
@@ -182,37 +191,16 @@ export class AccountSuggestionRankingService {
         ),
       )
       .map((candidate): RankedCandidate => {
-        const variants = [
-          candidate.account.name,
-          ...candidate.terms.map((term) => term.term),
-        ];
-        const best = variants
-          .map((term) => this.lexicalSignals(normalized, term))
-          .sort((a, b) => b.points - a.points)[0];
-        const reasons = [...(best?.reasons ?? [])];
-        const aliasSimilarity = candidate.terms
-          .filter((term) => term.type !== "official_name")
-          .reduce(
-            (maximum, term) =>
-              Math.max(
-                maximum,
-                weightedTokenSimilarity(normalized, term.normalizedTerm),
-              ),
+        const reasons = this.termReasons(normalized, candidate);
+        if (normalizedCanonical && normalizedCanonical !== normalized) {
+          const canonicalReasons = this.termReasons(
+            normalizedCanonical,
+            candidate,
+          );
+          const canonicalTotal = canonicalReasons.reduce(
+            (sum, reason) => sum + Math.max(0, reason.points),
             0,
           );
-        if (aliasSimilarity > 0)
-          reasons.push(
-            this.reason(
-              "semantic_alias_hit",
-              `Alias contable relevante (${Math.round(aliasSimilarity * 100)}%)`,
-              0,
-            ),
-          );
-        if (normalizedCanonical && normalizedCanonical !== normalized) {
-          const canonicalBest = variants
-            .map((term) => this.lexicalSignals(normalizedCanonical, term))
-            .sort((a, b) => b.points - a.points)[0];
-          const canonicalTotal = canonicalBest?.points ?? 0;
           const canonicalScale = canonicalTotal
             ? Math.min(
                 1,
@@ -221,7 +209,7 @@ export class AccountSuggestionRankingService {
               )
             : 0;
           reasons.push(
-            ...(canonicalBest?.reasons ?? []).map((reason) => ({
+            ...canonicalReasons.map((reason) => ({
               ...reason,
               signal: `canonical_${reason.signal}`,
               description: `Nombre canónico histórico: ${reason.description}`,
@@ -232,13 +220,24 @@ export class AccountSuggestionRankingService {
         reasons.push(
           ...(ruleEvaluations.get(candidate.account.id)?.signals ?? []),
         );
+        reasons.push(...this.negativeTermReasons(normalized, candidate));
+        if (
+          options.historicalCompanyMappingSiiAccountId &&
+          candidate.account.id === options.historicalCompanyMappingSiiAccountId
+        )
+          reasons.push(
+            this.reason(
+              "historical_company_mapping",
+              "Homologación confirmada previamente para esta cuenta interna",
+              ACCOUNT_SUGGESTION_CONFIG.weights.historicalCompanyMapping,
+              "history",
+            ),
+          );
         const learned =
           candidate.learning?.filter(
             (item) => item.normalizedName === normalized,
           ) ?? [];
         for (const item of learned) {
-          // Confidence already includes agreement rate. Multiplying it by the
-          // lexical similarity avoids counting agreement twice.
           const similarity = weightedTokenSimilarity(
             normalized,
             item.normalizedName,
@@ -254,6 +253,18 @@ export class AccountSuggestionRankingService {
             kind: "evidence",
             source: "history",
           });
+          if (item.expertConfirmationCount > 0) {
+            reasons.push({
+              signal: "supervised_learning_expert",
+              description: `${item.expertConfirmationCount} confirmación(es) experta(s) globales`,
+              points:
+                similarity *
+                Number(item.confidence) *
+                ACCOUNT_SUGGESTION_CONFIG.weights.expertLearningMaximum,
+              kind: "evidence",
+              source: "history",
+            });
+          }
           if (item.industryEvidence) {
             reasons.push({
               signal: "supervised_learning_industry",
@@ -266,6 +277,19 @@ export class AccountSuggestionRankingService {
               kind: "evidence",
               source: "history",
             });
+            if (item.industryEvidence.expertConfirmationCount > 0) {
+              reasons.push({
+                signal: "supervised_learning_expert_industry",
+                description: `${item.industryEvidence.expertConfirmationCount} confirmación(es) experta(s) del rubro`,
+                points:
+                  similarity *
+                  Number(item.industryEvidence.confidence) *
+                  ACCOUNT_SUGGESTION_CONFIG.weights.expertLearningMaximum *
+                  ACCOUNT_SUGGESTION_CONFIG.weights.industryLearningWeight,
+                kind: "evidence",
+                source: "history",
+              });
+            }
           }
         }
         reasons.push(...this.conceptReasons(normalized, source, candidate));
@@ -401,15 +425,14 @@ export class AccountSuggestionRankingService {
             ? "review"
             : top[0].score < ACCOUNT_SUGGESTION_CONFIG.minimumSuggestionScore
               ? "review"
-              : top[0].confidence <
-                  ACCOUNT_SUGGESTION_CONFIG.minimumAutomaticConfidence
-                ? "review"
-                : top.length > 1 &&
-                    (gap <
-                      ACCOUNT_SUGGESTION_CONFIG.minimumAbsoluteDifference ||
-                      gap / Math.max(top[0].score, 1) <
-                        ACCOUNT_SUGGESTION_CONFIG.minimumRelativeDifference)
-                  ? "ambiguous"
+              : top.length > 1 &&
+                  (gap < ACCOUNT_SUGGESTION_CONFIG.minimumAbsoluteDifference ||
+                    gap / Math.max(top[0].score, 1) <
+                      ACCOUNT_SUGGESTION_CONFIG.minimumRelativeDifference)
+                ? "ambiguous"
+                : top[0].confidence <
+                    ACCOUNT_SUGGESTION_CONFIG.minimumAutomaticConfidence
+                  ? "review"
                   : "automatic";
     const decisionAudit = this.decisionAudit(
       decision,
@@ -462,9 +485,18 @@ export class AccountSuggestionRankingService {
         return [];
       if (
         reason.signal === "exact_alias" ||
+        reason.signal === "exact_official_name" ||
+        reason.signal === "exact_company_alias" ||
+        reason.signal === "exact_erp_term" ||
+        reason.signal === "exact_industry_term" ||
+        reason.signal === "exact_manual_term" ||
+        reason.signal === "exact_abbreviation" ||
         reason.signal === "exact_concept" ||
+        reason.signal === "historical_company_mapping" ||
         reason.signal === "supervised_learning_global" ||
-        reason.signal === "supervised_learning_industry"
+        reason.signal === "supervised_learning_industry" ||
+        reason.signal === "supervised_learning_expert" ||
+        reason.signal === "supervised_learning_expert_industry"
       )
         return [reason.signal];
       return [];
@@ -639,66 +671,233 @@ export class AccountSuggestionRankingService {
       : "incompatible_statement_section";
   }
 
-  private lexicalSignals(left: string, rawRight: string) {
-    const right = normalizeAccountTerm(rawRight);
-    const leftTokens = new Set([...relevantWords(left)].map(singularize));
-    const rightTokens = new Set([...relevantWords(right)].map(singularize));
-    const union = new Set([...leftTokens, ...rightTokens]);
-    const intersection = [...leftTokens].filter((token) =>
-      rightTokens.has(token),
-    );
-    const jaccard = union.size ? intersection.length / union.size : 0;
-    const trigram = this.jaccard(this.trigrams(left), this.trigrams(right));
+  private termReasons(
+    normalizedSource: string,
+    candidate: GeneratedCandidate,
+  ): RankedCandidate["reasons"] {
     const reasons: RankedCandidate["reasons"] = [];
-    if (left === right)
+    const exactByText = new Map<
+      string,
+      { label: string; signal: string; points: number }
+    >();
+    const officialNormalized = normalizeAccountTerm(candidate.account.name);
+    if (normalizedSource === officialNormalized)
+      exactByText.set(officialNormalized, {
+        label: candidate.account.name,
+        signal: "exact_official_name",
+        points: ACCOUNT_SUGGESTION_CONFIG.weights.exactOfficialName,
+      });
+    for (const term of candidate.terms) {
+      if (term.type === "negative_term") continue;
+      if (normalizedSource !== term.normalizedTerm) continue;
+      const points = exactTermWeight(term);
+      const signal = exactTermSignal(term);
+      const prior = exactByText.get(term.normalizedTerm);
+      if (!prior || points > prior.points)
+        exactByText.set(term.normalizedTerm, {
+          label: term.term,
+          signal,
+          points,
+        });
+    }
+    for (const exact of exactByText.values())
       reasons.push(
         this.reason(
-          "exact_alias",
-          `Coincidencia exacta: ${rawRight}`,
-          ACCOUNT_SUGGESTION_CONFIG.weights.exactAlias,
+          exact.signal,
+          `Coincidencia exacta: ${exact.label}`,
+          exact.points,
         ),
       );
-    if (jaccard)
-      reasons.push(
-        this.reason(
-          "jaccard",
-          `Jaccard de tokens ${Math.round(jaccard * 100)}%`,
-          Math.round(
-            jaccard * ACCOUNT_SUGGESTION_CONFIG.weights.jaccardMaximum,
-          ),
-        ),
+    let bestToken: { term: SiiAccountTermEntity; similarity: number } | null =
+      null;
+    let bestLexical: { term: SiiAccountTermEntity; similarity: number } | null =
+      null;
+    const partialSources = [
+      candidate.account.name,
+      ...candidate.terms.map((term) => term.term),
+    ];
+    for (const rawTerm of partialSources) {
+      const normalizedTerm = normalizeAccountTerm(rawTerm);
+      if (normalizedSource === normalizedTerm) continue;
+      const { token, lexical } = partialTermSimilarity(
+        normalizedSource,
+        rawTerm,
       );
-    if (trigram)
+      const termEntity = candidate.terms.find((term) => term.term === rawTerm);
+      if (termEntity?.type === "negative_term") continue;
+      if (
+        token >
+        (bestToken?.similarity ??
+          ACCOUNT_SUGGESTION_CONFIG.lexicalCandidateThreshold - 1)
+      )
+        bestToken = {
+          term:
+            termEntity ??
+            ({
+              term: rawTerm,
+              normalizedTerm,
+              type: "official_name",
+            } as SiiAccountTermEntity),
+          similarity: token,
+        };
+      if (
+        lexical >
+        (bestLexical?.similarity ??
+          ACCOUNT_SUGGESTION_CONFIG.lexicalCandidateThreshold - 1)
+      )
+        bestLexical = {
+          term:
+            termEntity ??
+            ({
+              term: rawTerm,
+              normalizedTerm,
+              type: "official_name",
+            } as SiiAccountTermEntity),
+          similarity: lexical,
+        };
+    }
+    if (
+      bestToken &&
+      bestToken.similarity >=
+        ACCOUNT_SUGGESTION_CONFIG.lexicalCandidateThreshold
+    )
       reasons.push(
         this.reason(
-          "character_trigrams",
-          `Trigramas ${Math.round(trigram * 100)}%`,
+          "token_similarity",
+          `Similitud ponderada de tokens (${Math.round(bestToken.similarity * 100)}%) con: ${bestToken.term.term}`,
           Math.round(
-            trigram * ACCOUNT_SUGGESTION_CONFIG.weights.trigramMaximum,
+            ACCOUNT_SUGGESTION_CONFIG.weights.tokenSimilarityMaximum *
+              bestToken.similarity,
           ),
         ),
       );
     if (
-      leftTokens.size &&
-      [...leftTokens].some((token) =>
-        [...rightTokens].some(
-          (other) =>
-            token !== other &&
-            (token.startsWith(other) || other.startsWith(token)),
-        ),
-      )
+      bestLexical &&
+      bestLexical.similarity >=
+        ACCOUNT_SUGGESTION_CONFIG.lexicalCandidateThreshold
     )
       reasons.push(
         this.reason(
-          "prefix_match",
-          "Prefijo o abreviatura compatible",
-          ACCOUNT_SUGGESTION_CONFIG.weights.prefixMaximum,
+          "lexical_similarity",
+          `Similitud léxica (${Math.round(bestLexical.similarity * 100)}%) con: ${bestLexical.term.term}`,
+          Math.round(
+            ACCOUNT_SUGGESTION_CONFIG.weights.lexicalSimilarityMaximum *
+              bestLexical.similarity,
+          ),
         ),
       );
-    return {
-      reasons,
-      points: reasons.reduce((sum, reason) => sum + reason.points, 0),
-    };
+    if (
+      !reasons.some(
+        (reason) => reason.signal.startsWith("exact_") && reason.points > 0,
+      )
+    )
+      reasons.push(
+        ...this.structuralLexicalReasons(normalizedSource, candidate),
+      );
+    const aliasSimilarity = candidate.terms
+      .filter((term) => term.type !== "official_name")
+      .reduce(
+        (maximum, term) =>
+          Math.max(
+            maximum,
+            weightedTokenSimilarity(normalizedSource, term.normalizedTerm),
+          ),
+        0,
+      );
+    if (aliasSimilarity > 0)
+      reasons.push(
+        this.reason(
+          "semantic_alias_hit",
+          `Alias contable relevante (${Math.round(aliasSimilarity * 100)}%)`,
+          0,
+        ),
+      );
+    return reasons;
+  }
+
+  private structuralLexicalReasons(
+    normalizedSource: string,
+    candidate: GeneratedCandidate,
+  ): RankedCandidate["reasons"] {
+    const leftTokens = new Set(
+      [...relevantWords(normalizedSource)].map(singularize),
+    );
+    const reasons: RankedCandidate["reasons"] = [];
+    for (const rawRight of [
+      candidate.account.name,
+      ...candidate.terms.map((term) => term.term),
+    ]) {
+      const right = normalizeAccountTerm(rawRight);
+      if (leftTokens.size === 0) continue;
+      const rightTokens = new Set([...relevantWords(right)].map(singularize));
+      const union = new Set([...leftTokens, ...rightTokens]);
+      const intersection = [...leftTokens].filter((token) =>
+        rightTokens.has(token),
+      );
+      const jaccard = union.size ? intersection.length / union.size : 0;
+      const trigram = this.jaccard(
+        this.trigrams(normalizedSource),
+        this.trigrams(right),
+      );
+      if (jaccard)
+        reasons.push(
+          this.reason(
+            "jaccard",
+            `Jaccard de tokens ${Math.round(jaccard * 100)}%`,
+            Math.round(
+              jaccard * ACCOUNT_SUGGESTION_CONFIG.weights.jaccardMaximum,
+            ),
+          ),
+        );
+      if (trigram)
+        reasons.push(
+          this.reason(
+            "character_trigrams",
+            `Trigramas ${Math.round(trigram * 100)}%`,
+            Math.round(
+              trigram * ACCOUNT_SUGGESTION_CONFIG.weights.trigramMaximum,
+            ),
+          ),
+        );
+      if (
+        leftTokens.size &&
+        [...leftTokens].some((token) =>
+          [...rightTokens].some(
+            (other) =>
+              token !== other &&
+              (token.startsWith(other) || other.startsWith(token)),
+          ),
+        )
+      )
+        reasons.push(
+          this.reason(
+            "prefix_match",
+            "Prefijo o abreviatura compatible",
+            ACCOUNT_SUGGESTION_CONFIG.weights.prefixMaximum,
+          ),
+        );
+      break;
+    }
+    return reasons;
+  }
+
+  private negativeTermReasons(
+    normalizedSource: string,
+    candidate: GeneratedCandidate,
+  ): RankedCandidate["reasons"] {
+    return (candidate.negativeTerms ?? []).flatMap((term) =>
+      negativeTermMatches(normalizedSource, term.normalizedTerm)
+        ? [
+            this.reason(
+              "negative_term",
+              `Penalización por término negativo: ${term.term}`,
+              -Math.abs(Number(term.weight)),
+              "lexical",
+              "penalty",
+            ),
+          ]
+        : [],
+    );
   }
 
   private conceptReasons(
@@ -890,19 +1089,29 @@ export class AccountSuggestionRankingService {
       ? [...left].filter((item) => right.has(item)).length / union.size
       : 0;
   }
-  private reason(signal: string, description: string, points: number) {
+  private reason(
+    signal: string,
+    description: string,
+    points: number,
+    source?: RankedCandidate["reasons"][number]["source"],
+    kind?: RankedCandidate["reasons"][number]["kind"],
+  ) {
     return {
       signal,
       description,
       points,
-      kind: points < 0 ? ("penalty" as const) : ("evidence" as const),
-      source: signal.includes("balance")
-        ? ("balance" as const)
-        : signal.includes("concept") ||
-            signal.includes("family") ||
-            signal.includes("section")
-          ? ("knowledge" as const)
-          : ("lexical" as const),
+      kind: kind ?? (points < 0 ? ("penalty" as const) : ("evidence" as const)),
+      source:
+        source ??
+        (signal.includes("balance")
+          ? ("balance" as const)
+          : signal.includes("concept") ||
+              signal.includes("family") ||
+              signal.includes("section")
+            ? ("knowledge" as const)
+            : signal.includes("learning") || signal.includes("historical")
+              ? ("history" as const)
+              : ("lexical" as const)),
     };
   }
 }

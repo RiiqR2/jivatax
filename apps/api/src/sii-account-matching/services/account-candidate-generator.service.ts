@@ -20,9 +20,16 @@ export class AccountCandidateGeneratorService {
   ): GeneratedCandidate[] {
     const catalogKnowledge = resolveCatalogExpenseKnowledge(accounts);
     const byAccount = new Map<string, SiiAccountTermEntity[]>();
+    const negativeByAccount = new Map<string, SiiAccountTermEntity[]>();
     for (const term of terms) {
-      if (!term.active || term.deletedAt || term.type === "negative_term")
+      if (!term.active || term.deletedAt) continue;
+      if (term.type === "negative_term") {
+        negativeByAccount.set(term.siiAccountId, [
+          ...(negativeByAccount.get(term.siiAccountId) ?? []),
+          term,
+        ]);
         continue;
+      }
       byAccount.set(term.siiAccountId, [
         ...(byAccount.get(term.siiAccountId) ?? []),
         term,
@@ -61,6 +68,7 @@ export class AccountCandidateGeneratorService {
           ...(byAccount.get(account.id) ?? []),
           ...(catalogKnowledge.terms.get(account.id) ?? []),
         ],
+        negativeTerms: negativeByAccount.get(account.id) ?? [],
         concepts: [
           ...(conceptsByAccount.get(account.id) ?? []),
           ...(catalogKnowledge.concepts.get(account.id) ?? []),

@@ -54,41 +54,26 @@ export class LearningAggregatorService {
       );
     }
 
-    const groups = new Map<
-      string,
-      AccountMatchingConfirmationEntity[]
-    >();
+    const groups = new Map<string, AccountMatchingConfirmationEntity[]>();
 
     for (const item of confirmations) {
       const key = `${item.normalizedNameHash}:${item.siiAccountId}`;
 
-      groups.set(key, [
-        ...(groups.get(key) ?? []),
-        item,
-      ]);
+      groups.set(key, [...(groups.get(key) ?? []), item]);
     }
 
-    await learningIndustryRepository
-      .createQueryBuilder()
-      .delete()
-      .execute();
+    await learningIndustryRepository.createQueryBuilder().delete().execute();
 
-    await learningRepository
-      .createQueryBuilder()
-      .delete()
-      .execute();
+    await learningRepository.createQueryBuilder().delete().execute();
 
     for (const rows of groups.values()) {
       const first = rows[0];
 
       const agreement =
-        rows.length /
-        (totals.get(first.normalizedNameHash) ?? rows.length);
+        rows.length / (totals.get(first.normalizedNameHash) ?? rows.length);
 
       const companies = new Set(
-        rows.flatMap((row) =>
-          row.companyId ? [row.companyId] : [],
-        ),
+        rows.flatMap((row) => (row.companyId ? [row.companyId] : [])),
       );
 
       const experts = rows.filter(
@@ -110,9 +95,7 @@ export class LearningAggregatorService {
             experts,
           ).toFixed(6),
           lastConfirmedAt: new Date(
-            Math.max(
-              ...rows.map((row) => row.confirmedAt.getTime()),
-            ),
+            Math.max(...rows.map((row) => row.confirmedAt.getTime())),
           ),
         }),
       );
@@ -141,9 +124,7 @@ export class LearningAggregatorService {
         ).length;
 
         const industryCompanies = new Set(
-          evidence.flatMap((row) =>
-            row.companyId ? [row.companyId] : [],
-          ),
+          evidence.flatMap((row) => (row.companyId ? [row.companyId] : [])),
         );
 
         const industryExperts = evidence.filter(
@@ -166,11 +147,7 @@ export class LearningAggregatorService {
               industryExperts,
             ).toFixed(6),
             lastConfirmedAt: new Date(
-              Math.max(
-                ...evidence.map(
-                  (row) => row.confirmedAt.getTime(),
-                ),
-              ),
+              Math.max(...evidence.map((row) => row.confirmedAt.getTime())),
             ),
           }),
         );
