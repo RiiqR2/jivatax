@@ -17,7 +17,21 @@ El algoritmo `deterministic-v7-inference` mantiene al catálogo `sii_accounts` c
 - `account_matching_learning`: confirmaciones supervisadas por empresa, giro y alcance global. Cinco empresas distintas solo vuelven un aprendizaje global elegible para promoción; nunca lo convierten automáticamente en alias.
 - `account_matching_diagnostics`: fotografía idempotente por empresa/período con todos los candidatos, metadata, señales, penalizaciones, reglas, score, confidence, descartes y decisión.
 
-La confidence se calibra separadamente del score usando cantidad de evidencias, penalizaciones, distancia, competencia, historial y reglas fuertes. Un resultado inferior a 60% queda en revisión y no se persiste como sugerencia activa.
+La confidence se calibra separadamente del score usando cantidad de evidencias, penalizaciones, distancia respecto al segundo candidato, competencia, historial (`historical_company_mapping`, aprendizaje supervisado), reglas fuertes y confirmaciones expertas. El denominador usa `scoreForFullConfidence` de la configuración. Un resultado inferior a 60% queda en revisión; las sugerencias en revisión sí se persisten con estado `REVIEW`, pero nunca se marcan como activas automáticamente.
+
+### Ranking determinístico (`deterministic-v7-inference`)
+
+Flujo único: `AccountCandidateGeneratorService.generate` → `AccountSuggestionRankingService.rank` → `AccountConfidenceCalibratorService.calibrate`.
+
+- **Retrieval:** todo el catálogo activo entra al pool; los términos positivos y negativos se adjuntan por candidato.
+- **Pesos exactos diferenciados:** `exact_official_name`, `exact_alias`, `exact_company_alias`, `exact_erp_term`, `exact_industry_term`, `exact_manual_term`, `exact_abbreviation`.
+- **Similitud parcial:** `token_similarity`, `lexical_similarity`, `jaccard`, `character_trigrams`, `prefix_match`.
+- **Conceptos y conocimiento:** conceptos curados, familia contable, sección, contracuenta, naturaleza de saldo.
+- **Aprendizaje supervisado:** `supervised_learning_global`, `supervised_learning_industry`, `supervised_learning_expert`, `supervised_learning_expert_industry` (nunca confirman automáticamente).
+- **Historial de empresa:** `historical_company_mapping` aporta evidencia desde `company_account_mapping_history` (última confirmación por cuenta interna); no reemplaza mappings confirmados ni auto-confirma.
+- **Términos negativos:** penalizan score/confidence cuando el nombre observado coincide o contiene el término; no descartan candidatos por sí solos.
+- **Evidencia semántica:** candidatos sin señal fuerte requieren combinación de similitud media + corroboración estructural o regla; de lo contrario no entran al Top N persistible.
+- **Decisión conservadora:** `automatic` exige evidencia fuerte, score mínimo, confidence mínima y separación respecto al segundo candidato; ambigüedad descarta persistencia activa.
 
 ### Diagnóstico y cobertura
 

@@ -33,9 +33,11 @@ El sistema está organizado por dominios y utiliza TypeORM con migraciones, alma
 ---
 
 # Monorepo
+
 - Node.js 22
 - pnpm 9
 - Docker Desktop
+
 ```
 jivatax/
 

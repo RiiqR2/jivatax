@@ -9,14 +9,14 @@ import type { SiiAccountTermEntity } from "../entities/sii-account-term.entity";
 import { normalizeAccountTerm } from "../normalization/account-term-normalizer";
 import { AccountMatchingLearningEntity } from "../entities/account-matching-learning.entity";
 import { AccountMatchingLearningIndustryEntity } from "../entities/account-matching-learning-industry.entity";
-import {
-  ACCOUNT_SUGGESTION_CONFIG,
-  AccountSuggestionService,
-} from "./account-suggestion.service";
+import { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
+import { AccountCandidateGeneratorService } from "./account-candidate-generator.service";
+import { AccountSuggestionRankingService } from "./account-suggestion-ranking.service";
+import { AccountSuggestionService } from "./account-suggestion.service";
 
 const companyId = "company-1";
 const sii = (id: string, code: string, name: string) =>
-  ({ id, code, name }) as SiiAccountEntity;
+  ({ id, code, name, deletedAt: null }) as SiiAccountEntity;
 const term = (
   siiAccountId: string,
   value: string,
@@ -37,53 +37,45 @@ const term = (
     deletedAt: null,
   }) as SiiAccountTermEntity;
 
+const generator = new AccountCandidateGeneratorService();
+const rankingService = new AccountSuggestionRankingService();
+
 function rank(
   name: string,
   accounts: SiiAccountEntity[],
-  terms: SiiAccountTermEntity[],
+  terms: SiiAccountTermEntity[] = [],
+  options?: { historicalCompanyMappingSiiAccountId?: string | null },
 ) {
-  const service = new AccountSuggestionService({} as DataSource);
-  const internals = service as unknown as {
-    buildTermIndexes: (items: SiiAccountTermEntity[]) => TermIndexes;
-    rank: (
-      siiAccountsById: Map<string, SiiAccountEntity>,
-      positiveTerms: SiiAccountTermEntity[],
-      negativeTerms: SiiAccountTermEntity[],
-      normalizedName?: string,
-    ) => RankResult;
+  const generated = generator.generate(accounts, terms);
+  const result = rankingService.rank(name, generated, undefined, [], options);
+  return {
+    candidates: result.candidates,
+    allCandidates: result.allCandidates,
+    decision: result.decision,
+    discardReason:
+      result.decision === "ambiguous"
+        ? ("ambiguous_candidates" as const)
+        : undefined,
   };
-  const indexes = internals.buildTermIndexes(terms);
-  const normalizedName = normalizeAccountTerm(name);
-  return internals.rank(
-    new Map(accounts.map((account) => [account.id, account])),
-    indexes.positiveTermsByNormalizedTerm.get(normalizedName) ?? [],
-    indexes.negativeTermsByNormalizedTerm.get(normalizedName) ?? [],
-    normalizedName,
-  );
 }
 
-type TermIndexes = {
-  positiveTermsByNormalizedTerm: Map<string, SiiAccountTermEntity[]>;
-  negativeTermsByNormalizedTerm: Map<string, SiiAccountTermEntity[]>;
-};
+function reasonPoints(
+  result: ReturnType<typeof rank>,
+  signal: string | RegExp,
+) {
+  const reasons = result.candidates[0]?.reasons ?? [];
+  const match =
+    typeof signal === "string"
+      ? reasons.find((reason) => reason.signal === signal)
+      : reasons.find((reason) => signal.test(reason.signal));
+  return match?.points ?? 0;
+}
 
-type RankResult = {
-  candidates: Array<{
-    account: SiiAccountEntity;
-    score: number;
-    confidence: number;
-    reasons: Array<{ signal: string; description: string; points: number }>;
-  }>;
-  discardReason?: string;
-};
-
-function buildTermIndexes(terms: SiiAccountTermEntity[]) {
-  const service = new AccountSuggestionService({} as DataSource);
-  return (
-    service as unknown as {
-      buildTermIndexes: (items: SiiAccountTermEntity[]) => TermIndexes;
-    }
-  ).buildTermIndexes(terms);
+function totalScore(result: ReturnType<typeof rank>) {
+  return (result.candidates[0]?.reasons ?? []).reduce(
+    (sum, reason) => sum + reason.points,
+    0,
+  );
 }
 
 describe("AccountSuggestionService matching", () => {
@@ -101,42 +93,18 @@ describe("AccountSuggestionService matching", () => {
     );
   });
 
-  it("indexes hydrated entities by normalizedTerm, not normalized_term", () => {
-    const caja = term(disponible.id, "caja", "alias", 60);
-    Object.assign(caja as object, { normalized_term: "wrong-key" });
-    const indexes = buildTermIndexes([caja]);
-
-    assert.equal(indexes.positiveTermsByNormalizedTerm.has("caja"), true);
-    assert.equal(indexes.positiveTermsByNormalizedTerm.has("wrong-key"), false);
-    assert.equal(
-      indexes.positiveTermsByNormalizedTerm.get("caja")?.[0].siiAccountId,
-      disponible.id,
+  it("separates negative terms in candidate generation", () => {
+    const generated = generator.generate(
+      [disponible],
+      [
+        term(disponible.id, "caja", "alias", 60),
+        term(disponible.id, "caja", "negative_term", 10),
+      ],
     );
-    assert.equal(
-      indexes.positiveTermsByNormalizedTerm.get("caja")?.[0].type,
-      "alias",
-    );
-    assert.equal(
-      Number(indexes.positiveTermsByNormalizedTerm.get("caja")?.[0].weight),
-      60,
-    );
-  });
-
-  it("keeps negative terms in a separate normalized-term index", () => {
-    const indexes = buildTermIndexes([
-      term(disponible.id, "caja", "alias", 60),
-      term(disponible.id, "caja", "negative_term", 10),
-    ]);
-    assert.equal(indexes.positiveTermsByNormalizedTerm.get("caja")?.length, 1);
-    assert.equal(indexes.negativeTermsByNormalizedTerm.get("caja")?.length, 1);
-    assert.equal(
-      indexes.positiveTermsByNormalizedTerm.get("caja")?.[0].type,
-      "alias",
-    );
-    assert.equal(
-      indexes.negativeTermsByNormalizedTerm.get("caja")?.[0].type,
-      "negative_term",
-    );
+    assert.equal(generated[0].terms.length, 1);
+    assert.equal(generated[0].terms[0].type, "alias");
+    assert.equal(generated[0].negativeTerms.length, 1);
+    assert.equal(generated[0].negativeTerms[0].type, "negative_term");
   });
 
   it("matches CAJA and BANCOS to Disponible with curated aliases", () => {
@@ -157,7 +125,9 @@ describe("AccountSuggestionService matching", () => {
 
     const result = rank("CAJA", [disponible], [caja]);
     assert.equal(result.candidates[0]?.account.id, disponible.id);
-    assert.equal(result.candidates[0]?.score, 60);
+    assert.equal(reasonPoints(result, "exact_alias"), 60);
+    assert.equal(reasonPoints(result, "family_match"), 16);
+    assert.equal(totalScore(result), 76);
   });
 
   it("converts a decimal string weight before scoring", () => {
@@ -165,18 +135,26 @@ describe("AccountSuggestionService matching", () => {
     caja.weight = "60.00" as unknown as number;
 
     const result = rank("CAJA", [disponible], [caja]);
-    assert.equal(result.candidates[0]?.score, 60);
+    assert.equal(reasonPoints(result, "exact_alias"), 60);
+    assert.equal(totalScore(result), 76);
     assert.equal(typeof result.candidates[0]?.score, "number");
   });
 
-  it("uses erp_term for CLIENTES and accumulates exact machinery signals", () => {
+  it("uses differentiated weights for erp_term and official_name", () => {
     const clientResult = rank(
       "CLIENTES",
       [clientes],
       [term(clientes.id, "clientes", "erp_term", 60)],
     );
     assert.equal(clientResult.candidates[0]?.account.id, clientes.id);
-    assert.equal(clientResult.candidates[0]?.score, 60);
+    assert.equal(reasonPoints(clientResult, "exact_erp_term"), 60);
+    assert.equal(reasonPoints(clientResult, "family_match"), 16);
+    assert.equal(totalScore(clientResult), 76);
+    assert.ok(
+      clientResult.candidates[0]?.reasons.some(
+        (reason) => reason.signal === "exact_erp_term",
+      ),
+    );
 
     const machineryResult = rank(
       "MAQUINARIAS Y EQUIPOS",
@@ -186,28 +164,25 @@ describe("AccountSuggestionService matching", () => {
         term(maquinaria.id, "maquinarias y equipos", "official_name", 45),
       ],
     );
-    assert.equal(machineryResult.candidates[0]?.score, 60);
-    assert.equal(machineryResult.candidates[0]?.reasons.length, 1);
-    const machineryIndexes = buildTermIndexes([
-      term(maquinaria.id, "maquinarias y equipos", "erp_term", 60),
-      term(maquinaria.id, "maquinarias y equipos", "official_name", 45),
-    ]);
+    assert.equal(reasonPoints(machineryResult, "exact_erp_term"), 60);
+    assert.equal(reasonPoints(machineryResult, "family_match"), 16);
+    assert.ok(reasonPoints(machineryResult, "concept_match") > 0);
     assert.equal(
-      machineryIndexes.positiveTermsByNormalizedTerm.get(
-        "maquinarias y equipos",
-      )?.length,
-      2,
+      machineryResult.candidates[0]?.reasons.filter((reason) =>
+        reason.signal.startsWith("exact_"),
+      ).length,
+      1,
     );
+    assert.equal(totalScore(machineryResult), 92);
   });
 
-  it("does not let negative_term create a candidate", () => {
+  it("does not promote a candidate supported only by negative terms", () => {
     const result = rank(
       "CAJA",
       [disponible],
       [term(disponible.id, "caja", "negative_term", 60)],
     );
     assert.equal(result.candidates.length, 0);
-    assert.equal(result.discardReason, "all_candidates_penalized");
   });
 
   it("keeps score and confidence scales coherent", () => {
@@ -217,28 +192,38 @@ describe("AccountSuggestionService matching", () => {
       [disponible],
       [term(disponible.id, "bancos", "alias", 55)],
     );
-    assert.equal(result.candidates[0].score, 60);
+    assert.equal(reasonPoints(result, "exact_alias"), 60);
+    assert.equal(totalScore(result), 76);
     assert.ok(result.candidates[0].confidence >= 0);
     assert.ok(result.candidates[0].confidence <= 1);
   });
 
-  it("uses deterministic token similarity without confusing bank debt with Disponible", () => {
-    const service = new AccountSuggestionService({} as DataSource);
-    const internal = service as unknown as {
-      rank: (
-        accounts: Map<string, SiiAccountEntity>,
-        positive: SiiAccountTermEntity[],
-        negative: SiiAccountTermEntity[],
-        name: string,
-      ) => RankResult;
-    };
-    const result = internal.rank(
-      new Map([[disponible.id, disponible]]),
-      [term(disponible.id, "bancos", "alias", 55)],
-      [term(disponible.id, "deudas con bancos", "negative_term", 50)],
-      normalizeAccountTerm("DEUDAS CON BANCOS CORTO PLAZO"),
+  it("penalizes bank debt against Disponible without discarding a better match", () => {
+    const deuda = sii(
+      "debt",
+      "2.01.01.00",
+      "Obligaciones bancarias corto plazo",
     );
-    assert.equal(result.candidates.length, 0);
+    const generated = generator.generate(
+      [disponible, deuda],
+      [
+        term(disponible.id, "bancos", "alias", 55),
+        term(disponible.id, "deudas con bancos", "negative_term", 50),
+      ],
+    );
+    const result = rankingService.rank(
+      "deudas con bancos corto plazo",
+      generated,
+    );
+    const disponibleCandidate = result.allCandidates.find(
+      (candidate) => candidate.account.id === disponible.id,
+    );
+    assert.ok(
+      disponibleCandidate?.reasons.some(
+        (reason) => reason.signal === "negative_term",
+      ),
+    );
+    assert.notEqual(result.candidates[0]?.account.id, disponible.id);
   });
 
   it("distinguishes machinery from its accumulated depreciation", () => {
@@ -267,7 +252,7 @@ describe("AccountSuggestionService matching", () => {
     );
   });
 
-  it("marks candidates with equal evidence as ambiguous", () => {
+  it("marks candidates with equivalent exact evidence as ambiguous", () => {
     const result = rank(
       "CLIENTES",
       [clientes, sii("documents", "1.01.08.00", "Documentos por cobrar")],
@@ -276,7 +261,21 @@ describe("AccountSuggestionService matching", () => {
         term("documents", "clientes", "manual_term", 60),
       ],
     );
+    assert.equal(result.decision, "ambiguous");
     assert.equal(result.discardReason, "ambiguous_candidates");
+    assert.equal(reasonPoints(result, "exact_alias"), 60);
+    assert.equal(reasonPoints(result, "family_match"), 16);
+    assert.equal(totalScore(result), 76);
+    const documents = result.allCandidates.find(
+      (candidate) => candidate.account.id === "documents",
+    );
+    assert.equal(
+      documents?.reasons.find((reason) => reason.signal === "exact_manual_term")
+        ?.points,
+      ACCOUNT_SUGGESTION_CONFIG.weights.exactManualTerm,
+    );
+    assert.equal(documents?.score, 71);
+    assert.ok((result.candidates[0]?.score ?? 0) - (documents?.score ?? 0) < 8);
     assert.equal(
       result.candidates[0].reasons.at(-1)?.signal,
       "ambiguous_candidates",
@@ -301,6 +300,17 @@ describe("AccountSuggestionService persistence", () => {
           getRepository: () => typeof repository;
         }) => unknown,
       ) => callback({ getRepository: () => repository }),
+      getRepository: () => ({
+        createQueryBuilder: () => ({
+          where: () => ({
+            andWhere: () => ({
+              andWhere: () => ({
+                orderBy: () => ({ getMany: async () => [] }),
+              }),
+            }),
+          }),
+        }),
+      }),
     } as unknown as DataSource;
     const expense = sii(
       "admin-expense",
@@ -336,6 +346,9 @@ describe("AccountSuggestionService persistence", () => {
         term(expense.id, "electricidad", "alias", 60),
       ],
       loadConcepts: async () => [],
+      loadKnowledge: async () => [],
+      loadRules: async () => [],
+      loadLearning: async () => [],
     });
 
     const result = await service.generateForPeriod(companyId, "period-1");
@@ -411,6 +424,17 @@ describe("AccountSuggestionService persistence", () => {
           getRepository: () => typeof repository;
         }) => unknown,
       ) => callback({ getRepository: () => repository }),
+      getRepository: () => ({
+        createQueryBuilder: () => ({
+          where: () => ({
+            andWhere: () => ({
+              andWhere: () => ({
+                orderBy: () => ({ getMany: async () => [] }),
+              }),
+            }),
+          }),
+        }),
+      }),
     } as unknown as DataSource;
     const service = new AccountSuggestionService(dataSource);
     Object.assign(service as object, {
@@ -427,6 +451,9 @@ describe("AccountSuggestionService persistence", () => {
       ],
       loadTerms: async () => [term("available", "caja", "alias", 60)],
       loadConcepts: async () => [],
+      loadKnowledge: async () => [],
+      loadRules: async () => [],
+      loadLearning: async () => [],
     });
 
     const result = await service.generateForPeriod(companyId, "period-1");
@@ -459,6 +486,17 @@ describe("AccountSuggestionService persistence", () => {
           getRepository: () => typeof repository;
         }) => unknown,
       ) => callback({ getRepository: () => repository }),
+      getRepository: () => ({
+        createQueryBuilder: () => ({
+          where: () => ({
+            andWhere: () => ({
+              andWhere: () => ({
+                orderBy: () => ({ getMany: async () => [] }),
+              }),
+            }),
+          }),
+        }),
+      }),
     } as unknown as DataSource;
     const service = new AccountSuggestionService(dataSource);
     Object.assign(service as object, {
@@ -515,6 +553,17 @@ describe("AccountSuggestionService persistence", () => {
           getRepository: () => typeof repository;
         }) => unknown,
       ) => callback({ getRepository: () => repository }),
+      getRepository: () => ({
+        createQueryBuilder: () => ({
+          where: () => ({
+            andWhere: () => ({
+              andWhere: () => ({
+                orderBy: () => ({ getMany: async () => [] }),
+              }),
+            }),
+          }),
+        }),
+      }),
     } as unknown as DataSource;
     const service = new AccountSuggestionService(dataSource);
     Object.assign(service as object, {
@@ -578,6 +627,17 @@ describe("AccountSuggestionService persistence", () => {
         callback({
           getRepository: () => repository,
         }),
+      getRepository: () => ({
+        createQueryBuilder: () => ({
+          where: () => ({
+            andWhere: () => ({
+              andWhere: () => ({
+                orderBy: () => ({ getMany: async () => [] }),
+              }),
+            }),
+          }),
+        }),
+      }),
     } as unknown as DataSource;
     const service = new AccountSuggestionService(dataSource);
     Object.assign(service as object, {
@@ -594,6 +654,9 @@ describe("AccountSuggestionService persistence", () => {
       ],
       loadTerms: async () => [term("available", "caja", "alias", 60)],
       loadConcepts: async () => [],
+      loadKnowledge: async () => [],
+      loadRules: async () => [],
+      loadLearning: async () => [],
     });
     const result = await service.generateForPeriod(companyId, "period-1");
     assert.equal(result.withoutSuggestionReasons.confirmed_mapping, 1);

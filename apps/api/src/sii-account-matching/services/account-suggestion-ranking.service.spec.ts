@@ -296,8 +296,10 @@ describe("deterministic candidate retrieval and ranking", () => {
         assert.equal(result.decision, "automatic");
         assert.ok((result.candidates[0]?.confidence ?? 0) >= 0.55);
         assert.ok(
-          result.candidates[0]?.reasons.some(
-            (reason) => reason.signal === "exact_alias",
+          result.candidates[0]?.reasons.some((reason) =>
+            /^exact_(alias|erp_term|industry_term|manual_term)$/.test(
+              reason.signal,
+            ),
           ),
         );
         assert.ok(
@@ -530,5 +532,99 @@ describe("deterministic candidate retrieval and ranking", () => {
           ),
       ),
     );
+  });
+
+  it("uses differentiated exact weights and historical mapping as strong evidence", () => {
+    const industryAlias = [
+      {
+        siiAccountId: "cash",
+        term: "caja chica",
+        normalizedTerm: "caja chica",
+        type: "industry_term",
+        scope: "global",
+        active: true,
+        deletedAt: null,
+        weight: 50,
+      },
+    ] as SiiAccountTermEntity[];
+    const industryMatch = ranking.rank(
+      "caja chica",
+      generator.generate(
+        [account("cash", "1", "Disponible caja bancos")],
+        industryAlias,
+      ),
+    );
+    const industryReason = industryMatch.candidates[0].reasons.find(
+      (reason) => reason.signal === "exact_industry_term",
+    );
+    assert.equal(industryReason?.points, 50);
+
+    const historical = ranking.rank(
+      "cuenta interna",
+      generator.generate(catalogue, []),
+      undefined,
+      [],
+      { historicalCompanyMappingSiiAccountId: "cash" },
+    );
+    assert.ok(
+      historical.allCandidates
+        .find((candidate) => candidate.account.id === "cash")
+        ?.reasons.some(
+          (reason) => reason.signal === "historical_company_mapping",
+        ),
+    );
+  });
+
+  it("penalizes negative terms without removing valid exact matches", () => {
+    const terms = [
+      {
+        siiAccountId: "cash",
+        term: "caja",
+        normalizedTerm: "caja",
+        type: "alias",
+        scope: "global",
+        active: true,
+        deletedAt: null,
+        weight: 60,
+      },
+      {
+        siiAccountId: "cash",
+        term: "caja chica",
+        normalizedTerm: "caja chica",
+        type: "negative_term",
+        scope: "global",
+        active: true,
+        deletedAt: null,
+        weight: 20,
+      },
+    ] as SiiAccountTermEntity[];
+    const exact = ranking.rank(
+      "caja",
+      generator.generate(
+        [account("cash", "1", "Disponible caja bancos")],
+        terms,
+      ),
+    );
+    assert.ok(exact.candidates[0].score >= 45);
+    assert.ok(
+      !exact.candidates[0].reasons.some(
+        (reason) => reason.signal === "negative_term",
+      ),
+    );
+
+    const penalized = ranking.rank(
+      "caja chica",
+      generator.generate(
+        [account("cash", "1", "Disponible caja bancos")],
+        terms,
+      ),
+    );
+    const cash = penalized.allCandidates.find(
+      (candidate) => candidate.account.id === "cash",
+    );
+    assert.ok(
+      cash?.reasons.some((reason) => reason.signal === "negative_term"),
+    );
+    assert.ok((cash?.score ?? 0) < 60);
   });
 });

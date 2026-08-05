@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from "typeorm";
 
-export class CreateSiiAccountMatching1785031000000
-  implements MigrationInterface
-{
+export class CreateSiiAccountMatching1785031000000 implements MigrationInterface {
   name = "CreateSiiAccountMatching1785031000000";
 
   async up(queryRunner: QueryRunner): Promise<void> {

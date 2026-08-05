@@ -15,7 +15,7 @@
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
     "schema:drop": "typeorm-ts-node-commonjs schema:drop -d src/database/data-source.ts",
-    "test": "node --test -r ts-node/register \"src/**/*.spec.ts\"",
+    "test": "node scripts/run-tests.cjs",
     "sii:import-account-plan": "ts-node --files -r tsconfig-paths/register src/sii-account-plan/commands/import-sii-account-plan.ts",
     "import:sii-account-catalog": "ts-node --files -r tsconfig-paths/register src/sii-account-plan/commands/import-sii-account-plan.ts",
     "sii-accounts:sync-terms": "ts-node --files -r tsconfig-paths/register src/sii-account-matching/commands/sync-sii-account-terms.ts",

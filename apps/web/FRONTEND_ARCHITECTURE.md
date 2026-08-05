@@ -122,18 +122,18 @@ La dirección de dependencias es `app → components → hooks → services → 
 
 ## Archivos por migrar y archivos eliminables después
 
-| Legado protegido | Destino previsto | Eliminable únicamente cuando… |
-| --- | --- | --- |
-| `components/files/files-page.tsx` | `src/components/files/` + hook de consulta | la ruta nueva tenga paridad funcional y pruebas |
-| `components/files/file-list.tsx` | `src/components/files/` y primitives `ui/` | la tabla migrada cubra estados y descarga |
-| `components/files/upload-dialog.tsx` | componente nuevo + schema/RHF | carga, progreso y errores estén cubiertos |
-| `lib/files/files-api.ts` | `src/services/files.service.ts` | todas las operaciones usen Axios/React Query |
-| `lib/files/types.ts` | `src/types/files.types.ts` | no queden consumidores legado |
-| `lib/files/upload-file.ts` | service/hook/schema del módulo | preserve upload firmado y confirmación |
-| `lib/files/formatters.ts` | utilidades del módulo | pruebas apunten al reemplazo |
-| `lib/files/view-state.ts` | estado derivado de React Query | los estados visuales tengan paridad |
-| `lib/http/api-client.ts` | `src/lib/api.ts` + normalizador de error | ninguna ruta funcional use `apiRequest` |
-| reglas CSS legado en `src/app/globals.css` | Tailwind + componentes UI | ningún componente legado dependa de ellas |
+| Legado protegido                           | Destino previsto                           | Eliminable únicamente cuando…                   |
+| ------------------------------------------ | ------------------------------------------ | ----------------------------------------------- |
+| `components/files/files-page.tsx`          | `src/components/files/` + hook de consulta | la ruta nueva tenga paridad funcional y pruebas |
+| `components/files/file-list.tsx`           | `src/components/files/` y primitives `ui/` | la tabla migrada cubra estados y descarga       |
+| `components/files/upload-dialog.tsx`       | componente nuevo + schema/RHF              | carga, progreso y errores estén cubiertos       |
+| `lib/files/files-api.ts`                   | `src/services/files.service.ts`            | todas las operaciones usen Axios/React Query    |
+| `lib/files/types.ts`                       | `src/types/files.types.ts`                 | no queden consumidores legado                   |
+| `lib/files/upload-file.ts`                 | service/hook/schema del módulo             | preserve upload firmado y confirmación          |
+| `lib/files/formatters.ts`                  | utilidades del módulo                      | pruebas apunten al reemplazo                    |
+| `lib/files/view-state.ts`                  | estado derivado de React Query             | los estados visuales tengan paridad             |
+| `lib/http/api-client.ts`                   | `src/lib/api.ts` + normalizador de error   | ninguna ruta funcional use `apiRequest`         |
+| reglas CSS legado en `src/app/globals.css` | Tailwind + componentes UI                  | ningún componente legado dependa de ellas       |
 
 No se elimina ninguno durante esta etapa. `tests/files.test.ts` también se conserva y se migrará junto con su módulo.
 
