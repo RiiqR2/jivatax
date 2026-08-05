@@ -120,12 +120,22 @@ test("cambiar período conserva Balance y reinicia una cuenta del Mayor", () => 
 
 test("Documentos enlaza al explorador únicamente desde importaciones procesadas válidas", () => {
   const valid = {
+    id: "document-1",
     documentType: "general_ledger",
     status: "processed",
   };
   assert.equal(
     explorerDocumentPath("company-1", "period-1", valid),
     "/companies/company-1/periods/period-1/balance",
+  );
+
+  assert.equal(
+    explorerDocumentPath("company-1", "period-1", {
+      ...valid,
+      documentType: "balance",
+      status: "superseded",
+    }),
+    "/companies/company-1/periods/period-1/balance?balanceDocumentId=document-1",
   );
   for (const status of ["invalid", "processing", "discarded"]) {
     assert.equal(

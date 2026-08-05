@@ -129,8 +129,8 @@ test("an imported ledger without movements classifies balance accounts as no_led
     },
   });
   const result = await service.balance("company", "period", query);
-  assert.equal(result.summary.reconciliationUnavailable, 0);
-  assert.equal(result.summary.reconciledAccounts, "0");
+  assert.equal(result.summary.reconciliationUnavailable, false);
+  assert.equal(result.summary.reconciledAccounts, 0);
   assert.equal(result.items[0].reconciliationStatus, "no_ledger");
   assert.equal(result.sources.generalLedgerDocument?.versionNumber, 3);
 });
@@ -155,13 +155,60 @@ test("an imported ledger reports reconciled accounts and differences from the sa
     },
   });
   const result = await service.balance("company", "period", query);
-  assert.equal(result.summary.reconciledAccounts, "1");
-  assert.equal(result.summary.accountsWithDifferences, "1");
+  assert.equal(result.summary.reconciledAccounts, 1);
+  assert.equal(result.summary.accountsWithDifferences, 1);
   const pageQuery = calls.find((call) =>
     call.sql.includes("SELECT explorer.*"),
   )!;
   assert.match(pageQuery.sql, /e\.general_ledger_import_id=\?/);
   assert.equal(pageQuery.params[0], "ledger-import-v3");
+});
+
+test("balance explorer coalesces losses and gains from balance entries", async () => {
+  const { service, calls } = serviceWithFixture({
+    sources: [balanceSource],
+    items: [
+      {
+        accountId: "account-1",
+        code: "410100",
+        name: "Gastos generales",
+        balanceDebits: "30000.0000",
+        balanceCredits: "0.0000",
+        balanceDebitBalance: "30000.0000",
+        balanceCreditBalance: "0.0000",
+        balanceAssets: "0.0000",
+        balanceLiabilities: "0.0000",
+        balanceLosses: "30000.0000",
+        balanceGains: "0.0000",
+        reconciliationStatus: "unavailable",
+        total: "1",
+      },
+    ],
+    summary: {
+      totalAccounts: "1",
+      totalBalanceLosses: "30000.0000",
+      totalBalanceGains: "0.0000",
+      lossAccountCount: "1",
+      gainAccountCount: "0",
+      reconciliationUnavailable: 1,
+    },
+  });
+  const result = await service.balance("company", "period", query);
+  assert.equal(result.items[0].balanceLosses, "30000.0000");
+  assert.equal(result.items[0].balanceGains, "0.0000");
+  assert.equal(result.summary.totalBalanceLosses, "30000.0000");
+  const pageQuery = calls.find((call) =>
+    call.sql.includes("SELECT explorer.*"),
+  )!;
+  assert.match(pageQuery.sql, /LEFT JOIN balance_entries be ON be\.id = pa\.balance_entry_id/);
+  assert.match(
+    pageQuery.sql,
+    /COALESCE\(pa\.loss_amount, be\.effective_losses, 0\)/,
+  );
+  assert.match(
+    pageQuery.sql,
+    /COALESCE\(pa\.gain_amount, be\.effective_gains, 0\)/,
+  );
 });
 
 test("source resolution chooses only the latest processed, non-discarded document", async () => {
@@ -171,10 +218,10 @@ test("source resolution chooses only the latest processed, non-discarded documen
     summary: { totalAccounts: "0" },
   });
   await service.balance("company", "period", query);
-  assert.match(calls[0].sql, /d\.status='processed'/);
+  assert.match(calls[0].sql, /d\.status IN \('processed','superseded'\)/);
   assert.match(calls[0].sql, /d\.discarded_at IS NULL/);
   assert.match(calls[0].sql, /MAX\(current\.version_number\)/);
-  assert.match(calls[0].sql, /current\.status='processed'/);
+  assert.match(calls[0].sql, /current\.status IN \('processed','superseded'\)/);
 });
 
 test("opening summary omits detail and detail preserves DECIMAL strings with pagination", async () => {

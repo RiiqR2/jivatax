@@ -23,12 +23,16 @@ export function safeBalanceReturnTo(
     : expected;
 }
 
-export function formatAccountingAmount(value: string | number | null) {
-  if (value === null) return "—";
-  return new Intl.NumberFormat("es-CL", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(Number(value));
+export function formatAccountingAmount(
+  value: string | number | null | undefined,
+) {
+  if (value === null || value === undefined) return "—";
+  const [rawInteger, rawDecimals = ""] = String(value).split(".");
+  const sign = rawInteger.startsWith("-") ? "-" : "";
+  const integer = rawInteger.replace(/^-/, "").replace(/^0+(?=\d)/, "");
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const decimals = rawDecimals.slice(0, 2).replace(/0+$/, "");
+  return `${sign}${grouped || "0"}${decimals ? `,${decimals}` : ""}`;
 }
 
 export function formatAccountingDate(value: string | null | undefined) {
@@ -44,6 +48,7 @@ export type BalanceExplorerFilters = {
   sort: string;
   direction: string;
   page: number;
+  balanceDocumentId?: string;
 };
 
 export function buildBalanceExplorerParams(filters: BalanceExplorerFilters) {
@@ -58,6 +63,8 @@ export function buildBalanceExplorerParams(filters: BalanceExplorerFilters) {
   if (filters.section) params.section = filters.section;
   if (filters.reconciliation !== "all")
     params.reconciliation = filters.reconciliation;
+  if (filters.balanceDocumentId)
+    params.balanceDocumentId = filters.balanceDocumentId;
   return params;
 }
 

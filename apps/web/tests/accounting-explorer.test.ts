@@ -46,62 +46,56 @@ test("ledger navigation preserves a safe balance return URL", () => {
 
 test("null accounting totals remain unavailable", () => {
   assert.equal(formatAccountingAmount(null), "—");
+  assert.equal(formatAccountingAmount(undefined), "—");
 });
 
-test("explorer uses one compact reconciliation panel without mapping UI", () => {
-  assert.equal(
-    (
-      source.match(/<h2[^>]*>[\s\S]*?Estado de conciliación[\s\S]*?<\/h2>/g) ??
-      []
-    ).length,
-    1,
+test("balance and reconciliation are separated without mapping UI", () => {
+  assert.match(source, /Conciliación con Libro Mayor/);
+  assert.match(source, /disabled=\{!ledgerAvailable\}/);
+  assert.match(
+    source,
+    /Carga un Libro Mayor para habilitar la conciliación de\s+movimientos/,
   );
-  for (const removed of [
-    "Homologadas",
-    "Pendientes",
-    "Homologación SII",
-    "Estado de homologación",
-    "Revisar homologación",
-  ])
-    assert.doesNotMatch(source, new RegExp(removed));
-  assert.match(source, /Libro Mayor no disponible/);
-  assert.match(source, /!ledgerAvailable \?/);
+  assert.doesNotMatch(balanceSource, /accountMappings|period-account-mappings/);
 });
 
-test("balance table exposes every accounting column with horizontal scrolling", () => {
-  for (const column of [
-    "Código",
-    "Nombre",
-    "Débitos",
-    "Créditos",
-    "Saldo deudor",
-    "Saldo acreedor",
-    "Debe",
-    "Haber",
-    "Diferencia debe",
-    "Diferencia haber",
-    "Movimientos",
-    "Último movimiento",
-    "Estado",
+test("balance table exposes exactly the eight financial amounts in balance mode", () => {
+  for (const field of [
+    "balanceDebits",
+    "balanceCredits",
+    "balanceDebitBalance",
+    "balanceCreditBalance",
+    "balanceAssets",
+    "balanceLiabilities",
+    "balanceLosses",
+    "balanceGains",
   ])
-    assert.match(source, new RegExp(`"${column}"`));
+    assert.match(balanceSource, new RegExp(`row\.${field}`));
   assert.match(source, /overflow-x-auto/);
-  assert.match(source, /min-w-\[1700px\]/);
-  assert.match(source, /colSpan=\{4\}/);
-  assert.doesNotMatch(
-    balanceSource,
-    /overflow-hidden rounded-xl border bg-white/,
-  );
+  assert.match(source, /min-w-\[1500px\]/);
+  assert.doesNotMatch(balanceSource, /sticky left|left-\[|z-20/);
+  assert.match(balanceSource, /line-clamp-2 whitespace-normal/);
 });
 
-test("rows preserve accessible investigation and explicit reconciliation labels", () => {
-  for (const label of ["Conciliado", "Sin movimientos", "No disponible"])
-    assert.match(source, new RegExp(label));
-  assert.match(source, /role="link"/);
-  assert.match(source, /onKeyDown/);
-  assert.match(source, /e\.key === " "/);
-  assert.doesNotMatch(source, />\s*Ver movimientos/);
-  assert.match(source, /formatAccountingDate/);
+test("precision-safe es-CL formatting does not convert large decimals to Number", () => {
+  assert.equal(
+    formatAccountingAmount("2054528310788.0000"),
+    "2.054.528.310.788",
+  );
+  assert.equal(formatAccountingAmount("1765760604.1200"), "1.765.760.604,12");
+});
+
+test("historical document id participates in balance request parameters", () => {
+  const params = buildBalanceExplorerParams({
+    search: "",
+    section: "",
+    reconciliation: "all",
+    sort: "code",
+    direction: "asc",
+    page: 1,
+    balanceDocumentId: "version-5",
+  });
+  assert.equal(params.balanceDocumentId, "version-5");
 });
 
 test("opening detail is lazy, filterable, and the header uses only explicit sources", () => {
