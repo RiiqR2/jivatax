@@ -6,6 +6,37 @@ import type { StatementSection } from "../account-matching.types";
  * here so classification and resolution cannot drift independently.
  */
 export const PIPELINE_ACCOUNT_FAMILIES = {
+  marketable_securities: {
+    observed: /valores? negociables?|instrumentos? negociables?/,
+    metadataFamily: "investments",
+    section: "asset",
+  },
+  notes_receivable: {
+    observed: /pagare.*por cobrar|documentos?.*por cobrar/,
+    metadataFamily: "receivables",
+    section: "asset",
+  },
+  trade_receivable: {
+    observed:
+      /cheques?.*por cobrar|deudores?.*cobranza judicial|clientes?.*por cobrar|cuentas?.*por cobrar/,
+    metadataFamily: "receivables",
+    section: "asset",
+  },
+  guarantees_and_deposits: {
+    observed: /garantias?.*(?:entregad|cliente)|depositos?.*garantia/,
+    metadataFamily: "investments",
+    section: "asset",
+  },
+  financial_investments: {
+    observed: /inversion(?:es)? financiera/,
+    metadataFamily: "investments",
+    section: "asset",
+  },
+  lease_asset: {
+    observed: /activo.*arrendamiento|derecho de uso/,
+    metadataFamily: "fixed_assets",
+    section: "asset",
+  },
   cash: {
     observed: /caja|banco|disponible|pagos en transito/,
     destination: /^(disponible|efectivo y equivalentes)/,
@@ -98,6 +129,12 @@ const FAMILY_CLASSIFICATION_ORDER: Exclude<PipelineAccountFamily, "unknown">[] =
     "bank_debt",
     "issued_capital",
     "loan_receivable",
+    "notes_receivable",
+    "trade_receivable",
+    "guarantees_and_deposits",
+    "marketable_securities",
+    "financial_investments",
+    "lease_asset",
     "bad_debt_allowance",
     "trade_payable",
     "cash",

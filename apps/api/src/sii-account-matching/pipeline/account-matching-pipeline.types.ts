@@ -30,6 +30,11 @@ export interface AccountObservationInput {
   creditBalance?: string | null;
   debits?: string | null;
   credits?: string | null;
+  isLeaf?: boolean;
+  active?: boolean;
+  mappable?: boolean;
+  parentCode?: string | null;
+  level?: number;
 }
 
 export interface AccountObservation {
@@ -44,12 +49,18 @@ export interface AccountObservation {
   originalName: string;
   classificationEvidence: string[];
   classificationWarnings: string[];
+  destinationMetadata?: Pick<
+    AccountObservationInput,
+    "isLeaf" | "active" | "mappable" | "parentCode" | "level"
+  >;
 }
 
 export interface CompatibilityResult {
   compatible: boolean;
   exclusionReasons: string[];
   warnings: string[];
+  compatibilityEvidence: string[];
+  compatibilityLevel: "exact" | "compatible" | "uncertain" | "incompatible";
 }
 
 export type ResolutionType = "exact" | "accounting_rule" | "ranked";
@@ -74,4 +85,9 @@ export interface PipelineCatalogAccount {
   id: string;
   code: string;
   name: string;
+  isLeaf?: boolean;
+  active?: boolean;
+  mappable?: boolean;
+  parentCode?: string | null;
+  level?: number;
 }

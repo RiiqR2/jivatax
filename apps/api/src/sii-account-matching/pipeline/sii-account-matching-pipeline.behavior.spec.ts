@@ -225,4 +225,82 @@ describe("nuevo pipeline de homologación - comportamiento del dominio", () => {
       "vat",
     );
   });
+
+  for (const [source, destination] of [
+    ["Cheque por cobrar", "Valores negociables"],
+    ["Deudores cobranza judicial", "Valores negociables"],
+    ["Pagaré por cobrar", "Valores negociables"],
+    ["Garantía entregada", "Valores negociables"],
+    ["Préstamo por cobrar", "Cuenta por pagar"],
+    ["Préstamo por pagar", "Cuenta por cobrar"],
+    ["Gasto legal", "Gastos rechazados"],
+    ["Gasto notarial", "Gastos no documentados"],
+    ["Habilitación de local", "Gastos por donaciones rechazadas"],
+    ["Gasto común local", "Gasto común de renta extranjera"],
+    ["Cuenta puente", "Cuenta específica comercial"],
+  ])
+    test(`Bloque 3 excluye ${source} → ${destination}`, () =>
+      assert.equal(
+        compatibility.evaluate(
+          classifier.classify(source),
+          classifier.classify(destination),
+        ).compatible,
+        false,
+      ));
+
+  for (const [source, destination] of [
+    ["Cheque por cobrar", "Cuentas por cobrar"],
+    ["Pagaré por cobrar", "Documentos por cobrar"],
+    ["Garantía entregada", "Garantías y depósitos"],
+    ["Gasto ordinario", "Gasto ordinario"],
+  ])
+    test(`Bloque 3 conserva ${source} → ${destination}`, () =>
+      assert.equal(
+        compatibility.evaluate(
+          classifier.classify(source),
+          classifier.classify(destination),
+        ).compatible,
+        true,
+      ));
+
+  it("una fuente relacionada frente a destino sin relación queda incierta", () => {
+    const result = compatibility.evaluate(
+      classifier.classify("Cuenta por cobrar relacionada"),
+      classifier.classify("Cuenta por cobrar"),
+    );
+    assert.equal(result.compatible, true);
+    assert.equal(result.compatibilityLevel, "uncertain");
+    assert.ok(
+      result.warnings.includes(
+        "related_source_destination_relation_unspecified",
+      ),
+    );
+  });
+
+  it("rechaza metadata oficial de nodos agrupadores e inactivos", () => {
+    const source = classifier.classify("Caja");
+    const grouped = compatibility.evaluateCatalog(source, {
+      id: "group",
+      code: "1",
+      name: "Disponible",
+      isLeaf: false,
+    });
+    const inactive = compatibility.evaluateCatalog(source, {
+      id: "inactive",
+      code: "2",
+      name: "Disponible",
+      active: false,
+    });
+    assert.ok(grouped.exclusionReasons.includes("destination_grouping_node"));
+    assert.ok(inactive.exclusionReasons.includes("destination_inactive"));
+  });
+
+  it("sin temporalidad conserva ambos plazos con warning", () => {
+    const source = classifier.classify("Activo ordinario");
+    for (const destination of ["Activo corriente", "Activo no corriente"]) {
+      const result = compatibility.evaluate(source, destination);
+      assert.equal(result.compatible, true);
+      assert.ok(result.warnings.includes("temporal_class_undetermined"));
+    }
+  });
 });
