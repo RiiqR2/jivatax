@@ -35,6 +35,12 @@ export class AccountCompatibilityFilterService {
     )
       reasons.push("incompatible_statement_section");
     if (
+      source.balanceNature !== "unknown" &&
+      destination.balanceNature !== "unknown" &&
+      source.balanceNature !== destination.balanceNature
+    )
+      reasons.push("incompatible_balance_nature");
+    if (
       source.accountFamily === "cash" &&
       /existencias en transito|pagos basados en acciones/.test(
         destination.normalizedName,

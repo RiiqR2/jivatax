@@ -5,9 +5,14 @@ import type {
   PipelineCatalogAccount,
   SuggestionCandidate,
 } from "./account-matching-pipeline.types";
+import { AccountCompatibilityFilterService } from "./account-compatibility-filter.service";
 
 @Injectable()
 export class ExactMappingResolverService {
+  constructor(
+    private readonly compatibility = new AccountCompatibilityFilterService(),
+  ) {}
+
   resolve(
     observation: AccountObservation,
     catalog: PipelineCatalogAccount[],
@@ -15,7 +20,8 @@ export class ExactMappingResolverService {
     return catalog
       .filter(
         (account) =>
-          normalizeAccountTerm(account.name) === observation.normalizedName,
+          normalizeAccountTerm(account.name) === observation.normalizedName &&
+          this.compatibility.evaluate(observation, account.name).compatible,
       )
       .map((account) => ({
         siiAccountId: account.id,

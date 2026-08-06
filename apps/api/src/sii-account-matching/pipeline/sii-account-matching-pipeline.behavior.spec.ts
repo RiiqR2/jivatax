@@ -4,6 +4,9 @@ import { AccountCompatibilityFilterService } from "./account-compatibility-filte
 import { AccountObservationClassifierService } from "./account-observation-classifier.service";
 import type { PipelineCatalogAccount } from "./account-matching-pipeline.types";
 import { SiiAccountMatchingPipelineService } from "./sii-account-matching-pipeline.service";
+import { ExactMappingResolverService } from "./exact-mapping-resolver.service";
+import { AccountingRuleResolverService } from "./accounting-rule-resolver.service";
+import { normalizeAccountTerm } from "../normalization/account-term-normalizer";
 
 const names = [
   "Disponible",
@@ -40,6 +43,7 @@ describe("nuevo pipeline de homologación - comportamiento del dominio", () => {
   const pipeline = new SiiAccountMatchingPipelineService();
   const classifier = new AccountObservationClassifierService();
   const compatibility = new AccountCompatibilityFilterService(classifier);
+  const exact = new ExactMappingResolverService(compatibility);
 
   for (const [source, expected] of [
     ["Caja", "Disponible"],
@@ -111,5 +115,77 @@ describe("nuevo pipeline de homologación - comportamiento del dominio", () => {
       { id: "b", code: "b", name: "Cuenta pasivo general" },
     ]);
     assert.ok(["ambiguous", "no_candidate"].includes(result.decision));
+  });
+
+  for (const [description, sourceName, destination, overrides] of [
+    [
+      "temporalidad",
+      "Activo corriente",
+      "Activo no corriente",
+      { temporalClass: "current" as const },
+    ],
+    [
+      "sección",
+      "Activo corriente",
+      "Pasivo corriente",
+      { observedSection: "asset" as const },
+    ],
+    [
+      "naturaleza",
+      "Activo corriente",
+      "Pasivo corriente",
+      { observedSection: "unknown" as const, balanceNature: "debit" as const },
+    ],
+    [
+      "categoría tributaria protegida",
+      "Gasto ordinario",
+      "Gastos rechazados",
+      { specialTaxCategory: "none" as const },
+    ],
+  ] as const)
+    test(`una coincidencia exacta incompatible por ${description} queda excluida`, () => {
+      const observation = {
+        ...classifier.classify(sourceName),
+        ...overrides,
+        normalizedName: normalizeAccountTerm(destination),
+      };
+      const result = exact.resolve(observation, [
+        { id: "exact", code: "exact", name: destination },
+      ]);
+      assert.deepEqual(result, []);
+    });
+
+  it("acepta una cuenta correctora con naturaleza acreedora compatible", () => {
+    const observation = classifier.classify("Provisión deuda incobrable");
+    const result = compatibility.evaluate(
+      observation,
+      "Provisión deuda incobrable",
+    );
+    assert.equal(observation.observedSection, "contra_asset");
+    assert.equal(observation.balanceNature, "credit");
+    assert.equal(result.compatible, true);
+  });
+
+  it("normaliza tildes de igual forma en clasificación, reglas y exact match", () => {
+    const observation = classifier.classify("OBLIGACIÓN BANCARIA");
+    assert.equal(observation.normalizedName, "obligacion bancaria");
+    const accentedCatalog = [
+      { id: "bank", code: "bank", name: "Obligaciones con BÁNCOS" },
+      { id: "vat", code: "vat", name: "IVA CRÉDITO FISCAL" },
+    ];
+    assert.equal(
+      new AccountingRuleResolverService(compatibility).resolve(
+        observation,
+        accentedCatalog,
+      )[0].siiAccountId,
+      "bank",
+    );
+    assert.equal(
+      exact.resolve(
+        classifier.classify("iva crédito fiscal"),
+        accentedCatalog,
+      )[0].siiAccountId,
+      "vat",
+    );
   });
 });

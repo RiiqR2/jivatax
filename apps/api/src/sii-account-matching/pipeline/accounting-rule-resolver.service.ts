@@ -5,16 +5,8 @@ import type {
   SuggestionCandidate,
 } from "./account-matching-pipeline.types";
 import { AccountCompatibilityFilterService } from "./account-compatibility-filter.service";
-
-const FAMILY_DESTINATIONS: Record<string, RegExp> = {
-  cash: /^(disponible|efectivo y equivalentes)/,
-  vat_credit: /iva credito fiscal/,
-  vat_debit: /iva debito fiscal/,
-  supplier_advance: /anticipo(?:s)? a proveedores/,
-  trade_payable: /proveedores por pagar/,
-  bank_debt: /obligaciones? (?:con )?banc|prestamos? bancarios?/,
-  issued_capital: /capital emitido/,
-};
+import { normalizeAccountTerm } from "../normalization/account-term-normalizer";
+import { pipelineFamilyDestination } from "./account-family-taxonomy";
 
 @Injectable()
 export class AccountingRuleResolverService {
@@ -26,12 +18,14 @@ export class AccountingRuleResolverService {
     observation: AccountObservation,
     catalog: PipelineCatalogAccount[],
   ): SuggestionCandidate[] {
-    const destinationPattern = FAMILY_DESTINATIONS[observation.accountFamily];
+    const destinationPattern = pipelineFamilyDestination(
+      observation.accountFamily,
+    );
     if (!destinationPattern) return [];
     return catalog.flatMap((account) => {
       const result = this.compatibility.evaluate(observation, account.name);
       if (
-        !destinationPattern.test(account.name.toLocaleLowerCase("es")) ||
+        !destinationPattern.test(normalizeAccountTerm(account.name)) ||
         !result.compatible
       )
         return [];

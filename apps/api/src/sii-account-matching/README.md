@@ -6,6 +6,8 @@ El directorio `pipeline/` establece una base conservadora y testeable para reemp
 
 Compatibilidad y ranking son responsabilidades distintas. La compatibilidad es una barrera contable: elimina destinos imposibles por sección, temporalidad, naturaleza o significado antes de comparar candidatos. El ranking sólo ordena los destinos que atravesaron esa barrera y no convierte una similitud lexical en validez contable. La decisión puede responder `ambiguous` o `no_candidate`; ninguna salida confirma mappings automáticamente.
 
+La clasificación reutiliza sección, temporalidad y reglas de cuentas correctoras de `accountingMetadata`. La taxonomía pequeña de familias propia de v2 está centralizada en `pipeline/account-family-taxonomy.ts`, donde cada familia documenta su correspondencia con la familia común; sólo conserva distinciones que la metadata general no expresa, como IVA crédito frente a IVA débito. Tanto las reglas observadas como las de destino se mantienen en ese único archivo.
+
 Gastos rechazados, donaciones, gastos no documentados, multas tributarias, rentas extranjeras, impuestos diferidos y partes relacionadas son categorías sensibles. Sólo son compatibles cuando el nombre observado aporta evidencia positiva explícita de la misma categoría, porque un falso positivo puede cambiar el tratamiento tributario. El catálogo SII vigente continuará siendo la única fuente admisible de destinos cuando se integre el pipeline.
 
 `sii_accounts` continúa siendo el único catálogo oficial. `sii_account_terms` sólo contiene conocimiento auditable para puntuar sugerencias; los datos del Manual MiPyme son auxiliares y sus códigos nunca se usan como códigos SII.

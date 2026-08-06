@@ -1,76 +1,59 @@
 import { Injectable } from "@nestjs/common";
 import { normalizeAccountTerm } from "../normalization/account-term-normalizer";
+import { accountingMetadata } from "../metadata/accounting-metadata";
+import {
+  classifyPipelineAccountFamily,
+  PIPELINE_ACCOUNT_FAMILIES,
+} from "./account-family-taxonomy";
 import type {
   AccountObservation,
   SpecialTaxCategory,
 } from "./account-matching-pipeline.types";
 
-const includes = (value: string, expression: RegExp) => expression.test(value);
-
 @Injectable()
 export class AccountObservationClassifierService {
   classify(originalName: string): AccountObservation {
     const name = normalizeAccountTerm(originalName);
+    const metadata = accountingMetadata(name);
+    const accountFamily = classifyPipelineAccountFamily(name);
+    const familyDefinition =
+      accountFamily === "unknown"
+        ? undefined
+        : PIPELINE_ACCOUNT_FAMILIES[accountFamily];
     const specialTaxCategory = this.taxCategory(name);
-    const isBadDebt = includes(
-      name,
-      /incobrable|deterioro.*(?:cliente|deudor)/,
-    );
-    const observedSection = includes(
-      name,
-      /capital|resultado acumulado|patrimonio/,
-    )
-      ? "equity"
-      : includes(name, /ingreso|renta|venta/)
-        ? "income"
-        : includes(name, /gasto|costo|multa|donacion/)
-          ? "expense"
-          : includes(
-                name,
-                /proveedor|por pagar|obligacion|pasivo|debito fiscal/,
-              )
-            ? "liability"
-            : includes(
-                  name,
-                  /caja|banco|disponible|por cobrar|anticipo|credito fiscal|activo|fondo mutuo|pagos en transito/,
-                )
-              ? "asset"
-              : "unknown";
-    const temporalClass = /no corriente|largo plazo/.test(name)
-      ? ("non_current" as const)
-      : /corriente|corto plazo/.test(name) && !/cuenta corriente/.test(name)
-        ? ("current" as const)
-        : undefined;
+    const explicitSection = /\bactivo\b/.test(name)
+      ? ("asset" as const)
+      : /\bpasivo\b/.test(name)
+        ? ("liability" as const)
+        : /^(?:ingreso|renta|venta)\b/.test(name)
+          ? ("income" as const)
+          : /^(?:gasto|costo)\b/.test(name)
+            ? ("expense" as const)
+            : undefined;
+    const observedSection =
+      familyDefinition?.section ?? explicitSection ?? metadata.statementSection;
+    const isContraAsset = observedSection === "contra_asset";
+    const balanceNature =
+      observedSection === "unknown"
+        ? "unknown"
+        : isContraAsset ||
+            observedSection === "liability" ||
+            observedSection === "equity" ||
+            observedSection === "income"
+          ? "credit"
+          : "debit";
 
     return {
-      observedSection: isBadDebt ? "contra_asset" : observedSection,
-      balanceNature:
-        observedSection === "liability" ||
-        observedSection === "equity" ||
-        observedSection === "income"
-          ? "credit"
-          : "debit",
-      accountFamily: this.family(name),
-      temporalClass,
+      observedSection,
+      balanceNature,
+      accountFamily,
+      temporalClass: metadata.term,
       relationshipClass: /relacionad/.test(name) ? "related_party" : "unknown",
-      contraAccountType: isBadDebt ? "asset_allowance" : "none",
+      contraAccountType: isContraAsset ? "asset_allowance" : "none",
       specialTaxCategory,
       normalizedName: name,
       originalName,
     };
-  }
-
-  private family(name: string): string {
-    if (/caja|banco|disponible|pagos en transito/.test(name)) return "cash";
-    if (/iva credito fiscal/.test(name)) return "vat_credit";
-    if (/iva debito fiscal/.test(name)) return "vat_debit";
-    if (/anticipo.*proveedor/.test(name)) return "supplier_advance";
-    if (/proveedor/.test(name)) return "trade_payable";
-    if (/obligacion.*banc|prestamo banc/.test(name)) return "bank_debt";
-    if (/capital emitido/.test(name)) return "issued_capital";
-    if (/prestamo.*por cobrar/.test(name)) return "loan_receivable";
-    if (/incobrable/.test(name)) return "bad_debt_allowance";
-    return "unknown";
   }
 
   private taxCategory(name: string): SpecialTaxCategory {

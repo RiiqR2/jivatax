@@ -3,6 +3,7 @@ import type {
   BalanceNature,
   ObservedAccountSection,
 } from "../account-matching.types";
+import type { PipelineAccountFamily } from "./account-family-taxonomy";
 
 export type RelationshipClass = "related_party" | "third_party" | "unknown";
 export type ContraAccountType =
@@ -19,8 +20,8 @@ export type SpecialTaxCategory =
 
 export interface AccountObservation {
   observedSection: ObservedAccountSection;
-  balanceNature: BalanceNature;
-  accountFamily: string;
+  balanceNature: BalanceNature | "unknown";
+  accountFamily: PipelineAccountFamily;
   temporalClass?: AccountTerm;
   relationshipClass: RelationshipClass;
   contraAccountType: ContraAccountType;
