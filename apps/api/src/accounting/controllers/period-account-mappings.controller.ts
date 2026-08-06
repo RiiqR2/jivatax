@@ -70,6 +70,7 @@ export class PeriodAccountMappingsController {
       taxPeriodId,
       user.id,
       dto.companyAccountIds,
+      dto.allowReview,
     );
   }
 

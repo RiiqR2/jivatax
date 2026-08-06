@@ -16,6 +16,11 @@ import {
   isGenericOnlyTokenOverlap,
   type BasicAccountFamily,
 } from "../metadata/basic-account-family";
+import {
+  candidateSupportedOnlyByGenericTokens,
+  inferSemanticProfile,
+  semanticProfilesCompatible,
+} from "../metadata/semantic-account-dimensions";
 import { singularize } from "../metadata/accounting-metadata";
 import {
   normalizeAccountTerm,
@@ -84,6 +89,11 @@ export class AccountSuggestionRankingService {
         observedSection: observed,
         balanceContext: context,
       });
+    const semanticProfile = inferSemanticProfile(observedAccountName, {
+      observedSection: observed,
+      balanceContext: context,
+    });
+    if (semanticProfile.temporalTerm) source.term = semanticProfile.temporalTerm;
     const ruleEvaluations = new Map(
       candidates.map((candidate) => [
         candidate.account.id,
@@ -198,6 +208,23 @@ export class AccountSuggestionRankingService {
                 "account-suggestion-ranking.service.ts:rank:basic_family",
             },
           ];
+        const semanticCheck = semanticProfilesCompatible(
+          semanticProfile,
+          candidate,
+          observedAccountName,
+        );
+        if (!semanticCheck.compatible)
+          return [
+            {
+              accountId: candidate.account.id,
+              reasons: [semanticCheck.reason ?? "incompatible_semantic_profile"],
+              condition: "observed semantic profile compatible with destination",
+              observedValue: [...semanticProfile.dimensions],
+              requiredValue: candidate.account.name,
+              discardedAt:
+                "account-suggestion-ranking.service.ts:rank:semantic_profile",
+            },
+          ];
         return [];
       },
     );
@@ -218,6 +245,14 @@ export class AccountSuggestionRankingService {
       )
       .filter((candidate) =>
         this.isBasicFamilyCompatible(inferredBasicFamily, candidate),
+      )
+      .filter(
+        (candidate) =>
+          semanticProfilesCompatible(
+            semanticProfile,
+            candidate,
+            observedAccountName,
+          ).compatible,
       )
       .map((candidate): RankedCandidate => {
         const reasons = this.termReasons(
@@ -442,6 +477,14 @@ export class AccountSuggestionRankingService {
           semanticEvidenceReasons: semanticEvidence.reasons,
         };
       })
+      .filter(
+        (candidate) =>
+          !candidateSupportedOnlyByGenericTokens(
+            observedAccountName,
+            candidate,
+            candidate.reasons,
+          ),
+      )
       .sort(
         (a, b) =>
           b.score - a.score || a.account.code.localeCompare(b.account.code),
@@ -691,7 +734,7 @@ export class AccountSuggestionRankingService {
     candidate: GeneratedCandidate,
   ): boolean {
     if (candidate.metadata.family !== "prepaid_expenses") return true;
-    return /anticipad|prepag|prepago|pagado por adelantado/.test(
+    return /anticipad|prepag|prepago|pagado por adelantado|seguros anticipados|comisiones anticipadas|seguro anticipado|comision anticipada/.test(
       normalizedSource,
     );
   }

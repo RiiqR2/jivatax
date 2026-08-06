@@ -16,6 +16,27 @@ const statusLabels: Record<string, string> = {
   unmapped: "Sin homologar",
 };
 
+const isApprovableSuggestionStatus = (status?: string) =>
+  status === "active" || status === "review";
+
+const isMassApprovableSuggestion = (item: AccountMappingItem) =>
+  item.mapping.status === "pending" &&
+  item.suggestions[0]?.status === "active";
+
+const isIndividuallyApprovableSuggestion = (item: AccountMappingItem) =>
+  item.mapping.status === "pending" &&
+  isApprovableSuggestionStatus(item.suggestions[0]?.status);
+
+const massApprovalIneligibleReason = (item: AccountMappingItem) => {
+  const suggestion = item.suggestions[0];
+  if (!suggestion) return "Sin sugerencia";
+  if (suggestion.status === "review")
+    return "Pendiente de revisión: requiere aprobación manual explícita";
+  if (suggestion.confidence < 0.8)
+    return "Confianza insuficiente para aprobación masiva de alta confianza";
+  return null;
+};
+
 export function AccountMappingPage({
   companyId,
   taxPeriodId,
@@ -54,19 +75,24 @@ export function AccountMappingPage({
       }),
   });
   const summary = query.data?.summary;
-  const visibleSuggested =
-    query.data?.items.filter(
-      (item) =>
-        item.mapping.status === "pending" &&
-        item.suggestions[0]?.status === "active",
-    ) ?? [];
-  const approve = async (items: AccountMappingItem[]) => {
+  const massApprovableSuggested =
+    query.data?.items.filter(isMassApprovableSuggestion) ?? [];
+  const individuallyApprovableSuggested =
+    query.data?.items.filter(isIndividuallyApprovableSuggestion) ?? [];
+  const highConfidenceMassApprovable = massApprovableSuggested.filter(
+    (item) => (item.suggestions[0]?.confidence ?? 0) >= 0.8,
+  );
+  const approve = async (
+    items: AccountMappingItem[],
+    allowReview = false,
+  ) => {
     setApproving(true);
     try {
       await accountingService.approveAccountSuggestions(
         companyId,
         taxPeriodId,
         items.map((item) => item.companyAccountId),
+        allowReview,
       );
       setSelectedIds([]);
       setApprovalItems([]);
@@ -155,18 +181,9 @@ export function AccountMappingPage({
       <button
         type="button"
         disabled={
-          approving ||
-          !visibleSuggested.some(
-            (item) => (item.suggestions[0]?.confidence ?? 0) >= 0.8,
-          )
+          approving || highConfidenceMassApprovable.length === 0
         }
-        onClick={() =>
-          setApprovalItems(
-            visibleSuggested.filter(
-              (item) => (item.suggestions[0]?.confidence ?? 0) >= 0.8,
-            ),
-          )
-        }
+        onClick={() => setApprovalItems(highConfidenceMassApprovable)}
         className="ml-2 mt-4 rounded-lg border border-emerald-700 px-4 py-2 text-sm text-emerald-800 disabled:opacity-50"
       >
         Aprobar sugerencias de alta confianza
@@ -226,7 +243,7 @@ export function AccountMappingPage({
               disabled={approving}
               onClick={() =>
                 setApprovalItems(
-                  visibleSuggested.filter((item) =>
+                  individuallyApprovableSuggested.filter((item) =>
                     selectedIds.includes(item.companyAccountId),
                   ),
                 )
@@ -282,15 +299,15 @@ export function AccountMappingPage({
                       type="checkbox"
                       aria-label="Seleccionar todas las sugerencias visibles"
                       checked={
-                        visibleSuggested.length > 0 &&
-                        visibleSuggested.every((item) =>
+                        individuallyApprovableSuggested.length > 0 &&
+                        individuallyApprovableSuggested.every((item) =>
                           selectedIds.includes(item.companyAccountId),
                         )
                       }
                       onChange={(event) =>
                         setSelectedIds(
                           event.target.checked
-                            ? visibleSuggested.map(
+                            ? individuallyApprovableSuggested.map(
                                 (item) => item.companyAccountId,
                               )
                             : [],
@@ -317,25 +334,24 @@ export function AccountMappingPage({
                 {query.data?.items.map((item) => (
                   <tr key={item.companyAccountId} className="border-t">
                     <td className="px-3 py-3">
-                      {item.mapping.status === "pending" &&
-                        item.suggestions[0]?.status === "active" && (
-                          <input
-                            type="checkbox"
-                            aria-label={`Seleccionar ${item.periodName}`}
-                            checked={selectedIds.includes(
-                              item.companyAccountId,
-                            )}
-                            onChange={(event) =>
-                              setSelectedIds((current) =>
-                                event.target.checked
-                                  ? [...current, item.companyAccountId]
-                                  : current.filter(
-                                      (id) => id !== item.companyAccountId,
-                                    ),
-                              )
-                            }
-                          />
-                        )}
+                      {isIndividuallyApprovableSuggestion(item) && (
+                        <input
+                          type="checkbox"
+                          aria-label={`Seleccionar ${item.periodName}`}
+                          checked={selectedIds.includes(
+                            item.companyAccountId,
+                          )}
+                          onChange={(event) =>
+                            setSelectedIds((current) =>
+                              event.target.checked
+                                ? [...current, item.companyAccountId]
+                                : current.filter(
+                                    (id) => id !== item.companyAccountId,
+                                  ),
+                            )
+                          }
+                        />
+                      )}
                     </td>
                     <td className="px-3 py-3 font-mono">{item.code}</td>
                     <td className="px-3 py-3">{item.periodName}</td>
@@ -350,6 +366,11 @@ export function AccountMappingPage({
                       <span className="rounded-full bg-slate-100 px-2 py-1">
                         {statusLabels[item.mapping.status]}
                       </span>
+                      {item.suggestions[0]?.status === "review" && (
+                        <span className="ml-2 rounded-full bg-amber-100 px-2 py-1 text-amber-900">
+                          Pendiente de revisión
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-3">
                       {item.mapping.confidence === null
@@ -360,17 +381,16 @@ export function AccountMappingPage({
                     </td>
                     <td className="px-3 py-3">{item.lastSeenTaxYear ?? "—"}</td>
                     <td className="px-3 py-3">
-                      {item.mapping.status === "pending" &&
-                        item.suggestions[0]?.status === "active" && (
-                          <button
-                            type="button"
-                            disabled={approving}
-                            onClick={() => setApprovalItems([item])}
-                            className="mr-2 rounded-lg bg-emerald-700 px-3 py-2 text-white"
-                          >
-                            Aprobar
-                          </button>
-                        )}
+                      {isIndividuallyApprovableSuggestion(item) && (
+                        <button
+                          type="button"
+                          disabled={approving}
+                          onClick={() => setApprovalItems([item])}
+                          className="mr-2 rounded-lg bg-emerald-700 px-3 py-2 text-white"
+                        >
+                          Aprobar
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => setSelected(item)}
@@ -426,7 +446,14 @@ export function AccountMappingPage({
           taxYear={query.data?.context.taxPeriod.taxYear}
           loading={approving}
           close={() => setApprovalItems([])}
-          approve={() => approve(approvalItems)}
+          approve={() =>
+            approve(
+              approvalItems,
+              approvalItems.some(
+                (item) => item.suggestions[0]?.status === "review",
+              ),
+            )
+          }
         />
       )}
       {notice && (
@@ -546,9 +573,18 @@ function MappingDialog({
           <section className="mt-4 space-y-2 text-sm">
             <h3 className="font-semibold">Top candidatos</h3>
             {item.suggestions[0]?.status === "review" && (
-              <p className="rounded-md bg-amber-50 px-3 py-2 text-amber-800">
-                Sugerencia pendiente de revisión
-              </p>
+              <div className="rounded-md bg-amber-50 px-3 py-2 text-amber-900">
+                <p className="font-medium">Sugerencia pendiente de revisión</p>
+                <p className="mt-1">
+                  Confianza:{" "}
+                  {Math.round(item.suggestions[0].confidence * 100)}% · No
+                  apta para aprobación masiva automática.
+                </p>
+                <p className="mt-1">
+                  {massApprovalIneligibleReason(item) ??
+                    "Puede aceptarse individualmente tras revisar candidatos y razones."}
+                </p>
+              </div>
             )}
             {item.suggestions.slice(0, 5).map((suggestion, rank) => (
               <article
@@ -786,7 +822,7 @@ function ApprovalDialog({
             />
             <Info
               label="Confianza"
-              value={`${Math.round(first.suggestions[0].confidence * 100)}% · ${confidenceLabel(first.suggestions[0].confidence)}`}
+              value={`${Math.round(first.suggestions[0].confidence * 100)}% · ${confidenceLabel(first.suggestions[0].confidence)}${first.suggestions[0].status === "review" ? " · Pendiente de revisión" : ""}`}
             />
             <Info
               label="Última aparición / período tributario"
@@ -874,8 +910,14 @@ function ApprovalDialog({
             <ul className="mt-4 list-disc pl-5 text-sm text-amber-900">
               <li>Los mappings ya confirmados no serán reemplazados.</li>
               <li>
-                Las cuentas sin sugerencia activa serán excluidas
+                Las cuentas sin sugerencia activa o pendiente de revisión serán
+                excluidas
                 {excluded ? ` (${excluded} excluidas).` : "."}
+              </li>
+              <li>
+                Las sugerencias pendientes de revisión sólo se aprueban con
+                confirmación manual explícita y no entran en la aprobación
+                masiva de alta confianza.
               </li>
               <li>
                 El backend revalidará las cuentas modificadas desde que se abrió

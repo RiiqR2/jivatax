@@ -61,6 +61,8 @@ test("aprobación masiva valida período, estado y sugerencia principal y reutil
   assert.match(source, /TaxPeriodCompanyAccountEntity/);
   assert.match(source, /mapping_not_pending/);
   assert.match(source, /active_primary_suggestion_not_found/);
+  assert.match(source, /approvable_primary_suggestion_not_found/);
+  assert.match(source, /allowReview/);
   assert.match(source, /applyMappingDecision/);
   assert.match(source, /CompanyAccountSuggestionStatus\.SUPERSEDED/);
 });
@@ -249,6 +251,15 @@ function batchHarness(
         };
       if (entity === CompanyAccountSuggestionEntity)
         return {
+          findOne: async ({
+            where,
+          }: {
+            where: {
+              companyAccountId: string;
+              suggestionRank: number;
+              status?: unknown;
+            };
+          }) => suggestions.get(where.companyAccountId) ?? null,
           findOneBy: async ({
             companyAccountId,
           }: {
@@ -294,6 +305,42 @@ test("batch mixto omite cuentas inválidas y reconstruye una sola vez", async ()
   assert.equal(result.skipped, 2);
   assert.equal(harness.decisions.length, 1);
   assert.deepEqual(harness.rebuildManagers, [harness.manager]);
+});
+
+test("batch con allowReview aprueba sugerencias review explícitamente", async () => {
+  const harness = orchestrationService();
+  const manager = {
+    getRepository(entity: unknown) {
+      if (entity === TaxPeriodCompanyAccountEntity)
+        return { existsBy: async () => true };
+      if (entity === CompanyAccountMappingEntity)
+        return {
+          findOneBy: async () => ({
+            status: CompanyAccountMappingStatus.PENDING,
+          }),
+        };
+      if (entity === CompanyAccountSuggestionEntity)
+        return {
+          findOne: async () => ({ siiAccountId: "sii-review" }),
+        };
+      throw new Error("Repositorio inesperado");
+    },
+  } as unknown as EntityManager;
+  harness.manager = manager;
+  harness.service.dataSource.transaction = async <T>(
+    work: (received: EntityManager) => Promise<T>,
+  ) => work(manager);
+  const result = await harness.service.approveBatch(
+    "company",
+    "period",
+    "user",
+    ["review-account"],
+    true,
+  );
+  assert.equal(result.approved, 1);
+  assert.deepEqual(harness.decisions, [
+    { accountId: "review-account", action: "confirm" },
+  ]);
 });
 
 test("batch completamente omitido no reconstruye", async () => {

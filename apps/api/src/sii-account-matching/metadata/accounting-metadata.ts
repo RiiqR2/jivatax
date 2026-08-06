@@ -9,7 +9,7 @@ import type {
 
 const FAMILY_RULES: ReadonlyArray<[RegExp, string, StatementSection]> = [
   [
-    /gastos? pagados? por anticipado|arriendo anticipado|seguro anticipado|prepago|prepagado|pagado por adelantado/,
+    /gastos? pagados? por anticipado|arriendo anticipado|seguro anticipado|seguros anticipados|comision anticipada|comisiones anticipadas|prepago|prepagado|pagado por adelantado/,
     "prepaid_expenses",
     "asset",
   ],
@@ -21,9 +21,14 @@ const FAMILY_RULES: ReadonlyArray<[RegExp, string, StatementSection]> = [
   [/proveedor|pagar/, "payables", "liability"],
   [/iva|impuesto|ppm|retencion/, "taxes", "liability"],
   [
-    /capital|patrimonio|utilidad acumulada|perdidas? acumuladas?|resultados? retenidos?/,
+    /capital|patrimonio|utilidad acumulada|utilidades acumuladas|perdidas? acumuladas?|resultados? acumulados?|resultado acumulado/,
     "equity",
     "equity",
+  ],
+  [
+    /^arriendo\b|arriendo fijo|gasto de arriendo|gastos de arriendo|arrendamiento operacional|canon de arrendamiento/,
+    "expenses",
+    "expense",
   ],
   [
     /gasto|costo|perdida|remuneracion|honorario|arriendo|arrendamiento|alquiler|electricidad|energia electrica|servicios basicos/,
@@ -45,6 +50,11 @@ const CONTRA_ACCOUNT_RULES: ReadonlyArray<RegExp> = [
   /amortizacion(?: \( menos \)| menos)/,
   /deterioro acumulado/,
   /provision complementaria (?:de )?activo/,
+  /provision (?:de )?deuda incobrable/,
+  /provision incobrable/,
+  /deuda incobrable/,
+  /deudores incobrables/,
+  /castigo de deudores/,
   /mayor valor (?:de )?inversiones?(?: \( menos \)| menos)/,
 ];
 
@@ -67,11 +77,13 @@ export function accountingMetadata(value: string): AccountingMetadata {
       statementSection === "income"
         ? "credit"
         : "debit",
-    term: /corto plazo|corriente/.test(name)
-      ? "current"
-      : /largo plazo|no corriente/.test(name)
-        ? "non_current"
-        : undefined,
+    term: /\b(no corriente|no-corriente|largo plazo|\bnc\b|\blp\b)\b/.test(name)
+      ? "non_current"
+      : /cuenta corriente/.test(name)
+        ? undefined
+        : /\b(corto plazo|corriente)\b/.test(name)
+          ? "current"
+          : undefined,
     contraAccount,
     concepts: [...relevantWords(name)].map(singularize),
   };

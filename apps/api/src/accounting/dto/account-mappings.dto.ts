@@ -72,6 +72,9 @@ export class ApproveAccountSuggestionsBatchDto {
   @IsArray()
   @IsUUID("4", { each: true })
   companyAccountIds!: string[];
+
+  /** When true, REVIEW suggestions may be approved via explicit manual batch. */
+  allowReview?: boolean;
 }
 
 export class UpdatePeriodAccountMappingDto {

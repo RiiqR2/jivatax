@@ -98,6 +98,7 @@ export const SII_ACCOUNT_ALIASES: readonly CuratedSiiAccountKnowledge[] = [
       { term: "pagos en tránsito", type: "alias", weight: 60 },
       { term: "existencias en transito", type: "negative_term", weight: -45 },
       { term: "existencias en tránsito", type: "negative_term", weight: -45 },
+      { term: "pagos basados en acciones", type: "negative_term", weight: -50 },
     ],
   },
   {
@@ -106,6 +107,17 @@ export const SII_ACCOUNT_ALIASES: readonly CuratedSiiAccountKnowledge[] = [
       { term: "honorarios diferidos", type: "alias", weight: 55 },
       { term: "gastos diferidos", type: "alias", weight: 60 },
       { term: "costos diferidos", type: "alias", weight: 55 },
+      { term: "intereses diferidos leasing", type: "negative_term", weight: -45 },
+    ],
+  },
+  {
+    siiAccountCode: "1.01.11.00",
+    terms: [
+      { term: "gastos pagados por anticipado", type: "alias", weight: 60 },
+      { term: "seguros anticipados", type: "alias", weight: 60 },
+      { term: "comisiones anticipadas", type: "alias", weight: 60 },
+      { term: "seguro anticipado", type: "alias", weight: 55 },
+      { term: "comision anticipada", type: "alias", weight: 55 },
     ],
   },
   {

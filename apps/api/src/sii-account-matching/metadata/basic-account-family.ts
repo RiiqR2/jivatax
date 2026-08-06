@@ -36,6 +36,11 @@ export const GENERIC_MATCH_TOKENS = new Set([
   "donaciones",
   "cargo",
   "abono",
+  "interes",
+  "intereses",
+  "provision",
+  "provisiones",
+  "corriente",
 ]);
 
 const OPERATIONAL_BANK_SUFFIX =
@@ -176,15 +181,16 @@ export function inferBasicAccountFamily(
   )
     return "cost";
 
+  if (/anticipad|prepag|prepago|pagado por adelantado|seguros anticipados|comisiones anticipadas|seguro anticipado|comision anticipada/.test(normalized))
+    return "prepaid";
+
   if (
     /^gastos?\b|gasto de |gastos de |arriendo|electricidad|servicios basicos|servicios básicos/.test(
       normalized,
-    )
+    ) &&
+    !/anticipad|prepag|pagado por adelantado/.test(normalized)
   )
     return "expense";
-
-  if (/anticipad|prepag|prepago|pagado por adelantado/.test(normalized))
-    return "prepaid";
 
   if (
     /maquinaria|equipos|vehiculos|vehículos|inmuebles|activo fijo|depreciacion|depreciación/.test(
@@ -256,6 +262,8 @@ export function candidateBasicAccountFamily(
     return "cash_and_bank";
   if (/creditos por donaciones|créditos por donaciones/.test(normalized))
     return "financial_investment";
+  if (/gastos pagados por anticipado|seguros anticipados|comisiones anticipadas/.test(normalized))
+    return "prepaid";
   if (/gastos diferidos|costos diferidos/.test(normalized)) return "deferred";
   if (/honorarios diferidos/.test(normalized)) return "deferred";
 

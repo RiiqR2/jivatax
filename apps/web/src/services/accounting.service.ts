@@ -211,10 +211,11 @@ export const accountingService = {
     companyId: string,
     periodId: string,
     companyAccountIds: string[],
+    allowReview = false,
   ) {
     const response = await api.post(
       `/companies/${companyId}/tax-periods/${periodId}/account-mappings/suggestions/approve-batch`,
-      { companyAccountIds },
+      { companyAccountIds, allowReview },
     );
     return response.data;
   },

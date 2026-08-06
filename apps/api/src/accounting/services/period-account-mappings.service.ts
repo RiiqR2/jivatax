@@ -509,6 +509,7 @@ export class PeriodAccountMappingsService {
     taxPeriodId: string,
     userId: string,
     companyAccountIds: string[],
+    allowReview = false,
   ) {
     await this.periods.get(companyId, taxPeriodId);
     const ids = [...new Set(companyAccountIds)].slice(0, 100);
@@ -543,16 +544,25 @@ export class PeriodAccountMappingsService {
         }
         const suggestion = await manager
           .getRepository(CompanyAccountSuggestionEntity)
-          .findOneBy({
-            companyAccountId,
-            status: CompanyAccountSuggestionStatus.ACTIVE,
-            suggestionRank: 1,
+          .findOne({
+            where: {
+              companyAccountId,
+              suggestionRank: 1,
+              status: allowReview
+                ? In([
+                    CompanyAccountSuggestionStatus.ACTIVE,
+                    CompanyAccountSuggestionStatus.REVIEW,
+                  ])
+                : CompanyAccountSuggestionStatus.ACTIVE,
+            },
           });
         if (!suggestion) {
           results.push({
             companyAccountId,
             status: "skipped",
-            reason: "active_primary_suggestion_not_found",
+            reason: allowReview
+              ? "approvable_primary_suggestion_not_found"
+              : "active_primary_suggestion_not_found",
           });
           continue;
         }
