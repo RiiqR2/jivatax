@@ -22,9 +22,9 @@ export class CompatibleCandidateRankerService {
     );
     return catalog
       .flatMap((account) => {
-        const compatible = this.compatibility.evaluate(
+        const compatible = this.compatibility.evaluateCatalog(
           observation,
-          account.name,
+          account,
         );
         if (!compatible.compatible) return [];
         const destinationTokens = new Set(

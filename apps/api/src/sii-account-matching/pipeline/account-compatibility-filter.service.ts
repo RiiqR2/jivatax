@@ -2,8 +2,19 @@ import { Injectable } from "@nestjs/common";
 import type {
   AccountObservation,
   CompatibilityResult,
+  PipelineCatalogAccount,
 } from "./account-matching-pipeline.types";
 import { AccountObservationClassifierService } from "./account-observation-classifier.service";
+
+type FinancialSubfamily =
+  | "cash_and_bank"
+  | "marketable_securities"
+  | "trade_receivables"
+  | "notes_receivable"
+  | "guarantees_and_deposits"
+  | "financial_investments"
+  | "lease_assets"
+  | "lease_liabilities";
 
 @Injectable()
 export class AccountCompatibilityFilterService {
@@ -11,66 +22,216 @@ export class AccountCompatibilityFilterService {
     private readonly classifier = new AccountObservationClassifierService(),
   ) {}
 
+  evaluateCatalog(
+    source: AccountObservation,
+    destination: PipelineCatalogAccount,
+  ): CompatibilityResult {
+    return this.evaluate(
+      source,
+      this.classifier.classify({
+        accountCode: destination.code,
+        accountName: destination.name,
+        isLeaf: destination.isLeaf,
+        active: destination.active,
+        mappable: destination.mappable,
+        parentCode: destination.parentCode,
+        level: destination.level,
+      }),
+    );
+  }
+
   evaluate(
     source: AccountObservation,
-    destinationName: string,
+    destination: AccountObservation | string,
   ): CompatibilityResult {
-    const destination = this.classifier.classify(destinationName);
+    const target =
+      typeof destination === "string"
+        ? this.classifier.classify(destination)
+        : destination;
     const reasons: string[] = [];
-    if (
-      source.temporalClass &&
-      destination.temporalClass &&
-      source.temporalClass !== destination.temporalClass
-    )
-      reasons.push("incompatible_temporal_class");
-    const sourceSection = source.observedSection.replace("contra_", "");
-    const destinationSection = destination.observedSection.replace(
-      "contra_",
-      "",
-    );
-    if (
-      sourceSection !== "unknown" &&
-      destinationSection !== "unknown" &&
-      sourceSection !== destinationSection
-    )
-      reasons.push("incompatible_statement_section");
+    const warnings: string[] = [];
+    const evidence: string[] = [];
+    const exclude = (reason: string) => {
+      if (!reasons.includes(reason)) reasons.push(reason);
+    };
+
+    const eligibility = target.destinationMetadata;
+    if (eligibility?.active === false) exclude("destination_inactive");
+    if (eligibility?.mappable === false) exclude("destination_not_mappable");
+    if (eligibility?.isLeaf === false) exclude("destination_grouping_node");
+
+    if (source.temporalClass && target.temporalClass) {
+      if (source.temporalClass !== target.temporalClass)
+        exclude("incompatible_temporal_class");
+      else evidence.push(`temporal_class:${source.temporalClass}`);
+    } else {
+      warnings.push("temporal_class_undetermined");
+    }
+
+    const sourceSection = source.observedSection;
+    const targetSection = target.observedSection;
+    if (sourceSection !== "unknown" && targetSection !== "unknown") {
+      const sameBase =
+        sourceSection.replace("contra_", "") ===
+        targetSection.replace("contra_", "");
+      if (!sameBase) exclude("incompatible_statement_section");
+      else evidence.push(`statement_section:${sourceSection}:${targetSection}`);
+    }
+
     if (
       source.balanceNature !== "unknown" &&
-      destination.balanceNature !== "unknown" &&
-      source.balanceNature !== destination.balanceNature
-    )
-      reasons.push("incompatible_balance_nature");
+      target.balanceNature !== "unknown"
+    ) {
+      if (source.balanceNature !== target.balanceNature)
+        exclude("incompatible_balance_nature");
+      else evidence.push(`balance_nature:${source.balanceNature}`);
+    }
+
+    const sourceDirection = this.direction(source.normalizedName);
+    const targetDirection = this.direction(target.normalizedName);
     if (
-      source.accountFamily === "cash" &&
-      /existencias en transito|pagos basados en acciones/.test(
-        destination.normalizedName,
-      )
+      sourceDirection &&
+      targetDirection &&
+      sourceDirection !== targetDirection
     )
-      reasons.push("cash_bridge_incompatible_destination");
+      exclude("receivable_payable_direction_mismatch");
+
+    const sourceSubfamily = this.financialSubfamily(source);
+    const targetSubfamily = this.financialSubfamily(target);
+    if (sourceSubfamily && targetSubfamily) {
+      if (sourceSubfamily !== targetSubfamily)
+        exclude("incompatible_financial_subfamily");
+      else evidence.push(`financial_subfamily:${sourceSubfamily}`);
+    }
+
     if (
-      source.accountFamily === "bad_debt_allowance" &&
-      /por pagar|pasivo/.test(destination.normalizedName)
+      target.specialTaxCategory !== "none" &&
+      source.specialTaxCategory !== target.specialTaxCategory
     )
-      reasons.push("receivable_allowance_vs_liability_provision");
+      exclude("protected_tax_category_requires_explicit_evidence");
+    else if (target.specialTaxCategory !== "none")
+      evidence.push(`protected_tax_category:${target.specialTaxCategory}`);
+
     if (
-      source.accountFamily === "loan_receivable" &&
-      /por pagar/.test(destination.normalizedName)
-    )
-      reasons.push("receivable_vs_payable");
-    if (
-      destination.specialTaxCategory !== "none" &&
-      source.specialTaxCategory !== destination.specialTaxCategory
-    )
-      reasons.push("protected_tax_category_requires_explicit_evidence");
-    if (
-      destination.relationshipClass === "related_party" &&
+      target.relationshipClass === "related_party" &&
       source.relationshipClass !== "related_party"
     )
-      reasons.push("related_party_requires_explicit_evidence");
+      exclude("related_party_requires_explicit_evidence");
+    if (
+      source.relationshipClass === "related_party" &&
+      target.relationshipClass !== "related_party"
+    )
+      warnings.push("related_source_destination_relation_unspecified");
+
+    if (this.isBridge(source.normalizedName)) {
+      if (!this.isBridge(target.normalizedName))
+        exclude("bridge_account_requires_explicit_destination");
+      if (/existencias|pagos basados en acciones/.test(target.normalizedName))
+        exclude("bridge_account_incompatible_destination");
+    }
+
+    const shared = this.sharedMeaningfulTokens(
+      source.normalizedName,
+      target.normalizedName,
+    );
+    if (
+      source.normalizedName !== target.normalizedName &&
+      shared.length === 0 &&
+      evidence.length === 0
+    ) {
+      if (
+        source.observedSection === "unknown" &&
+        source.balanceNature === "unknown"
+      )
+        warnings.push("insufficient_compatibility_evidence");
+      else exclude("insufficient_compatibility_evidence");
+    }
+    if (shared.length)
+      evidence.push(`shared_specific_tokens:${shared.join(",")}`);
+    if (source.normalizedName === target.normalizedName)
+      evidence.push("exact_normalized_name");
+
+    const compatible = reasons.length === 0;
     return {
-      compatible: reasons.length === 0,
+      compatible,
       exclusionReasons: reasons,
-      warnings: [],
+      warnings,
+      compatibilityEvidence: evidence,
+      compatibilityLevel: !compatible
+        ? "incompatible"
+        : source.normalizedName === target.normalizedName
+          ? "exact"
+          : warnings.length
+            ? "uncertain"
+            : "compatible",
     };
+  }
+
+  private direction(name: string): "receivable" | "payable" | undefined {
+    if (/por cobrar|cobranza judicial|deudor|cliente/.test(name))
+      return "receivable";
+    if (/por pagar|proveedor|obligacion|pasivo.*prestamo/.test(name))
+      return "payable";
+    return undefined;
+  }
+
+  private financialSubfamily(
+    observation: AccountObservation,
+  ): FinancialSubfamily | undefined {
+    const name = observation.normalizedName;
+    if (/valores? negociables?|instrumentos? negociables?/.test(name))
+      return "marketable_securities";
+    if (
+      /cheques?.*por cobrar|deudores?.*cobranza judicial|cuentas?.*por cobrar/.test(
+        name,
+      )
+    )
+      return "trade_receivables";
+    if (/pagare.*por cobrar|documentos?.*por cobrar/.test(name))
+      return "notes_receivable";
+    if (/garantia|deposito.*garantia/.test(name))
+      return "guarantees_and_deposits";
+    if (/inversion(?:es)? financiera/.test(name))
+      return "financial_investments";
+    if (/derecho de uso|activo.*arrendamiento/.test(name))
+      return "lease_assets";
+    if (/pasivo.*arrendamiento/.test(name)) return "lease_liabilities";
+    if (/caja|banco|disponible|efectivo/.test(name)) return "cash_and_bank";
+    return undefined;
+  }
+
+  private isBridge(name: string): boolean {
+    return /cuenta puente|pagos? en transito|cuenta transitoria/.test(name);
+  }
+
+  private sharedMeaningfulTokens(left: string, right: string): string[] {
+    const generic = new Set([
+      "gasto",
+      "gastos",
+      "ingreso",
+      "ingresos",
+      "pago",
+      "pagos",
+      "credito",
+      "interes",
+      "fondo",
+      "corriente",
+      "provision",
+      "transito",
+      "comercial",
+      "comun",
+      "cuenta",
+      "cuentas",
+      "por",
+      "para",
+      "del",
+      "los",
+      "las",
+    ]);
+    const rightTokens = new Set(right.split(" "));
+    return [...new Set(left.split(" "))].filter(
+      (token) =>
+        token.length > 2 && !generic.has(token) && rightTokens.has(token),
+    );
   }
 }

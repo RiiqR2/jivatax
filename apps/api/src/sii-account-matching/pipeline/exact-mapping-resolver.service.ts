@@ -21,7 +21,7 @@ export class ExactMappingResolverService {
       .filter(
         (account) =>
           normalizeAccountTerm(account.name) === observation.normalizedName &&
-          this.compatibility.evaluate(observation, account.name).compatible,
+          this.compatibility.evaluateCatalog(observation, account).compatible,
       )
       .map((account) => ({
         siiAccountId: account.id,

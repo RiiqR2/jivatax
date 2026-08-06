@@ -1,10 +1,24 @@
 # Términos y sugerencias de cuentas SII
 
-## Pipeline de homologación v2 (Bloque 1, aislado)
+## Pipeline de homologación v2 (Bloques 1–3, aislado)
 
 El directorio `pipeline/` establece una base conservadora y testeable para reemplazar gradualmente el ranking. Su orden futuro es **clasificación → compatibilidad → resolución exacta → reglas contables → ranking compatible → decisión**. En este bloque la fachada existe únicamente para pruebas: no está registrada en el módulo ni es llamada por `AccountSuggestionService.generateForPeriod`; el motor descrito más abajo sigue siendo el productivo.
 
 Compatibilidad y ranking son responsabilidades distintas. La compatibilidad es una barrera contable: elimina destinos imposibles por sección, temporalidad, naturaleza o significado antes de comparar candidatos. El ranking sólo ordena los destinos que atravesaron esa barrera y no convierte una similitud lexical en validez contable. La decisión puede responder `ambiguous` o `no_candidate`; ninguna salida confirma mappings automáticamente.
+
+El Bloque 3 aplica barreras duras y trazables antes de todo ranking: sección y
+naturaleza (sin confundir una con otra), corto frente a largo plazo, cobrar
+frente a pagar, relación explícita, subfamilias financieras, cuentas puente y
+elegibilidad oficial del destino. Una temporalidad ausente no descarta current
+ni non-current, pero agrega `temporal_class_undetermined`; “cuenta corriente
+bancaria” no constituye plazo. Una relación presente sólo en el origen conserva
+el destino no marcado como candidato incierto, nunca fuerte.
+
+`PipelineCatalogAccount` acepta `active`, `mappable` e `isLeaf` como metadata
+oficial mínima. Un valor explícitamente falso excluye la cuenta con un reason
+estable; en particular `isLeaf: false` identifica encabezados y nodos
+agrupadores. No se adivina esa condición desde el formato del código. Cuando la
+metadata no está disponible, la ausencia no se transforma en una exclusión.
 
 La clasificación reutiliza `statementSection`, `term`, `contraAccount` y `expectedBalanceNature` de `accountingMetadata`. Una familia específica v2 tiene precedencia; después se aplican la condición correctora y la sección/naturaleza de la metadata, dejando la heurística local sólo como fallback. La taxonomía pequeña de familias propia de v2 está centralizada en `pipeline/account-family-taxonomy.ts`, donde cada familia documenta su correspondencia con la familia común; sólo conserva distinciones que la metadata general no expresa, como IVA crédito frente a IVA débito. Tanto las reglas observadas como las de destino se mantienen en ese único archivo.
 
@@ -29,6 +43,14 @@ depreciación acumulada presentada en `assetAmount` conserva sección
 puede conservar patrimonio aunque el formato la presente en el bloque pasivo.
 
 Gastos rechazados, donaciones, gastos no documentados, multas tributarias, rentas extranjeras, impuestos diferidos y partes relacionadas son categorías sensibles. Sólo son compatibles cuando el nombre observado aporta evidencia positiva explícita de la misma categoría, porque un falso positivo puede cambiar el tratamiento tributario. El catálogo SII vigente continuará siendo la única fuente admisible de destinos cuando se integre el pipeline.
+
+También quedan protegidas las operaciones con relacionados y las donaciones
+rechazadas, cubiertas por las categorías explícitas relacionadas/donación o
+gasto rechazado. Señales genéricas como gasto, débito o pérdida no acreditan
+ninguna de estas categorías. Ante sección `unknown` no se inventa una barrera de
+sección: el candidato puede conservarse como `uncertain` con warnings, mientras
+que las incompatibilidades explícitas y las categorías protegidas siguen siendo
+exclusiones duras.
 
 `sii_accounts` continúa siendo el único catálogo oficial. `sii_account_terms` sólo contiene conocimiento auditable para puntuar sugerencias; los datos del Manual MiPyme son auxiliares y sus códigos nunca se usan como códigos SII.
 

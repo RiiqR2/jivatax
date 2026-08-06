@@ -29,10 +29,14 @@ export class AccountObservationClassifierService {
     const originalName = input.accountName;
     const name = normalizeAccountTerm(originalName);
     const metadata = accountingMetadata(name);
+    // accountingMetadata owns the audited contra rules. This deliberately
+    // narrow local fallback only covers an explicit phrase absent there.
+    const localContraFallback = /cuenta complementaria (?:de )?activo/.test(
+      name,
+    );
     const explicitContra =
-      /depreciacion acumulada|amortizacion acumulada|deterioro acumulado|provision.*(?:deuda|deudor|cuenta).*incobrable|provision complementaria.*activo/.test(
-        name,
-      );
+      (metadata.contraAccount && !/^deuda incobrable$/.test(name)) ||
+      localContraFallback;
     const lexicalSection: ObservedAccountSection | undefined =
       /\bactivo\b/.test(name)
         ? "asset"
@@ -82,18 +86,25 @@ export class AccountObservationClassifierService {
       : metadata.statementSection === "equity"
         ? "equity"
         : undefined;
+    const structurallyContradictory = sectionSignals.length > 1;
     const observedSection: ObservedAccountSection =
       metadataOverride ??
-      (structuralSection !== "unknown"
-        ? structuralSection
-        : (family?.section ??
-          lexicalSection ??
-          (metadata.statementSection !== "unknown"
-            ? metadata.statementSection
-            : "unknown")));
-    if (metadataOverride)
-      evidence.push(`accounting_metadata:${metadataOverride}`);
-    else if (structuralSection === "unknown" && family)
+      (structurallyContradictory
+        ? "unknown"
+        : structuralSection !== "unknown"
+          ? structuralSection
+          : (family?.section ??
+            lexicalSection ??
+            (metadata.statementSection !== "unknown"
+              ? metadata.statementSection
+              : "unknown")));
+    if (metadataOverride) {
+      evidence.push(
+        explicitContra
+          ? `contra_account:${metadata.contraAccount ? "accounting_metadata" : "explicit_local_fallback"}:${metadataOverride}`
+          : `explicit_equity_metadata:${metadataOverride}`,
+      );
+    } else if (structuralSection === "unknown" && family)
       evidence.push(`v2_family:${accountFamily}`);
     else if (
       structuralSection === "unknown" &&
@@ -154,6 +165,13 @@ export class AccountObservationClassifierService {
       originalName,
       classificationEvidence: evidence,
       classificationWarnings: warnings,
+      destinationMetadata: {
+        isLeaf: input.isLeaf,
+        active: input.active,
+        mappable: input.mappable,
+        parentCode: input.parentCode,
+        level: input.level,
+      },
     };
   }
 

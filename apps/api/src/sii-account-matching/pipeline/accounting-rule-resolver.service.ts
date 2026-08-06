@@ -23,7 +23,7 @@ export class AccountingRuleResolverService {
     );
     if (!destinationPattern) return [];
     return catalog.flatMap((account) => {
-      const result = this.compatibility.evaluate(observation, account.name);
+      const result = this.compatibility.evaluateCatalog(observation, account);
       if (
         !destinationPattern.test(normalizeAccountTerm(account.name)) ||
         !result.compatible
