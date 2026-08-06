@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import type {
   PipelineCatalogAccount,
+  AccountObservationInput,
   SuggestionCandidate,
   SuggestionDecision,
 } from "./account-matching-pipeline.types";
@@ -22,10 +23,13 @@ export class SiiAccountMatchingPipelineService {
   ) {}
 
   suggest(
-    name: string,
+    input: AccountObservationInput | string,
     catalog: PipelineCatalogAccount[],
   ): { decision: SuggestionDecision; candidates: SuggestionCandidate[] } {
-    const observation = this.classifier.classify(name);
+    const observation =
+      typeof input === "string"
+        ? this.classifier.classify(input)
+        : this.classifier.classify(input);
     const exact = this.exact.resolve(observation, catalog);
     const candidates = exact.length
       ? exact

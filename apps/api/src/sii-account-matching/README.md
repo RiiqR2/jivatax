@@ -8,6 +8,26 @@ Compatibilidad y ranking son responsabilidades distintas. La compatibilidad es u
 
 La clasificación reutiliza `statementSection`, `term`, `contraAccount` y `expectedBalanceNature` de `accountingMetadata`. Una familia específica v2 tiene precedencia; después se aplican la condición correctora y la sección/naturaleza de la metadata, dejando la heurística local sólo como fallback. La taxonomía pequeña de familias propia de v2 está centralizada en `pipeline/account-family-taxonomy.ts`, donde cada familia documenta su correspondencia con la familia común; sólo conserva distinciones que la metadata general no expresa, como IVA crédito frente a IVA débito. Tanto las reglas observadas como las de destino se mantienen en ese único archivo.
 
+### Entrada y precedencia de la observación v2
+
+El clasificador recibe un `AccountObservationInput` explícito con `accountCode`,
+`accountName` y las columnas opcionales `assetAmount`, `liabilityAmount`,
+`lossAmount`, `gainAmount`, `debitBalance`, `creditBalance`, `debits` y `credits`
+(importes DECIMAL como `string | null`). La sobrecarga que recibe sólo el nombre
+se conserva únicamente para compatibilidad de pruebas.
+
+La precedencia es: (1) columnas estructurales del Balance, (2) metadata contable
+explícita, (3) familia específica v2, (4) nombre normalizado y (5) `unknown`.
+`classificationEvidence` hace trazable la decisión y `classificationWarnings`
+conserva importes inválidos o señales contradictorias. Dos secciones positivas
+no se resuelven arbitrariamente; dos saldos de naturaleza opuesta producen
+naturaleza `unknown`.
+
+La condición correctora es distinta de la columna física informada. Una
+depreciación acumulada presentada en `assetAmount` conserva sección
+`contra_asset` y naturaleza `credit`; asimismo, metadata explícita de patrimonio
+puede conservar patrimonio aunque el formato la presente en el bloque pasivo.
+
 Gastos rechazados, donaciones, gastos no documentados, multas tributarias, rentas extranjeras, impuestos diferidos y partes relacionadas son categorías sensibles. Sólo son compatibles cuando el nombre observado aporta evidencia positiva explícita de la misma categoría, porque un falso positivo puede cambiar el tratamiento tributario. El catálogo SII vigente continuará siendo la única fuente admisible de destinos cuando se integre el pipeline.
 
 `sii_accounts` continúa siendo el único catálogo oficial. `sii_account_terms` sólo contiene conocimiento auditable para puntuar sugerencias; los datos del Manual MiPyme son auxiliares y sus códigos nunca se usan como códigos SII.
