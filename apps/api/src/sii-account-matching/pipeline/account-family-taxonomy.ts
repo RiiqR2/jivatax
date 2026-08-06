@@ -30,6 +30,11 @@ export const PIPELINE_ACCOUNT_FAMILIES = {
     metadataFamily: "receivables",
     section: "asset",
   },
+  customer_advance: {
+    observed: /anticipo.*cliente|ingreso.*percibido.*adelantado/,
+    metadataFamily: "payables",
+    section: "liability",
+  },
   trade_payable: {
     observed: /proveedor/,
     destination: /proveedores por pagar/,
@@ -53,8 +58,19 @@ export const PIPELINE_ACCOUNT_FAMILIES = {
     metadataFamily: "receivables",
     section: "asset",
   },
+  loan_payable: {
+    observed: /prestamo.*por pagar/,
+    metadataFamily: "financial_liabilities",
+    section: "liability",
+  },
+  lease_liability: {
+    observed: /pasivo.*arrendamiento/,
+    metadataFamily: "financial_liabilities",
+    section: "liability",
+  },
   bad_debt_allowance: {
-    observed: /incobrable|deterioro.*(?:cliente|deudor)/,
+    observed:
+      /provision.*(?:deuda|deudor|cuenta).*incobrable|deterioro.*(?:cliente|deudor)/,
     metadataFamily: "receivables",
     section: "contra_asset",
   },
@@ -76,6 +92,9 @@ const FAMILY_CLASSIFICATION_ORDER: Exclude<PipelineAccountFamily, "unknown">[] =
     "vat_credit",
     "vat_debit",
     "supplier_advance",
+    "customer_advance",
+    "loan_payable",
+    "lease_liability",
     "bank_debt",
     "issued_capital",
     "loan_receivable",

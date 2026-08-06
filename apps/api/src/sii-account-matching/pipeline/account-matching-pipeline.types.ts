@@ -18,6 +18,20 @@ export type SpecialTaxCategory =
   | "related_party"
   | "none";
 
+/** Balance row consumed only by the isolated v2 matching pipeline. */
+export interface AccountObservationInput {
+  accountCode: string;
+  accountName: string;
+  assetAmount?: string | null;
+  liabilityAmount?: string | null;
+  lossAmount?: string | null;
+  gainAmount?: string | null;
+  debitBalance?: string | null;
+  creditBalance?: string | null;
+  debits?: string | null;
+  credits?: string | null;
+}
+
 export interface AccountObservation {
   observedSection: ObservedAccountSection;
   balanceNature: BalanceNature | "unknown";
@@ -28,6 +42,8 @@ export interface AccountObservation {
   specialTaxCategory: SpecialTaxCategory;
   normalizedName: string;
   originalName: string;
+  classificationEvidence: string[];
+  classificationWarnings: string[];
 }
 
 export interface CompatibilityResult {

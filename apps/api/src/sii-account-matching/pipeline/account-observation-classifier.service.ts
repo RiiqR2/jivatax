@@ -11,59 +11,137 @@ import type {
 } from "../account-matching.types";
 import type {
   AccountObservation,
+  AccountObservationInput,
   ContraAccountType,
   SpecialTaxCategory,
 } from "./account-matching-pipeline.types";
+import { decimalValueState } from "./decimal-value";
 
 @Injectable()
 export class AccountObservationClassifierService {
-  classify(originalName: string): AccountObservation {
+  classify(input: AccountObservationInput): AccountObservation;
+  classify(name: string): AccountObservation;
+  classify(value: AccountObservationInput | string): AccountObservation {
+    const input: AccountObservationInput =
+      typeof value === "string"
+        ? { accountCode: "", accountName: value }
+        : value;
+    const originalName = input.accountName;
     const name = normalizeAccountTerm(originalName);
     const metadata = accountingMetadata(name);
+    const explicitContra =
+      /depreciacion acumulada|amortizacion acumulada|deterioro acumulado|provision.*(?:deuda|deudor|cuenta).*incobrable|provision complementaria.*activo/.test(
+        name,
+      );
+    const lexicalSection: ObservedAccountSection | undefined =
+      /\bactivo\b/.test(name)
+        ? "asset"
+        : /\bpasivo\b/.test(name)
+          ? "liability"
+          : /^(?:ingreso|renta|venta)\b/.test(name)
+            ? "income"
+            : /^(?:gasto|costo)\b/.test(name)
+              ? "expense"
+              : undefined;
     const accountFamily = classifyPipelineAccountFamily(name);
-    const familyDefinition =
+    const family =
       accountFamily === "unknown"
         ? undefined
         : PIPELINE_ACCOUNT_FAMILIES[accountFamily];
-    const specialTaxCategory = this.taxCategory(name);
-    const explicitSection = /\bactivo\b/.test(name)
-      ? ("asset" as const)
-      : /\bpasivo\b/.test(name)
-        ? ("liability" as const)
-        : /^(?:ingreso|renta|venta)\b/.test(name)
-          ? ("income" as const)
-          : /^(?:gasto|costo)\b/.test(name)
-            ? ("expense" as const)
-            : undefined;
-    const familySection = familyDefinition?.section;
-    const metadataSection = metadata.statementSection;
-    const baseSection =
-      familySection ??
-      (metadataSection !== "unknown" ? metadataSection : explicitSection) ??
-      "unknown";
-    const metadataContraSection = metadata.contraAccount
-      ? metadataSection === "liability"
-        ? ("contra_liability" as const)
-        : ("contra_asset" as const)
-      : undefined;
-    const observedSection: ObservedAccountSection =
-      familySection === "contra_asset"
+    const evidence: string[] = [];
+    const warnings: string[] = [];
+
+    const sectionSignals = (
+      [
+        ["assetAmount", "asset"],
+        ["liabilityAmount", "liability"],
+        ["lossAmount", "expense"],
+        ["gainAmount", "income"],
+      ] as const
+    ).filter(([field]) => this.positive(input[field], field, warnings));
+    let structuralSection: ObservedAccountSection = "unknown";
+    if (sectionSignals.length === 1) {
+      structuralSection = sectionSignals[0][1];
+      evidence.push(`balance:${sectionSignals[0][0]}:positive`);
+    } else if (sectionSignals.length > 1) {
+      warnings.push(
+        `contradictory_balance_sections:${sectionSignals.map(([, section]) => section).join(",")}`,
+      );
+      evidence.push(
+        ...sectionSignals.map(([field]) => `balance:${field}:positive`),
+      );
+    }
+
+    // Explicit contra/equity accounting metadata survives the physical Balance column.
+    const metadataOverride = explicitContra
+      ? accountFamily === "bad_debt_allowance"
         ? "contra_asset"
-        : (metadataContraSection ?? baseSection);
+        : metadata.statementSection === "liability"
+          ? "contra_liability"
+          : "contra_asset"
+      : metadata.statementSection === "equity"
+        ? "equity"
+        : undefined;
+    const observedSection: ObservedAccountSection =
+      metadataOverride ??
+      (structuralSection !== "unknown"
+        ? structuralSection
+        : (family?.section ??
+          lexicalSection ??
+          (metadata.statementSection !== "unknown"
+            ? metadata.statementSection
+            : "unknown")));
+    if (metadataOverride)
+      evidence.push(`accounting_metadata:${metadataOverride}`);
+    else if (structuralSection === "unknown" && family)
+      evidence.push(`v2_family:${accountFamily}`);
+    else if (
+      structuralSection === "unknown" &&
+      metadata.statementSection !== "unknown"
+    )
+      evidence.push(`accounting_metadata:${metadata.statementSection}`);
+
+    const debitPositive = this.positive(
+      input.debitBalance,
+      "debitBalance",
+      warnings,
+    );
+    const creditPositive = this.positive(
+      input.creditBalance,
+      "creditBalance",
+      warnings,
+    );
+    let balanceNature: BalanceNature | "unknown";
+    if (explicitContra) balanceNature = metadata.expectedBalanceNature;
+    else if (debitPositive && creditPositive) {
+      balanceNature = "unknown";
+      warnings.push("contradictory_balance_natures:debit,credit");
+      evidence.push(
+        "balance:debitBalance:positive",
+        "balance:creditBalance:positive",
+      );
+    } else if (debitPositive || creditPositive) {
+      balanceNature = debitPositive ? "debit" : "credit";
+      evidence.push(
+        `balance:${debitPositive ? "debitBalance" : "creditBalance"}:positive`,
+      );
+    } else if (observedSection === "unknown") balanceNature = "unknown";
+    else
+      balanceNature = [
+        "liability",
+        "equity",
+        "income",
+        "contra_asset",
+      ].includes(observedSection)
+        ? "credit"
+        : "debit";
+
     const contraAccountType: ContraAccountType =
       observedSection === "contra_asset"
         ? "asset_allowance"
         : observedSection === "contra_liability"
           ? "liability_allowance"
           : "none";
-    const balanceNature = this.resolveBalanceNature({
-      observedSection,
-      hasSpecificFamily: familyDefinition !== undefined,
-      metadataContraAccount: metadata.contraAccount,
-      metadataSection,
-      metadataNature: metadata.expectedBalanceNature,
-    });
-
     return {
       observedSection,
       balanceNature,
@@ -71,32 +149,22 @@ export class AccountObservationClassifierService {
       temporalClass: metadata.term,
       relationshipClass: /relacionad/.test(name) ? "related_party" : "unknown",
       contraAccountType,
-      specialTaxCategory,
+      specialTaxCategory: this.taxCategory(name),
       normalizedName: name,
       originalName,
+      classificationEvidence: evidence,
+      classificationWarnings: warnings,
     };
   }
 
-  private resolveBalanceNature(input: {
-    observedSection: ObservedAccountSection;
-    hasSpecificFamily: boolean;
-    metadataContraAccount: boolean;
-    metadataSection: string;
-    metadataNature: BalanceNature;
-  }): BalanceNature | "unknown" {
-    if (input.observedSection === "contra_asset") return "credit";
-    if (input.observedSection === "contra_liability") return "debit";
-    if (
-      input.metadataContraAccount ||
-      (!input.hasSpecificFamily && input.metadataSection !== "unknown")
-    )
-      return input.metadataNature;
-    if (input.observedSection === "unknown") return "unknown";
-    return input.observedSection === "liability" ||
-      input.observedSection === "equity" ||
-      input.observedSection === "income"
-      ? "credit"
-      : "debit";
+  private positive(
+    value: string | null | undefined,
+    field: string,
+    warnings: string[],
+  ): boolean {
+    const state = decimalValueState(value);
+    if (state === "invalid") warnings.push(`invalid_decimal:${field}`);
+    return state === "positive";
   }
 
   private taxCategory(name: string): SpecialTaxCategory {
