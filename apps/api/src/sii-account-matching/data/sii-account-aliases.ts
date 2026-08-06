@@ -75,6 +75,40 @@ export const SII_ACCOUNT_ALIASES: readonly CuratedSiiAccountKnowledge[] = [
     ],
   },
   {
+    siiAccountCode: "1.01.59.00",
+    terms: [
+      { term: "iva credito fiscal", type: "alias", weight: 60 },
+      { term: "iva crédito fiscal", type: "alias", weight: 60 },
+      { term: "iva debito fiscal", type: "negative_term", weight: -40 },
+      { term: "iva débito fiscal", type: "negative_term", weight: -40 },
+    ],
+  },
+  {
+    siiAccountCode: "1.01.08.00",
+    terms: [
+      { term: "anticipo proveedores", type: "alias", weight: 60 },
+      { term: "anticipos a proveedores", type: "alias", weight: 60 },
+      { term: "anticipo a proveedores", type: "erp_term", weight: 60 },
+    ],
+  },
+  {
+    siiAccountCode: "1.01.12.00",
+    terms: [
+      { term: "pagos en transito", type: "alias", weight: 60 },
+      { term: "pagos en tránsito", type: "alias", weight: 60 },
+      { term: "existencias en transito", type: "negative_term", weight: -45 },
+      { term: "existencias en tránsito", type: "negative_term", weight: -45 },
+    ],
+  },
+  {
+    siiAccountCode: "1.01.15.00",
+    terms: [
+      { term: "honorarios diferidos", type: "alias", weight: 55 },
+      { term: "gastos diferidos", type: "alias", weight: 60 },
+      { term: "costos diferidos", type: "alias", weight: 55 },
+    ],
+  },
+  {
     siiAccountCode: "3.01.03.00",
     terms: [
       { term: "arriendo", type: "alias", weight: 65 },

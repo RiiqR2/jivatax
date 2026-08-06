@@ -8,6 +8,14 @@ import type {
   ObservedAccountSection,
   RankingOptions,
 } from "../account-matching.types";
+import {
+  basicFamiliesCompatible,
+  candidateBasicAccountFamily,
+  inferBasicAccountFamily,
+  isBankInstitutionName,
+  isGenericOnlyTokenOverlap,
+  type BasicAccountFamily,
+} from "../metadata/basic-account-family";
 import { singularize } from "../metadata/accounting-metadata";
 import {
   normalizeAccountTerm,
@@ -70,6 +78,12 @@ export class AccountSuggestionRankingService {
       source.statementSection,
       context,
     );
+    const inferredBasicFamily =
+      options.inferredBasicFamily ??
+      inferBasicAccountFamily(observedAccountName, {
+        observedSection: observed,
+        balanceContext: context,
+      });
     const ruleEvaluations = new Map(
       candidates.map((candidate) => [
         candidate.account.id,
@@ -172,6 +186,18 @@ export class AccountSuggestionRankingService {
                 "account-suggestion-ranking.service.ts:rank:isCompatible",
             },
           ];
+        if (!this.isBasicFamilyCompatible(inferredBasicFamily, candidate))
+          return [
+            {
+              accountId: candidate.account.id,
+              reasons: ["incompatible_basic_family"],
+              condition: "observed basic family compatible with destination",
+              observedValue: inferredBasicFamily,
+              requiredValue: candidateBasicAccountFamily(candidate),
+              discardedAt:
+                "account-suggestion-ranking.service.ts:rank:basic_family",
+            },
+          ];
         return [];
       },
     );
@@ -190,12 +216,20 @@ export class AccountSuggestionRankingService {
           candidate.metadata.contraAccount,
         ),
       )
+      .filter((candidate) =>
+        this.isBasicFamilyCompatible(inferredBasicFamily, candidate),
+      )
       .map((candidate): RankedCandidate => {
-        const reasons = this.termReasons(normalized, candidate);
+        const reasons = this.termReasons(
+          normalized,
+          candidate,
+          observedAccountName,
+        );
         if (normalizedCanonical && normalizedCanonical !== normalized) {
           const canonicalReasons = this.termReasons(
             normalizedCanonical,
             candidate,
+            canonicalAccountName ?? observedAccountName,
           );
           const canonicalTotal = canonicalReasons.reduce(
             (sum, reason) => sum + Math.max(0, reason.points),
@@ -221,6 +255,18 @@ export class AccountSuggestionRankingService {
           ...(ruleEvaluations.get(candidate.account.id)?.signals ?? []),
         );
         reasons.push(...this.negativeTermReasons(normalized, candidate));
+        if (
+          isBankInstitutionName(observedAccountName) &&
+          candidateBasicAccountFamily(candidate) === "cash_and_bank"
+        )
+          reasons.push(
+            this.reason(
+              "bank_institution_cash_match",
+              "Institución bancaria compatible con disponible",
+              ACCOUNT_SUGGESTION_CONFIG.weights.prefixMaximum * 2,
+              "knowledge",
+            ),
+          );
         if (
           options.historicalCompanyMappingSiiAccountId &&
           candidate.account.id === options.historicalCompanyMappingSiiAccountId
@@ -471,7 +517,19 @@ export class AccountSuggestionRankingService {
         ),
       ],
       decisionAudit,
+      inferredBasicFamily,
     };
+  }
+
+  private isBasicFamilyCompatible(
+    observedFamily: BasicAccountFamily,
+    candidate: GeneratedCandidate,
+  ): boolean {
+    if (observedFamily === "other") return true;
+    return basicFamiliesCompatible(
+      observedFamily,
+      candidateBasicAccountFamily(candidate),
+    );
   }
 
   private semanticEvidence(
@@ -674,6 +732,7 @@ export class AccountSuggestionRankingService {
   private termReasons(
     normalizedSource: string,
     candidate: GeneratedCandidate,
+    observedAccountName: string,
   ): RankedCandidate["reasons"] {
     const reasons: RankedCandidate["reasons"] = [];
     const exactByText = new Map<
@@ -708,53 +767,58 @@ export class AccountSuggestionRankingService {
           exact.points,
         ),
       );
+    const hasExactMatch = exactByText.size > 0;
     let bestToken: { term: SiiAccountTermEntity; similarity: number } | null =
       null;
     let bestLexical: { term: SiiAccountTermEntity; similarity: number } | null =
       null;
-    const partialSources = [
-      candidate.account.name,
-      ...candidate.terms.map((term) => term.term),
-    ];
-    for (const rawTerm of partialSources) {
-      const normalizedTerm = normalizeAccountTerm(rawTerm);
-      if (normalizedSource === normalizedTerm) continue;
-      const { token, lexical } = partialTermSimilarity(
-        normalizedSource,
-        rawTerm,
-      );
-      const termEntity = candidate.terms.find((term) => term.term === rawTerm);
-      if (termEntity?.type === "negative_term") continue;
-      if (
-        token >
-        (bestToken?.similarity ??
-          ACCOUNT_SUGGESTION_CONFIG.lexicalCandidateThreshold - 1)
-      )
-        bestToken = {
-          term:
-            termEntity ??
-            ({
-              term: rawTerm,
-              normalizedTerm,
-              type: "official_name",
-            } as SiiAccountTermEntity),
-          similarity: token,
-        };
-      if (
-        lexical >
-        (bestLexical?.similarity ??
-          ACCOUNT_SUGGESTION_CONFIG.lexicalCandidateThreshold - 1)
-      )
-        bestLexical = {
-          term:
-            termEntity ??
-            ({
-              term: rawTerm,
-              normalizedTerm,
-              type: "official_name",
-            } as SiiAccountTermEntity),
-          similarity: lexical,
-        };
+    if (!hasExactMatch) {
+      const partialSources = [
+        candidate.account.name,
+        ...candidate.terms.map((term) => term.term),
+      ];
+      for (const rawTerm of partialSources) {
+        const normalizedTerm = normalizeAccountTerm(rawTerm);
+        if (normalizedSource === normalizedTerm) continue;
+        const { token, lexical } = partialTermSimilarity(
+          normalizedSource,
+          rawTerm,
+        );
+        const termEntity = candidate.terms.find(
+          (term) => term.term === rawTerm,
+        );
+        if (termEntity?.type === "negative_term") continue;
+        if (
+          token >
+          (bestToken?.similarity ??
+            ACCOUNT_SUGGESTION_CONFIG.lexicalCandidateThreshold - 1)
+        )
+          bestToken = {
+            term:
+              termEntity ??
+              ({
+                term: rawTerm,
+                normalizedTerm,
+                type: "official_name",
+              } as SiiAccountTermEntity),
+            similarity: token,
+          };
+        if (
+          lexical >
+          (bestLexical?.similarity ??
+            ACCOUNT_SUGGESTION_CONFIG.lexicalCandidateThreshold - 1)
+        )
+          bestLexical = {
+            term:
+              termEntity ??
+              ({
+                term: rawTerm,
+                normalizedTerm,
+                type: "official_name",
+              } as SiiAccountTermEntity),
+            similarity: lexical,
+          };
+      }
     }
     if (
       bestToken &&
@@ -789,7 +853,8 @@ export class AccountSuggestionRankingService {
     if (
       !reasons.some(
         (reason) => reason.signal.startsWith("exact_") && reason.points > 0,
-      )
+      ) &&
+      !isGenericOnlyTokenOverlap(observedAccountName, candidate.account.name)
     )
       reasons.push(
         ...this.structuralLexicalReasons(normalizedSource, candidate),
@@ -828,6 +893,7 @@ export class AccountSuggestionRankingService {
       ...candidate.terms.map((term) => term.term),
     ]) {
       const right = normalizeAccountTerm(rawRight);
+      if (isGenericOnlyTokenOverlap(normalizedSource, rawRight)) continue;
       if (leftTokens.size === 0) continue;
       const rightTokens = new Set([...relevantWords(right)].map(singularize));
       const union = new Set([...leftTokens, ...rightTokens]);

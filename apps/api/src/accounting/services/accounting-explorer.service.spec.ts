@@ -200,7 +200,10 @@ test("balance explorer coalesces losses and gains from balance entries", async (
   const pageQuery = calls.find((call) =>
     call.sql.includes("SELECT explorer.*"),
   )!;
-  assert.match(pageQuery.sql, /LEFT JOIN balance_entries be ON be\.id = pa\.balance_entry_id/);
+  assert.match(
+    pageQuery.sql,
+    /LEFT JOIN balance_entries be ON be\.id = pa\.balance_entry_id/,
+  );
   assert.match(
     pageQuery.sql,
     /COALESCE\(pa\.loss_amount, be\.effective_losses, 0\)/,

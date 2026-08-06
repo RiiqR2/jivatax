@@ -32,6 +32,14 @@ import { CompanyAccountMappingHistoryEntity } from "../../accounting/entities/co
 import { CompanyEntity } from "../../companies/entities/company.entity";
 import { TaxPeriodEntity } from "../../accounting/entities/tax-period.entity";
 import type { AccountLearningEvidence } from "../account-matching.types";
+import { CatalogReferenceResolverService } from "./catalog-reference-resolver.service";
+import { resolveCuratedCatalogKnowledge } from "../data/resolve-curated-catalog-knowledge";
+import { inferBasicAccountFamily } from "../metadata/basic-account-family";
+import {
+  defaultHomologationReportPath,
+  type HomologationAccountReport,
+  writeHomologationReport,
+} from "./homologation-report";
 export { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
 
 const EXACT_TERM_SIGNAL =
@@ -86,16 +94,18 @@ export class AccountSuggestionService {
       accounts,
       company.industryId,
     );
-    const siiAccountIds = Array.from(
-      new Set([
-        ...loadedTerms.map((term) => term.siiAccountId),
-        ...loadedKnowledge.map((item) => item.siiAccountId),
-        ...loadedLearning.map((item) => item.siiAccountId),
-      ]),
-    );
-    // Terms are synchronized against the selected active SII version. Resolving
-    // by those real account ids prevents mixing candidates from older versions.
     const siiAccounts = await this.loadSiiAccounts();
+    const catalogResolver = new CatalogReferenceResolverService(
+      this.dataSource,
+    );
+    const resolvedReferences = await catalogResolver.resolve({
+      terms: loadedTerms,
+      concepts: loadedConcepts,
+      knowledge: loadedKnowledge,
+      learning: loadedLearning,
+      currentAccounts: siiAccounts,
+    });
+    const curatedKnowledge = resolveCuratedCatalogKnowledge(siiAccounts);
     const expenseKnowledge = resolveCatalogExpenseKnowledge(siiAccounts);
     const siiAccountsById = new Map(
       siiAccounts.map((account) => [account.id, account]),
@@ -103,33 +113,43 @@ export class AccountSuggestionService {
     const historicalMappings = await this.loadHistoricalCompanyMappings(
       accounts.map((account) => account.id),
     );
-    const foundAccountIds = Array.from(siiAccountsById.keys());
-    const missingAccountIds = siiAccountIds.filter(
-      (id) => !siiAccountsById.has(id),
-    );
-    const accountResolution = {
-      requestedAccountIds: siiAccountIds,
-      foundAccountIds,
-      missingAccountIds,
-    };
-    if (missingAccountIds.length) {
-      this.logger.warn({
-        message: "No se encontraron todas las cuentas SII referenciadas",
-        ...accountResolution,
+    const orphanReferences = [
+      ...resolvedReferences.orphans,
+      ...curatedKnowledge.missingCodes.map((code) => ({
+        source: "term" as const,
+        siiAccountId: "",
+        stableCode: code,
+        detail: "curated_code_missing_from_active_catalog",
+      })),
+    ];
+    const homologationReport: HomologationAccountReport[] = [];
+    if (orphanReferences.length) {
+      this.logger.error({
+        message:
+          "Referencias SII huérfanas detectadas antes de generar sugerencias",
+        orphanCount: orphanReferences.length,
+        remappedCount: resolvedReferences.remappedCount,
+        orphans: orphanReferences,
+        curatedMissingCodes: curatedKnowledge.missingCodes,
       });
     }
 
     const diagnostics = {
       accountsProcessed: accounts.length,
       mappingsReused: 0,
-      termsLoaded: loadedTerms.length,
-      globalTermsLoaded: loadedTerms.filter((term) => term.scope === "global")
-        .length,
-      companyTermsLoaded: loadedTerms.filter((term) => term.scope === "company")
-        .length,
-      siiAccountIdsRequested: siiAccountIds.length,
-      siiAccountsFound: foundAccountIds.length,
-      siiAccountIdsMissing: missingAccountIds.length,
+      termsLoaded: resolvedReferences.terms.length,
+      globalTermsLoaded: resolvedReferences.terms.filter(
+        (term) => term.scope === "global",
+      ).length,
+      companyTermsLoaded: resolvedReferences.terms.filter(
+        (term) => term.scope === "company",
+      ).length,
+      siiAccountIdsRequested: resolvedReferences.terms.length,
+      siiAccountsFound: siiAccounts.length,
+      siiAccountIdsMissing: orphanReferences.length,
+      remappedCatalogReferences: resolvedReferences.remappedCount,
+      orphanReferences,
+      curatedMissingCodes: curatedKnowledge.missingCodes,
       exactMatches: 0,
       aliasMatches: 0,
       lexicalMatches: 0,
@@ -150,7 +170,7 @@ export class AccountSuggestionService {
           return {
             ...destination,
             classification: "expense" as const,
-            concepts: loadedConcepts
+            concepts: resolvedReferences.concepts
               .filter((concept) => concept.siiAccountId === account?.id)
               .map((concept) => concept.concept),
           };
@@ -198,14 +218,21 @@ export class AccountSuggestionService {
 
         const generatedCandidates = this.candidateGenerator.generate(
           siiAccounts,
-          loadedTerms,
-          loadedConcepts,
-          loadedKnowledge,
-          loadedLearning,
+          resolvedReferences.terms,
+          resolvedReferences.concepts,
+          resolvedReferences.knowledge,
+          resolvedReferences.learning,
         );
         const observedAccountName =
           companyAccount.matchingContext?.accountNameSnapshot ??
           companyAccount.name;
+        const inferredBasicFamily = inferBasicAccountFamily(
+          observedAccountName,
+          {
+            observedSection: undefined,
+            balanceContext: companyAccount.matchingContext,
+          },
+        );
         const deterministic = this.ranking.rank(
           {
             observedAccountName,
@@ -217,8 +244,49 @@ export class AccountSuggestionService {
           {
             historicalCompanyMappingSiiAccountId:
               historicalMappings.get(companyAccount.id) ?? null,
+            inferredBasicFamily,
           },
         );
+        const winner = deterministic.candidates[0];
+        const second = deterministic.candidates[1];
+        const normalizedObserved = normalizeAccountTerm(observedAccountName);
+        const orphanForAccount =
+          orphanReferences.find(
+            (orphan) =>
+              orphan.detail === normalizedObserved ||
+              orphan.detail === observedAccountName,
+          ) ??
+          orphanReferences.find((orphan) =>
+            resolvedReferences.terms.some(
+              (term) =>
+                term.normalizedTerm === normalizedObserved &&
+                term.siiAccountId === orphan.siiAccountId,
+            ),
+          ) ??
+          null;
+        homologationReport.push({
+          accountCode: companyAccount.internalCode,
+          accountName: observedAccountName,
+          observedSection: deterministic.observedSection,
+          inferredFamily:
+            deterministic.inferredBasicFamily ?? inferredBasicFamily,
+          winnerCode: winner?.account.code ?? null,
+          winnerName: winner?.account.name ?? null,
+          score: winner?.score ?? null,
+          confidence: winner?.confidence ?? null,
+          decision: deterministic.decision,
+          reasons: winner?.reasons ?? [],
+          secondCandidate: second
+            ? {
+                code: second.account.code,
+                name: second.account.name,
+                score: second.score,
+                confidence: second.confidence,
+              }
+            : null,
+          absoluteGap: winner ? winner.score - (second?.score ?? 0) : null,
+          orphanReferenceDetected: orphanForAccount,
+        });
         this.logSuggestionAudit({
           companyAccount,
           industryId: company.industryId,
@@ -348,12 +416,17 @@ export class AccountSuggestionService {
       }
     });
 
+    const reportPath = defaultHomologationReportPath(companyId, taxPeriodId);
+    writeHomologationReport(homologationReport, reportPath);
+
     return {
       ...diagnostics,
       averageConfidence: diagnostics.suggestionsCreated
         ? diagnostics.averageConfidence / diagnostics.suggestionsCreated
         : 0,
       suggested: diagnostics.suggestionsCreated,
+      homologationReport,
+      homologationReportPath: reportPath,
     };
   }
 

@@ -5,8 +5,20 @@ import type { SiiAccountConceptEntity } from "../entities/sii-account-concept.en
 import { accountingMetadata } from "../metadata/accounting-metadata";
 import type { GeneratedCandidate } from "../account-matching.types";
 import { resolveCatalogExpenseKnowledge } from "../data/catalog-expense-knowledge";
+import { resolveCuratedCatalogKnowledge } from "../data/resolve-curated-catalog-knowledge";
 import type { SiiAccountKnowledgeEntity } from "../entities/sii-account-knowledge.entity";
 import type { AccountLearningEvidence } from "../account-matching.types";
+
+function mergeUniqueTerms(
+  ...groups: SiiAccountTermEntity[][]
+): SiiAccountTermEntity[] {
+  const merged = new Map<string, SiiAccountTermEntity>();
+  for (const term of groups.flat()) {
+    const key = `${term.normalizedTerm}:${term.type}:${term.scope ?? "global"}`;
+    if (!merged.has(key)) merged.set(key, term);
+  }
+  return [...merged.values()];
+}
 
 /** Retrieval only: every active catalogue account enters the ranking pool. */
 @Injectable()
@@ -19,6 +31,7 @@ export class AccountCandidateGeneratorService {
     learning: AccountLearningEvidence[] = [],
   ): GeneratedCandidate[] {
     const catalogKnowledge = resolveCatalogExpenseKnowledge(accounts);
+    const curatedKnowledge = resolveCuratedCatalogKnowledge(accounts);
     const byAccount = new Map<string, SiiAccountTermEntity[]>();
     const negativeByAccount = new Map<string, SiiAccountTermEntity[]>();
     for (const term of terms) {
@@ -64,13 +77,18 @@ export class AccountCandidateGeneratorService {
         ),
         knowledge: knowledgeByAccount.get(account.id),
         learning: learningByAccount.get(account.id) ?? [],
-        terms: [
-          ...(byAccount.get(account.id) ?? []),
-          ...(catalogKnowledge.terms.get(account.id) ?? []),
-        ],
-        negativeTerms: negativeByAccount.get(account.id) ?? [],
+        terms: mergeUniqueTerms(
+          byAccount.get(account.id) ?? [],
+          curatedKnowledge.terms.get(account.id) ?? [],
+          catalogKnowledge.terms.get(account.id) ?? [],
+        ),
+        negativeTerms: mergeUniqueTerms(
+          negativeByAccount.get(account.id) ?? [],
+          curatedKnowledge.negativeTerms.get(account.id) ?? [],
+        ),
         concepts: [
           ...(conceptsByAccount.get(account.id) ?? []),
+          ...(curatedKnowledge.concepts.get(account.id) ?? []),
           ...(catalogKnowledge.concepts.get(account.id) ?? []),
         ],
       }));

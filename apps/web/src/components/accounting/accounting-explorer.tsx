@@ -1,6 +1,11 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -104,14 +109,10 @@ export function BalanceExplorer({
   const query = useQuery({
     queryKey: ["explorer-balance", companyId, taxPeriodId, filters],
     queryFn: () =>
-      accountingService.explorerBalance(
-        companyId,
-        taxPeriodId,
-        {
-          ...buildBalanceExplorerParams(filters),
-          pageSize: 50,
-        },
-      ),
+      accountingService.explorerBalance(companyId, taxPeriodId, {
+        ...buildBalanceExplorerParams(filters),
+        pageSize: 50,
+      }),
     placeholderData: (previousData) => previousData,
   });
   const change = (key: string, value: string) =>
@@ -248,7 +249,8 @@ export function BalanceExplorer({
                 Resumen del Balance
               </h2>
               <p className="mt-0.5 text-sm text-slate-600">
-                {data.summary.totalAccounts} cuentas en la importación seleccionada
+                {data.summary.totalAccounts} cuentas en la importación
+                seleccionada
               </p>
             </div>
             <ChevronDown
@@ -257,124 +259,127 @@ export function BalanceExplorer({
             />
           </summary>
           <div className="border-t border-slate-200 px-4 pb-4">
-          <div className="mt-5 grid gap-4 xl:grid-cols-2">
-            <section className="rounded-xl border border-slate-200 p-4">
-              <h3 className="text-sm font-semibold text-slate-900">
-                Movimiento y saldos
-              </h3>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {amount("Débitos", data.summary.totalBalanceDebits)}
-                {amount("Créditos", data.summary.totalBalanceCredits)}
-                {amount("Diferencia movimiento", data.summary.debitCreditDifference)}
-                {amount(
-                  "Saldo deudor",
-                  data.summary.totalBalanceDebitBalance,
-                )}
-                {amount(
-                  "Saldo acreedor",
-                  data.summary.totalBalanceCreditBalance,
-                )}
-                {amount(
-                  "Diferencia saldos",
-                  data.summary.debitCreditBalanceDifference,
-                )}
-              </div>
-            </section>
-
-            <section className="rounded-xl border border-slate-200 p-4">
-              <h3 className="text-sm font-semibold text-slate-900">
-                Clasificación contable
-              </h3>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                {amount(
-                  "Activo",
-                  data.summary.totalBalanceAssets,
-                  data.summary.assetAccountCount,
-                )}
-                {amount(
-                  "Pasivo",
-                  data.summary.totalBalanceLiabilities,
-                  data.summary.liabilityAccountCount,
-                )}
-                {amount(
-                  "Pérdidas",
-                  data.summary.totalBalanceLosses,
-                  data.summary.lossAccountCount,
-                  "warning",
-                )}
-                {amount(
-                  "Ganancias",
-                  data.summary.totalBalanceGains,
-                  data.summary.gainAccountCount,
-                  "positive",
-                )}
-              </div>
-            </section>
-          </div>
-
-          <section className="mt-4 rounded-xl border border-slate-200 p-4">
-            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-              <div>
+            <div className="mt-5 grid gap-4 xl:grid-cols-2">
+              <section className="rounded-xl border border-slate-200 p-4">
                 <h3 className="text-sm font-semibold text-slate-900">
-                  Control de cuadratura
+                  Movimiento y saldos
                 </h3>
-                <p className="mt-1 text-xs text-slate-500">
-                  Activo + Pérdidas debe ser igual a Pasivo + Ganancias.
-                </p>
-              </div>
-              <span
-                className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-semibold ${
-                  data.summary.accountingEquationBalanced
-                    ? "bg-emerald-100 text-emerald-800"
-                    : "bg-red-100 text-red-800"
-                }`}
-              >
-                {data.summary.accountingEquationBalanced
-                  ? "Cuadrado"
-                  : "Con diferencia"}
-              </span>
-            </div>
-            <div className="mt-3 grid gap-3 sm:grid-cols-3">
-              {amount(
-                "Activo + Pérdidas",
-                data.summary.accountingEquationLeft,
-              )}
-              {amount(
-                "Pasivo + Ganancias",
-                data.summary.accountingEquationRight,
-              )}
-              {amount(
-                "Diferencia",
-                data.summary.accountingEquationDifference,
-                undefined,
-                data.summary.accountingEquationBalanced
-                  ? "positive"
-                  : "warning",
-              )}
-            </div>
-          </section>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {amount("Débitos", data.summary.totalBalanceDebits)}
+                  {amount("Créditos", data.summary.totalBalanceCredits)}
+                  {amount(
+                    "Diferencia movimiento",
+                    data.summary.debitCreditDifference,
+                  )}
+                  {amount(
+                    "Saldo deudor",
+                    data.summary.totalBalanceDebitBalance,
+                  )}
+                  {amount(
+                    "Saldo acreedor",
+                    data.summary.totalBalanceCreditBalance,
+                  )}
+                  {amount(
+                    "Diferencia saldos",
+                    data.summary.debitCreditBalanceDifference,
+                  )}
+                </div>
+              </section>
 
-          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">
-              Resultado contable según columnas del Balance
-            </p>
-            <p className="mt-2 text-xl font-semibold tabular-nums text-emerald-950">
-              {data.summary.netResultType === "profit"
-                ? "Ganancia neta"
-                : data.summary.netResultType === "loss"
-                  ? "Pérdida neta"
-                  : "Resultado cero"}
-              : {formatAccountingAmount(data.summary.netResultAmount)}
-            </p>
-          </div>
-          <details className="mt-4 text-sm">
-            <summary className="cursor-pointer font-medium">
-              Totales informados por la empresa
-            </summary>
-            <p className="mt-2 text-slate-600">
-              No se detectaron filas de totales informados en esta versión.
-            </p>
-          </details>
+              <section className="rounded-xl border border-slate-200 p-4">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Clasificación contable
+                </h3>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {amount(
+                    "Activo",
+                    data.summary.totalBalanceAssets,
+                    data.summary.assetAccountCount,
+                  )}
+                  {amount(
+                    "Pasivo",
+                    data.summary.totalBalanceLiabilities,
+                    data.summary.liabilityAccountCount,
+                  )}
+                  {amount(
+                    "Pérdidas",
+                    data.summary.totalBalanceLosses,
+                    data.summary.lossAccountCount,
+                    "warning",
+                  )}
+                  {amount(
+                    "Ganancias",
+                    data.summary.totalBalanceGains,
+                    data.summary.gainAccountCount,
+                    "positive",
+                  )}
+                </div>
+              </section>
+            </div>
+
+            <section className="mt-4 rounded-xl border border-slate-200 p-4">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Control de cuadratura
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Activo + Pérdidas debe ser igual a Pasivo + Ganancias.
+                  </p>
+                </div>
+                <span
+                  className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-semibold ${
+                    data.summary.accountingEquationBalanced
+                      ? "bg-emerald-100 text-emerald-800"
+                      : "bg-red-100 text-red-800"
+                  }`}
+                >
+                  {data.summary.accountingEquationBalanced
+                    ? "Cuadrado"
+                    : "Con diferencia"}
+                </span>
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                {amount(
+                  "Activo + Pérdidas",
+                  data.summary.accountingEquationLeft,
+                )}
+                {amount(
+                  "Pasivo + Ganancias",
+                  data.summary.accountingEquationRight,
+                )}
+                {amount(
+                  "Diferencia",
+                  data.summary.accountingEquationDifference,
+                  undefined,
+                  data.summary.accountingEquationBalanced
+                    ? "positive"
+                    : "warning",
+                )}
+              </div>
+            </section>
+
+            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">
+                Resultado contable según columnas del Balance
+              </p>
+              <p className="mt-2 text-xl font-semibold tabular-nums text-emerald-950">
+                {data.summary.netResultType === "profit"
+                  ? "Ganancia neta"
+                  : data.summary.netResultType === "loss"
+                    ? "Pérdida neta"
+                    : "Resultado cero"}
+                : {formatAccountingAmount(data.summary.netResultAmount)}
+              </p>
+            </div>
+            <details className="mt-4 text-sm">
+              <summary className="cursor-pointer font-medium">
+                Totales informados por la empresa
+              </summary>
+              <p className="mt-2 text-slate-600">
+                No se detectaron filas de totales informados en esta versión.
+              </p>
+            </details>
           </div>
         </details>
       )}

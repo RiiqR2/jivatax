@@ -4,6 +4,7 @@ import type { SiiAccountConceptEntity } from "./entities/sii-account-concept.ent
 import type { SiiAccountKnowledgeEntity } from "./entities/sii-account-knowledge.entity";
 import type { AccountMatchingLearningEntity } from "./entities/account-matching-learning.entity";
 import type { AccountMatchingLearningIndustryEntity } from "./entities/account-matching-learning-industry.entity";
+import type { BasicAccountFamily } from "./metadata/basic-account-family";
 
 export type AccountLearningEvidence = AccountMatchingLearningEntity & {
   industryEvidence?: AccountMatchingLearningIndustryEntity;
@@ -61,6 +62,7 @@ export interface GeneratedCandidate {
 export type RankingOptions = {
   /** Prior confirmed mapping for this company account; evidence only. */
   historicalCompanyMappingSiiAccountId?: string | null;
+  inferredBasicFamily?: BasicAccountFamily;
 };
 
 export type MatchingSignalKind = "evidence" | "penalty" | "rule";
