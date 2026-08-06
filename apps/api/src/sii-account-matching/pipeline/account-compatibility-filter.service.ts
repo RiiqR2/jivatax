@@ -40,6 +40,26 @@ export class AccountCompatibilityFilterService {
       source.balanceNature !== destination.balanceNature
     )
       reasons.push("incompatible_balance_nature");
+    const sourceResultClass = /^(?:ingreso|renta|venta)\b/.test(
+      source.normalizedName,
+    )
+      ? "income"
+      : /^(?:gasto|costo)\b/.test(source.normalizedName)
+        ? "expense"
+        : undefined;
+    const destinationResultClass = /^(?:ingreso|renta|venta)\b/.test(
+      destination.normalizedName,
+    )
+      ? "income"
+      : /^(?:gasto|costo)\b/.test(destination.normalizedName)
+        ? "expense"
+        : undefined;
+    if (
+      sourceResultClass &&
+      destinationResultClass &&
+      sourceResultClass !== destinationResultClass
+    )
+      reasons.push("incompatible_result_class");
     if (
       source.accountFamily === "cash" &&
       /existencias en transito|pagos basados en acciones/.test(

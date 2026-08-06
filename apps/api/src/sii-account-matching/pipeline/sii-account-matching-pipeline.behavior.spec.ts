@@ -166,6 +166,43 @@ describe("nuevo pipeline de homologación - comportamiento del dominio", () => {
     assert.equal(result.compatible, true);
   });
 
+  for (const accountName of [
+    "Depreciación acumulada maquinarias",
+    "Amortización acumulada intangibles",
+  ])
+    test(`${accountName} se clasifica como correctora acreedora de activo`, () => {
+      const observation = classifier.classify(accountName);
+      assert.equal(observation.observedSection, "contra_asset");
+      assert.equal(observation.contraAccountType, "asset_allowance");
+      assert.equal(observation.balanceNature, "credit");
+      assert.equal(
+        compatibility.evaluate(observation, accountName).compatible,
+        true,
+      );
+      const ordinaryAsset = compatibility.evaluate(observation, "Maquinarias");
+      assert.equal(ordinaryAsset.compatible, false);
+      assert.ok(
+        ordinaryAsset.exclusionReasons.includes("incompatible_balance_nature"),
+      );
+    });
+
+  it("conserva las naturalezas de cuentas ordinarias conocidas", () => {
+    assert.equal(classifier.classify("Maquinarias").balanceNature, "debit");
+    assert.equal(
+      classifier.classify("Proveedores por pagar").balanceNature,
+      "credit",
+    );
+  });
+
+  it("usa unknown como fallback y no fuerza incompatibilidad de naturaleza", () => {
+    const observation = classifier.classify("Cuenta auxiliar genérica");
+    assert.equal(observation.balanceNature, "unknown");
+    assert.equal(
+      compatibility.evaluate(observation, "Obligación financiera").compatible,
+      true,
+    );
+  });
+
   it("normaliza tildes de igual forma en clasificación, reglas y exact match", () => {
     const observation = classifier.classify("OBLIGACIÓN BANCARIA");
     assert.equal(observation.normalizedName, "obligacion bancaria");
