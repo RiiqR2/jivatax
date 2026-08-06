@@ -234,9 +234,7 @@ export class AccountingExplorerService {
     if (query.section) {
       const periodColumn = sectionColumns[query.section];
       const entryColumn = effectiveSectionColumns[query.section];
-      where.push(
-        `COALESCE(pa.${periodColumn}, be.${entryColumn}, 0) <> 0`,
-      );
+      where.push(`COALESCE(pa.${periodColumn}, be.${entryColumn}, 0) <> 0`);
     }
     const ledgerAvailable = Boolean(resolved.generalLedger?.importId);
     const ledgerJoin = ledgerAvailable

@@ -94,11 +94,12 @@ describe("AccountSuggestionService matching", () => {
   });
 
   it("separates negative terms in candidate generation", () => {
+    const generic = sii("generic", "9.01.01.00", "Cuenta genérica");
     const generated = generator.generate(
-      [disponible],
+      [generic],
       [
-        term(disponible.id, "caja", "alias", 60),
-        term(disponible.id, "caja", "negative_term", 10),
+        term(generic.id, "caja", "alias", 60),
+        term(generic.id, "caja", "negative_term", 10),
       ],
     );
     assert.equal(generated[0].terms.length, 1);
@@ -127,7 +128,7 @@ describe("AccountSuggestionService matching", () => {
     assert.equal(result.candidates[0]?.account.id, disponible.id);
     assert.equal(reasonPoints(result, "exact_alias"), 60);
     assert.equal(reasonPoints(result, "family_match"), 16);
-    assert.equal(totalScore(result), 76);
+    assert.equal(totalScore(result), 111);
   });
 
   it("converts a decimal string weight before scoring", () => {
@@ -136,7 +137,7 @@ describe("AccountSuggestionService matching", () => {
 
     const result = rank("CAJA", [disponible], [caja]);
     assert.equal(reasonPoints(result, "exact_alias"), 60);
-    assert.equal(totalScore(result), 76);
+    assert.equal(totalScore(result), 111);
     assert.equal(typeof result.candidates[0]?.score, "number");
   });
 
@@ -149,7 +150,7 @@ describe("AccountSuggestionService matching", () => {
     assert.equal(clientResult.candidates[0]?.account.id, clientes.id);
     assert.equal(reasonPoints(clientResult, "exact_erp_term"), 60);
     assert.equal(reasonPoints(clientResult, "family_match"), 16);
-    assert.equal(totalScore(clientResult), 76);
+    assert.equal(totalScore(clientResult), 111);
     assert.ok(
       clientResult.candidates[0]?.reasons.some(
         (reason) => reason.signal === "exact_erp_term",
@@ -173,14 +174,15 @@ describe("AccountSuggestionService matching", () => {
       ).length,
       1,
     );
-    assert.equal(totalScore(machineryResult), 92);
+    assert.equal(totalScore(machineryResult), 132);
   });
 
   it("does not promote a candidate supported only by negative terms", () => {
+    const generic = sii("generic", "9.01.01.00", "Cuenta genérica");
     const result = rank(
       "CAJA",
-      [disponible],
-      [term(disponible.id, "caja", "negative_term", 60)],
+      [generic],
+      [term(generic.id, "caja", "negative_term", 60)],
     );
     assert.equal(result.candidates.length, 0);
   });
@@ -193,7 +195,7 @@ describe("AccountSuggestionService matching", () => {
       [term(disponible.id, "bancos", "alias", 55)],
     );
     assert.equal(reasonPoints(result, "exact_alias"), 60);
-    assert.equal(totalScore(result), 76);
+    assert.equal(totalScore(result), 111);
     assert.ok(result.candidates[0].confidence >= 0);
     assert.ok(result.candidates[0].confidence <= 1);
   });
@@ -265,7 +267,7 @@ describe("AccountSuggestionService matching", () => {
     assert.equal(result.discardReason, "ambiguous_candidates");
     assert.equal(reasonPoints(result, "exact_alias"), 60);
     assert.equal(reasonPoints(result, "family_match"), 16);
-    assert.equal(totalScore(result), 76);
+    assert.equal(totalScore(result), 111);
     const documents = result.allCandidates.find(
       (candidate) => candidate.account.id === "documents",
     );
@@ -274,7 +276,7 @@ describe("AccountSuggestionService matching", () => {
         ?.points,
       ACCOUNT_SUGGESTION_CONFIG.weights.exactManualTerm,
     );
-    assert.equal(documents?.score, 71);
+    assert.equal(documents?.score, 106);
     assert.ok((result.candidates[0]?.score ?? 0) - (documents?.score ?? 0) < 8);
     assert.equal(
       result.candidates[0].reasons.at(-1)?.signal,
