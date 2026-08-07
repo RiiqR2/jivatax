@@ -2,85 +2,121 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { AccountMatchingShadowComparisonService } from "./account-matching-shadow-comparison.service";
 
-const observation = (code: string) => ({
-  accountCode: code,
-  accountName: `Account ${code}`,
+const generatedAt = new Date("2026-01-01T00:00:00.000Z");
+const diagnostic = (companyAccountId: string, decision: string) => ({
+  companyAccountId,
+  decision,
+  decisionReason: decision,
+  generatedAt,
+  // allCandidates deliberately starts with a discarded candidate.
+  candidates: [{ code: "DISCARDED", name: "Discarded" }],
 });
 
-describe("AccountMatchingShadowComparisonService", () => {
-  it("compares stable codes and covers missing-result categories without writes", async () => {
-    const contexts = ["same", "different", "v7", "v2", "none", "confirmed"].map(
-      (id) => ({
-        companyId: "company",
-        companyAccountId: id,
-        accountObservation: observation(id),
-        historicalCompanyMappings: [],
-        companyAliases: [],
-        catalogTerms: [],
-        catalogAccounts: [],
-      }),
-    );
+describe("AccountMatchingShadowComparisonService V7 semantics", () => {
+  it("uses persisted final suggestions, preserves statuses and never compares unverified contexts", async () => {
+    const ids = [
+      "accepted",
+      "review",
+      "ambiguous",
+      "none",
+      "missing",
+      "confirmed",
+    ];
+    const contexts = ids.map((id) => ({
+      companyId: "company",
+      companyAccountId: id,
+      accountObservation: { accountCode: id, accountName: id },
+      confirmedMapping:
+        id === "confirmed"
+          ? {
+              companyAccountId: id,
+              siiAccountId: "mapped-id",
+              siiCode: "MAPPED",
+              siiName: "Mapped",
+              source: "manual",
+            }
+          : undefined,
+      historicalCompanyMappings: [],
+      companyAliases: [],
+      catalogTerms: [],
+      catalogAccounts: [],
+    }));
     const diagnostics = [
+      diagnostic("accepted", "automatic"),
+      diagnostic("review", "review"),
+      diagnostic("ambiguous", "ambiguous"),
+      diagnostic("none", "no_candidate"),
+    ];
+    const suggestions = [
       {
-        companyAccountId: "same",
-        candidates: [{ siiAccountId: "old-uuid", code: "1101", name: "Cash" }],
-        decision: "automatic",
-        decisionReason: "automatic",
+        companyAccountId: "accepted",
+        generatedAt,
+        suggestionRank: 1,
+        score: "90",
+        confidence: "0.9",
+        siiAccount: { code: "FINAL", name: "Final" },
       },
       {
-        companyAccountId: "different",
-        candidates: [{ code: "2101", name: "Payables" }],
-        decision: "automatic",
-        decisionReason: "automatic",
+        companyAccountId: "review",
+        generatedAt,
+        suggestionRank: 1,
+        score: "50",
+        confidence: "0.5",
+        siiAccount: { code: "REVIEW", name: "Review" },
+      },
+      // These must be ignored because the diagnostic outcome has no winner.
+      {
+        companyAccountId: "ambiguous",
+        generatedAt,
+        suggestionRank: 1,
+        score: "80",
+        confidence: "0.8",
+        siiAccount: { code: "AMB", name: "Amb" },
       },
       {
-        companyAccountId: "v7",
-        candidates: [{ code: "3101", name: "Equity" }],
-        decision: "automatic",
-        decisionReason: "automatic",
+        companyAccountId: "none",
+        generatedAt,
+        suggestionRank: 1,
+        score: "80",
+        confidence: "0.8",
+        siiAccount: { code: "NO", name: "No" },
       },
     ];
-    const repository = { find: async () => diagnostics };
+    let reads = 0;
     const dataSource = {
-      manager: { getRepository: () => repository },
-    };
-    const factory = { createBatch: async () => contexts };
-    const winners: Record<
-      string,
-      { code: string; confirmed?: boolean } | undefined
-    > = {
-      same: { code: "1101" },
-      different: { code: "2201" },
-      v2: { code: "4101" },
-      confirmed: { code: "5101", confirmed: true },
-    };
-    const pipeline = {
-      resolve: (context: { companyAccountId: string }) => {
-        const winner = winners[context.companyAccountId];
-        return {
-          decision: winner ? "strong" : "no_candidate",
-          resolutionStatus: winner ? "resolved" : "no_candidate",
-          warnings: [],
-          autoConfirmed: false,
-          candidates: winner
-            ? [
-                {
-                  siiAccountId: `new-${winner.code}`,
-                  siiCode: winner.code,
-                  siiName: winner.code,
-                  resolutionType: "ranked",
-                  recommendationLevel: "strong",
-                  evidence: [],
-                  warnings: [],
-                  reusedConfirmedMapping: winner.confirmed,
-                },
-              ]
-            : [],
-        };
+      manager: {
+        getRepository: (target: { name: string }) => ({
+          find: async () => {
+            reads++;
+            return target.name === "AccountMatchingDiagnosticEntity"
+              ? diagnostics
+              : suggestions;
+          },
+        }),
       },
     };
+    const factory = { createBatch: async () => contexts };
+    const pipeline = {
+      resolve: () => ({
+        decision: "strong",
+        resolutionStatus: "resolved",
+        warnings: [],
+        autoConfirmed: false,
+        candidates: [
+          {
+            siiAccountId: "v2-id",
+            siiCode: "FINAL",
+            siiName: "Final",
+            resolutionType: "ranked",
+            recommendationLevel: "strong",
+            evidence: [],
+            warnings: [],
+          },
+        ],
+      }),
+    };
     const classifier = {
-      classify: (input: Record<string, unknown>) => ({
+      classify: (input: object) => ({
         ...input,
         observedSection: "asset",
         balanceNature: "debit",
@@ -100,56 +136,47 @@ describe("AccountMatchingShadowComparisonService", () => {
       taxPeriodId: "period",
       balanceImportId: "balance",
     });
-
-    assert.equal(
-      report.accounts.find((x) => x.companyAccountId === "same")?.comparison
-        .sameWinner,
-      true,
+    const byId = new Map(
+      report.accounts.map((item) => [item.companyAccountId, item]),
     );
-    assert.equal(
-      report.accounts.find((x) => x.companyAccountId === "different")
-        ?.comparison.differentWinner,
-      true,
-    );
-    assert.equal(
-      report.accounts.find((x) => x.companyAccountId === "v7")?.comparison
-        .v7Only,
-      true,
-    );
-    assert.equal(
-      report.accounts.find((x) => x.companyAccountId === "v2")?.comparison
-        .v2Only,
-      true,
-    );
-    assert.equal(
-      report.accounts.find((x) => x.companyAccountId === "none")?.comparison
-        .bothNoCandidate,
-      true,
-    );
-    assert.deepEqual(
-      report.accounts.find((x) => x.companyAccountId === "none")?.v7,
-      { available: false },
-    );
-    assert.equal(
-      report.accounts.find((x) => x.companyAccountId === "confirmed")
-        ?.comparison.confirmedMappingReused,
-      true,
-    );
-    assert.deepEqual(report.summary, {
-      totalAccounts: 6,
-      sameWinner: 1,
-      differentWinner: 1,
-      v7Only: 1,
-      v2Only: 2,
-      bothNoCandidate: 1,
-      confirmedMappingsReused: 1,
-      v2Strong: 4,
-      v2Probable: 0,
-      v2Weak: 0,
-      v2Ambiguous: 0,
-      v2NoCandidate: 2,
+    assert.equal(byId.get("accepted")?.v7.winnerCode, "FINAL");
+    assert.notEqual(byId.get("accepted")?.v7.winnerCode, "DISCARDED");
+    assert.deepEqual(byId.get("ambiguous")?.v7, {
+      status: "ambiguous",
+      contextMatch: "unverified",
+      decision: "ambiguous",
     });
-    assert.ok(JSON.parse(JSON.stringify(report)).accounts);
+    assert.deepEqual(byId.get("none")?.v7, {
+      status: "no_candidate",
+      contextMatch: "unverified",
+      decision: "no_candidate",
+    });
+    assert.equal(byId.get("review")?.v7.status, "review");
+    assert.equal(byId.get("review")?.v7.winnerCode, "REVIEW");
+    assert.equal(byId.get("confirmed")?.v7.status, "confirmed_mapping");
+    assert.equal(byId.get("confirmed")?.v7.winnerCode, "MAPPED");
+    assert.equal(byId.get("missing")?.v7.status, "unavailable");
+    assert.equal(byId.get("accepted")?.v7.contextMatch, "unverified");
+    assert.equal(report.summary.sameWinner, 0);
+    assert.equal(report.summary.differentWinner, 0);
+    assert.equal(report.summary.comparableAccounts, 0);
+    assert.deepEqual(
+      {
+        unverified: report.summary.v7ContextUnverified,
+        unavailable: report.summary.v7Unavailable,
+        review: report.summary.v7Review,
+        ambiguous: report.summary.v7Ambiguous,
+        noCandidate: report.summary.v7NoCandidate,
+      },
+      {
+        unverified: 5,
+        unavailable: 1,
+        review: 1,
+        ambiguous: 1,
+        noCandidate: 1,
+      },
+    );
+    assert.equal(reads, 2);
     assert.equal("save" in dataSource, false);
   });
 });

@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { InjectDataSource } from "@nestjs/typeorm";
 import { DataSource, In } from "typeorm";
+import { CompanyAccountSuggestionEntity } from "../../accounting/entities/company-account-suggestion.entity";
 import { ACCOUNT_SUGGESTION_CONFIG } from "../account-suggestion.config";
 import { AccountMatchingDiagnosticEntity } from "../entities/account-matching-diagnostic.entity";
 import { AccountObservationClassifierService } from "../pipeline/account-observation-classifier.service";
@@ -17,11 +18,8 @@ import type {
   ShadowV7Result,
 } from "./account-matching-shadow.types";
 
-type StoredCandidate = {
-  code?: string;
-  name?: string;
-  score?: number;
-  confidence?: number;
+type PersistedWinner = CompanyAccountSuggestionEntity & {
+  siiAccount: { code: string; name: string };
 };
 
 /** Read-only comparison of persisted v7 diagnostics against the pure v2 pipeline. */
@@ -56,6 +54,24 @@ export class AccountMatchingShadowComparisonService {
     for (const item of diagnostics)
       if (!latest.has(item.companyAccountId))
         latest.set(item.companyAccountId, item);
+    const suggestions = ids.length
+      ? ((await this.dataSource.manager
+          .getRepository(CompanyAccountSuggestionEntity)
+          .find({
+            where: {
+              companyAccountId: In(ids),
+              algorithmVersion: ACCOUNT_SUGGESTION_CONFIG.algorithmVersion,
+              suggestionRank: 1,
+            },
+            relations: { siiAccount: true },
+          })) as PersistedWinner[])
+      : [];
+    const persistedWinners = new Map(
+      suggestions.map((item) => [
+        this.generationKey(item.companyAccountId, item.generatedAt),
+        item,
+      ]),
+    );
 
     const accounts = contexts.map((context): ShadowAccountComparison => {
       const observation = this.classifier.classify(
@@ -66,9 +82,22 @@ export class AccountMatchingShadowComparisonService {
         accountObservation: observation,
       });
       const winner = result.candidates[0];
-      const v7 = this.v7(latest.get(context.companyAccountId));
+      const diagnostic = latest.get(context.companyAccountId);
+      const v7 = this.v7(
+        diagnostic,
+        diagnostic
+          ? persistedWinners.get(
+              this.generationKey(
+                context.companyAccountId,
+                diagnostic.generatedAt,
+              ),
+            )
+          : undefined,
+        context.confirmedMapping,
+      );
       const hasV7 = Boolean(v7.winnerCode);
       const hasV2 = Boolean(winner?.siiCode);
+      const comparable = v7.contextMatch === "verified";
       return {
         companyAccountId: context.companyAccountId,
         accountCode: (context.accountObservation as AccountObservationInput)
@@ -96,11 +125,13 @@ export class AccountMatchingShadowComparisonService {
           candidateCount: result.candidates.length,
         },
         comparison: {
-          sameWinner: hasV7 && hasV2 && v7.winnerCode === winner?.siiCode,
-          v7Only: hasV7 && !hasV2,
-          v2Only: !hasV7 && hasV2,
-          bothNoCandidate: !hasV7 && !hasV2,
-          differentWinner: hasV7 && hasV2 && v7.winnerCode !== winner?.siiCode,
+          sameWinner:
+            comparable && hasV7 && hasV2 && v7.winnerCode === winner?.siiCode,
+          v7Only: comparable && hasV7 && !hasV2,
+          v2Only: comparable && !hasV7 && hasV2,
+          bothNoCandidate: comparable && !hasV7 && !hasV2,
+          differentWinner:
+            comparable && hasV7 && hasV2 && v7.winnerCode !== winner?.siiCode,
           confirmedMappingReused: winner?.reusedConfirmedMapping === true,
         },
       };
@@ -110,7 +141,7 @@ export class AccountMatchingShadowComparisonService {
         ...input,
         generatedAt: new Date().toISOString(),
         v2Version: "v2",
-        v7Source: "persisted_account_matching_diagnostics",
+        v7Source: "persisted_diagnostics_and_suggestions",
         readOnly: true,
       },
       summary: this.summarize(accounts),
@@ -118,18 +149,44 @@ export class AccountMatchingShadowComparisonService {
     };
   }
 
-  private v7(item?: AccountMatchingDiagnosticEntity): ShadowV7Result {
-    if (!item) return { available: false };
-    const candidate = (item.candidates as StoredCandidate[])[0];
+  private v7(
+    item?: AccountMatchingDiagnosticEntity,
+    suggestion?: PersistedWinner,
+    confirmedMapping?: { siiCode: string; siiName: string },
+  ): ShadowV7Result {
+    if (!item && confirmedMapping)
+      return {
+        status: "confirmed_mapping",
+        contextMatch: "unverified",
+        winnerCode: confirmedMapping.siiCode,
+        winnerName: confirmedMapping.siiName,
+      };
+    if (!item) return { status: "unavailable", contextMatch: "unavailable" };
+    if (item.decision === "ambiguous")
+      return {
+        status: "ambiguous",
+        contextMatch: "unverified",
+        decision: item.decision,
+      };
+    if (item.decision === "no_candidate")
+      return {
+        status: "no_candidate",
+        contextMatch: "unverified",
+        decision: item.decision,
+      };
     return {
-      available: true,
-      winnerCode: candidate?.code,
-      winnerName: candidate?.name,
-      score: candidate?.score,
-      confidence: candidate?.confidence,
+      status: item.decision === "review" ? "review" : "accepted",
+      contextMatch: "unverified",
+      winnerCode: suggestion?.siiAccount.code,
+      winnerName: suggestion?.siiAccount.name,
+      score: suggestion ? Number(suggestion.score) : undefined,
+      confidence: suggestion ? Number(suggestion.confidence) : undefined,
       decision: item.decision,
-      status: item.decisionReason,
     };
+  }
+
+  private generationKey(accountId: string, generatedAt: Date): string {
+    return `${accountId}:${new Date(generatedAt).toISOString()}`;
   }
 
   private summarize(
@@ -152,6 +209,13 @@ export class AccountMatchingShadowComparisonService {
       v2Weak: count((x) => x.v2.decision === "weak"),
       v2Ambiguous: count((x) => x.v2.decision === "ambiguous"),
       v2NoCandidate: count((x) => x.v2.decision === "no_candidate"),
+      v7ContextVerified: count((x) => x.v7.contextMatch === "verified"),
+      v7ContextUnverified: count((x) => x.v7.contextMatch === "unverified"),
+      v7Unavailable: count((x) => x.v7.status === "unavailable"),
+      v7Review: count((x) => x.v7.status === "review"),
+      v7Ambiguous: count((x) => x.v7.status === "ambiguous"),
+      v7NoCandidate: count((x) => x.v7.status === "no_candidate"),
+      comparableAccounts: count((x) => x.v7.contextMatch === "verified"),
     };
   }
 }

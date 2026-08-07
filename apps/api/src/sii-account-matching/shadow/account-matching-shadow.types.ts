@@ -1,13 +1,19 @@
 import type { SuggestionDecision } from "../pipeline/account-matching-pipeline.types";
 
 export interface ShadowV7Result {
-  available: boolean;
+  status:
+    | "accepted"
+    | "review"
+    | "ambiguous"
+    | "no_candidate"
+    | "unavailable"
+    | "confirmed_mapping";
+  contextMatch: "verified" | "unverified" | "unavailable";
   winnerCode?: string;
   winnerName?: string;
   score?: number;
   confidence?: number;
   decision?: string;
-  status?: string;
 }
 
 export interface ShadowAccountComparison {
@@ -53,6 +59,13 @@ export interface ShadowComparisonSummary {
   v2Weak: number;
   v2Ambiguous: number;
   v2NoCandidate: number;
+  v7ContextVerified: number;
+  v7ContextUnverified: number;
+  v7Unavailable: number;
+  v7Review: number;
+  v7Ambiguous: number;
+  v7NoCandidate: number;
+  comparableAccounts: number;
 }
 
 export interface AccountMatchingShadowReport {
@@ -62,7 +75,7 @@ export interface AccountMatchingShadowReport {
     balanceImportId: string;
     generatedAt: string;
     v2Version: "v2";
-    v7Source: "persisted_account_matching_diagnostics";
+    v7Source: "persisted_diagnostics_and_suggestions";
     readOnly: true;
   };
   summary: ShadowComparisonSummary;

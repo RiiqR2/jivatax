@@ -186,10 +186,21 @@ flujo shadow y no reemplaza al motor v7 ni afecta homologaciones productivas.
 ## Shadow de Balance (Bloque 6)
 
 El shadow compara, sin efectos productivos, todas y únicamente las cuentas no
-descartadas de un Balance explícito. V2 se ejecuta en memoria; V7 se obtiene del
-último `account_matching_diagnostics` ya persistido para la misma empresa,
-período y cuenta. No se generan sugerencias, no se escriben mappings y no se
-invoca aprendizaje. Si no hay diagnóstico V7, `v7.available` es `false`.
+descartadas de un Balance explícito. V2 se ejecuta en memoria. Para V7, el
+diagnóstico persistido aporta la decisión final y la sugerencia persistida de
+rank 1 de esa misma generación aporta el candidato final; nunca se interpreta
+`diagnostic.candidates[0]`, porque esa colección contiene candidatos anteriores
+a los filtros semánticos. No se generan sugerencias, no se escriben mappings y
+no se invoca aprendizaje.
+
+El modelo actual no relaciona diagnósticos ni sugerencias con
+`balanceImportId`. Por ello todo resultado V7 persistido se informa con
+`contextMatch=unverified` y no incrementa `sameWinner`, `differentWinner`,
+`v7Only` ni `v2Only`. No se deduce el Balance a partir de timestamps o de la
+última ejecución. `comparableAccounts` sólo cuenta resultados cuyo contexto
+fuera verificable. La ausencia de resultado se marca `unavailable`; una cuenta
+omitida por V7 debido a un mapping confirmado se marca `confirmed_mapping` con
+el código vigente del mapping.
 
 ```bash
 pnpm --filter @jivatax/api matching:v2-shadow \
@@ -206,5 +217,5 @@ diferencia en regresión automática.
 
 El contexto batch realiza aproximadamente nueve lecturas constantes (empresa,
 período, documento, snapshots, catálogo, mappings, historial, terms y cuentas),
-más una lectura batch de diagnósticos V7. La cantidad no crece con el número de
-cuentas o candidatos y no utiliza caches globales.
+más dos lecturas batch para diagnósticos y sugerencias V7. La cantidad no crece
+con el número de cuentas o candidatos y no utiliza caches globales.
