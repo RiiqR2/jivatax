@@ -138,4 +138,47 @@ ambiguo no produce candidato.
 
 Este pipeline sigue completamente aislado: sus contratos reciben catálogo y
 evidencias por inyección pura, no consulta repositorios ni `DataSource`, no
-persiste, y sus servicios no están registrados en `SiiAccountMatchingModule`.
+persiste. Su registro para evaluación no le agrega dependencias de TypeORM ni repositorios.
+
+## Bloque 5: contexto productivo de solo lectura y evaluación shadow
+
+`MatchingResolutionContextFactoryService.create()` es el único adapter entre las
+entidades productivas y `MatchingResolutionContext`. Recibe `companyId`,
+`taxPeriodId`, `companyAccountId` y, obligatoriamente, `balanceImportId`. Este
+último es el UUID real de `tax_documents`: hoy el dominio permite varios balances
+por período, pero no expone un único "balance seleccionado" inequívoco. Por eso
+el adapter no usa `MAX(created_at)`, número de versión ni ninguna heurística.
+Valida que el documento sea un Balance del mismo período/empresa y toma solamente
+el snapshot activo de `tax_period_company_accounts` cuyo `source_document_id`
+coincide exactamente.
+
+Fuentes del contexto:
+
+- `accountObservation`: código, nombre, débitos, créditos y los seis saldos/importes
+  del snapshot del Balance indicado;
+- `confirmedMapping`: `company_account_mappings` únicamente con estado
+  `confirmed`, unido a su cuenta SII;
+- `historicalCompanyMappings`: transiciones reales a `confirmed` de
+  `company_account_mapping_history`; se omite el destino actual para no duplicarlo;
+- `companyAliases`: términos `alias`, activos, de scope `company`, propiedad de la
+  empresa y asociados a cuentas del catálogo vigente;
+- `catalogTerms`: términos activos globales o de la empresa y con destino vigente.
+  `negative_term` se conserva. El esquema actual no tiene `industry_id` en
+  `sii_account_terms`; por seguridad los `industry_term` no se aplican sin scope
+  demostrable. El `industryId` real de la empresa sí viaja en el contexto para
+  cuando exista evidencia correctamente asociada;
+- `catalogAccounts`: exclusivamente `CurrentSiiAccountCatalogService`. Se conservan
+  `id`, código, nombre, padre y nivel. `sii_accounts` no contiene `active`,
+  `isLeaf` ni `mappable`, y el adapter deliberadamente los deja `undefined` en vez
+  de inferirlos desde el código o la estructura.
+
+La construcción normal requiere nueve operaciones de lectura (cuatro validaciones
+de contexto en paralelo, snapshot, y cuatro cargas de evidencia en paralelo; el
+resolver de catálogo hace internamente la lectura de versión activa y de cuentas).
+Las cargas son por lote y no existe un query por candidato (N+1).
+
+`SiiAccountMatchingV2EvaluationService` sólo encadena el factory con
+`SiiAccountMatchingPipelineService.resolve()`. No tiene repositorios, no persiste,
+no crea ni modifica sugerencias, no confirma mappings, no invoca aprendizaje y no
+está conectado a ningún controller o endpoint. Por tanto v2 continúa siendo un
+flujo shadow y no reemplaza al motor v7 ni afecta homologaciones productivas.

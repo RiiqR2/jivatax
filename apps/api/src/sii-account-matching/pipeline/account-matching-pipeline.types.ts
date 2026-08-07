@@ -146,6 +146,8 @@ export interface CatalogTermEvidence {
 
 export interface MatchingResolutionContext {
   companyId: string;
+  /** Company industry carried by the productive adapter for scoped evidence. */
+  industryId?: string;
   companyAccountId: string;
   accountObservation: AccountObservation | AccountObservationInput;
   confirmedMapping?: ConfirmedMappingEvidence;
