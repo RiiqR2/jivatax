@@ -31,6 +31,9 @@ import { AccountMatchingConfirmationService } from "./services/account-matching-
 import { LearningAggregatorService } from "./services/learning-aggregator.service";
 import { ExpertAccountMappingImportService } from "./expert-import/expert-account-mapping-import.service";
 import { SiiAccountPlanModule } from "../sii-account-plan/sii-account-plan.module";
+import { MatchingResolutionContextFactoryService } from "./services/matching-resolution-context-factory.service";
+import { SiiAccountMatchingV2EvaluationService } from "./services/sii-account-matching-v2-evaluation.service";
+import { SiiAccountMatchingPipelineService } from "./pipeline/sii-account-matching-pipeline.service";
 
 @Module({
   imports: [
@@ -68,6 +71,12 @@ import { SiiAccountPlanModule } from "../sii-account-plan/sii-account-plan.modul
     AccountMatchingConfirmationService,
     LearningAggregatorService,
     ExpertAccountMappingImportService,
+    MatchingResolutionContextFactoryService,
+    {
+      provide: SiiAccountMatchingPipelineService,
+      useFactory: () => new SiiAccountMatchingPipelineService(),
+    },
+    SiiAccountMatchingV2EvaluationService,
   ],
   controllers: [AccountMatchingDiagnosticsController],
   exports: [
@@ -81,6 +90,8 @@ import { SiiAccountPlanModule } from "../sii-account-plan/sii-account-plan.modul
     AccountMatchingConfirmationService,
     LearningAggregatorService,
     ExpertAccountMappingImportService,
+    MatchingResolutionContextFactoryService,
+    SiiAccountMatchingV2EvaluationService,
   ],
 })
 export class SiiAccountMatchingModule {}
