@@ -12,6 +12,7 @@ import {
 import type {
   EvaluationAccount,
   EvaluationCategory,
+  EvaluationReasonSeverity,
   EvaluationReport,
 } from "./account-matching-evaluation.types";
 
@@ -80,18 +81,27 @@ export class AccountMatchingEvaluationService {
         x.classificationWarnings.some((w) => w.startsWith("contradictory_")),
       ),
       protectedTaxCandidates: alert((x) => x.specialTaxCategory !== "none"),
-      currentNonCurrentConflicts: alert((x) => this.has(x, "temporal")),
-      receivablePayableConflicts: alert((x) =>
-        this.has(x, "receivable_payable"),
+      currentNonCurrentConflicts: alert((x) =>
+        this.hasReason(x, "incompatible_temporal_class"),
       ),
-      relatedPartyConflicts: alert((x) => this.has(x, "related_")),
+      receivablePayableConflicts: alert((x) =>
+        this.hasReason(x, "receivable_payable_direction_mismatch"),
+      ),
+      relatedPartyConflicts: alert((x) =>
+        this.hasReason(x, "related_party_requires_explicit_evidence"),
+      ),
       marketableSecuritiesConflicts: alert(
         (x) =>
           x.accountFamily === "marketable_securities" &&
-          this.has(x, "financial_subfamily"),
+          this.hasReason(x, "incompatible_financial_subfamily"),
       ),
       contraAccountConflicts: alert(
-        (x) => x.contraAccountType !== "none" && this.has(x, "incompatible"),
+        (x) =>
+          x.contraAccountType !== "none" &&
+          x.reasonDetails.some(
+            ({ reason, severity }) =>
+              severity === "critical" && reason.startsWith("incompatible_"),
+          ),
       ),
       noCandidateBasicAccounts: alert((x) => x.basicAccountWithoutCandidate),
     };
@@ -123,6 +133,10 @@ export class AccountMatchingEvaluationService {
       ...result.warnings,
       ...(winner?.warnings ?? []),
     ];
+    const reasonDetails = [...new Set(warnings)].map((reason) => ({
+      reason,
+      severity: this.reasonSeverity(reason),
+    }));
     const contradictory = observation.classificationWarnings.some((w) =>
       w.startsWith("contradictory_"),
     );
@@ -162,6 +176,7 @@ export class AccountMatchingEvaluationService {
       evaluationCategory,
       criticalCases: this.criticalCases(observation),
       reasons: warnings,
+      reasonDetails,
       basicAccount,
       basicAccountWithoutCandidate:
         basicAccount && result.decision === "no_candidate",
@@ -172,12 +187,24 @@ export class AccountMatchingEvaluationService {
     };
   }
 
-  private has(account: EvaluationAccount, value: string): boolean {
-    return [
-      ...account.classificationWarnings,
-      ...account.reasons,
-      ...(account.winner?.warnings ?? []),
-    ].some((x) => x.includes(value));
+  private hasReason(account: EvaluationAccount, reason: string): boolean {
+    return account.reasonDetails.some(
+      (item) => item.reason === reason && item.severity === "critical",
+    );
+  }
+
+  private reasonSeverity(reason: string): EvaluationReasonSeverity {
+    if (
+      reason.startsWith("contradictory_") ||
+      reason.startsWith("incompatible_") ||
+      reason.endsWith("_mismatch") ||
+      reason.startsWith("protected_") ||
+      reason === "confirmed_mapping_requires_manual_resolution" ||
+      reason === "related_party_requires_explicit_evidence"
+    )
+      return "critical";
+    if (reason.endsWith("_undetermined")) return "informational";
+    return "warning";
   }
   private criticalCases(
     o:
@@ -215,7 +242,7 @@ export class AccountMatchingEvaluationService {
   }
   private topIssues(accounts: EvaluationAccount[]) {
     const priority = (x: EvaluationAccount) =>
-      x.evaluationCategory === "strong_candidate" && x.reasons.length
+      x.evaluationCategory === "blocked_confirmed_mapping"
         ? 1
         : x.evaluationCategory === "protected_tax_case"
           ? 2
@@ -223,12 +250,23 @@ export class AccountMatchingEvaluationService {
                 x.evaluationCategory,
               )
             ? 3
-            : x.basicAccount &&
-                ["weak_candidate", "ambiguous"].includes(x.evaluationCategory)
+            : x.evaluationCategory === "strong_candidate" &&
+                x.reasonDetails.some(({ severity }) => severity === "critical")
               ? 4
               : x.basicAccountWithoutCandidate
                 ? 5
-                : 99;
+                : x.basicAccount &&
+                    ["weak_candidate", "ambiguous"].includes(
+                      x.evaluationCategory,
+                    )
+                  ? 6
+                  : [
+                        "weak_candidate",
+                        "ambiguous",
+                        "needs_manual_review",
+                      ].includes(x.evaluationCategory)
+                    ? 7
+                    : 99;
     return accounts
       .filter((x) => priority(x) < 99)
       .sort((a, b) => priority(a) - priority(b))
@@ -237,7 +275,11 @@ export class AccountMatchingEvaluationService {
         accountCode: x.accountCode,
         accountName: x.accountName,
         issueType: x.evaluationCategory,
-        explanation: x.reasons[0] ?? `Review ${x.evaluationCategory}`,
+        explanation:
+          x.reasonDetails.find(({ severity }) => severity === "critical")
+            ?.reason ??
+          x.reasons[0] ??
+          `Review ${x.evaluationCategory}`,
         winnerCode: x.winner?.siiCode,
         winnerName: x.winner?.siiName,
         evidence: x.winner?.evidence ?? x.classificationEvidence,

@@ -155,23 +155,59 @@ describe("AccountMatchingEvaluationService", () => {
     assert.equal(report.accounts[1].basicAccountWithoutCandidate, false);
   });
 
-  it("prioritizes critical issues, caps topIssues and remains serializable/read-only", () => {
+  it("does not prioritize a strong candidate with a soft warning", () => {
     const contexts = [
-      context("warning", "Caja"),
+      context("soft", "Caja"),
       context("tax", "Gasto rechazado"),
+      context("contradiction", "Banco", {
+        accountObservation: {
+          accountCode: "contradiction",
+          accountName: "Banco",
+          assetAmount: "1",
+          liabilityAmount: "1",
+        },
+      }),
       context("none", "Banco"),
     ];
     const report = service({
-      warning: result("strong", { warning: "critical_existing_warning" }),
+      soft: result("strong", { warning: "temporal_class_undetermined" }),
       tax: result("strong"),
+      contradiction: result("strong"),
       none: result("no_candidate"),
     }).analyze(input, contexts, "2026-01-01T00:00:00.000Z");
     assert.deepEqual(
       report.topIssues.map((x) => x.accountCode),
-      ["warning", "tax", "none"],
+      ["tax", "contradiction", "none"],
     );
+    assert.equal(report.accounts[0].reasonDetails[0].severity, "informational");
     assert.ok(report.topIssues.length <= 20);
     assert.equal(report.metadata.readOnly, true);
     assert.doesNotThrow(() => JSON.stringify(report));
+  });
+
+  it("counts only hard compatibility conflicts in alerts", () => {
+    const contexts = [
+      context("temporal-hard", "Caja"),
+      context("temporal-soft", "Banco"),
+      context("direction", "Clientes"),
+      context("related-soft", "Préstamo relacionado"),
+    ];
+    const report = service({
+      "temporal-hard": result("strong", {
+        warning: "incompatible_temporal_class",
+      }),
+      "temporal-soft": result("strong", {
+        warning: "temporal_class_undetermined",
+      }),
+      direction: result("strong", {
+        warning: "receivable_payable_direction_mismatch",
+      }),
+      "related-soft": result("strong", {
+        warning: "related_source_destination_relation_unspecified",
+      }),
+    }).analyze(input, contexts);
+    assert.equal(report.alerts.currentNonCurrentConflicts, 1);
+    assert.equal(report.alerts.receivablePayableConflicts, 1);
+    assert.equal(report.alerts.relatedPartyConflicts, 0);
   });
 });

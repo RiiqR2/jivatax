@@ -17,6 +17,13 @@ export type EvaluationCategory =
   | "structural_mismatch"
   | "needs_manual_review";
 
+export type EvaluationReasonSeverity = "critical" | "warning" | "informational";
+
+export interface EvaluationReason {
+  reason: string;
+  severity: EvaluationReasonSeverity;
+}
+
 export interface EvaluationCandidate {
   siiCode: string;
   siiName: string;
@@ -33,6 +40,7 @@ export interface EvaluationAccount extends AccountObservation {
   evaluationCategory: EvaluationCategory;
   criticalCases: string[];
   reasons: string[];
+  reasonDetails: EvaluationReason[];
   basicAccount: boolean;
   basicAccountWithoutCandidate: boolean;
   winner?: EvaluationCandidate & { resolutionType: ResolutionType };
