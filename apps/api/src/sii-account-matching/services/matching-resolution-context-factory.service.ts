@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { InjectDataSource } from "@nestjs/typeorm";
-import { DataSource, IsNull } from "typeorm";
+import { DataSource, In, IsNull } from "typeorm";
 import { CompanyAccountMappingHistoryEntity } from "../../accounting/entities/company-account-mapping-history.entity";
 import { TaxDocumentEntity } from "../../accounting/entities/tax-document.entity";
 import { TaxPeriodCompanyAccountEntity } from "../../accounting/entities/tax-period-company-account.entity";
@@ -30,6 +30,12 @@ export interface MatchingResolutionContextRequest {
   balanceImportId: string;
 }
 
+export interface MatchingResolutionBatchRequest {
+  companyId: string;
+  taxPeriodId: string;
+  balanceImportId: string;
+}
+
 /** Read-only production adapter. It assembles evidence but never resolves or writes mappings. */
 @Injectable()
 export class MatchingResolutionContextFactoryService {
@@ -41,14 +47,25 @@ export class MatchingResolutionContextFactoryService {
   async create(
     input: MatchingResolutionContextRequest,
   ): Promise<MatchingResolutionContext> {
+    const contexts = await this.createBatch(input);
+    const context = contexts.find(
+      (item) => item.companyAccountId === input.companyAccountId,
+    );
+    if (!context)
+      throw new NotFoundException(
+        "account snapshot is not present in selected balance",
+      );
+    return context;
+  }
+
+  /** Loads a complete balance in a bounded set of shared reads (about eight). */
+  async createBatch(
+    input: MatchingResolutionBatchRequest,
+  ): Promise<MatchingResolutionContext[]> {
     if (!input.balanceImportId)
       throw new BadRequestException("balanceImportId is required");
     const manager = this.dataSource.manager;
-    const [account, period, company, document] = await Promise.all([
-      manager.getRepository(CompanyAccountEntity).findOneBy({
-        id: input.companyAccountId,
-        companyId: input.companyId,
-      }),
+    const [period, company, document] = await Promise.all([
       manager.getRepository(TaxPeriodEntity).findOneBy({
         id: input.taxPeriodId,
         companyId: input.companyId,
@@ -64,71 +81,76 @@ export class MatchingResolutionContextFactoryService {
         documentType: TaxDocumentType.BALANCE,
       }),
     ]);
-    if (!account)
-      throw new NotFoundException("company account is outside company context");
     if (!period || !company)
       throw new NotFoundException("tax period is outside company context");
     if (!document || document.discardedAt)
       throw new NotFoundException("balance import is outside period context");
 
-    const snapshot = await manager
+    const snapshots = await manager
       .getRepository(TaxPeriodCompanyAccountEntity)
-      .findOneBy({
-        companyId: input.companyId,
-        taxPeriodId: input.taxPeriodId,
-        companyAccountId: input.companyAccountId,
-        sourceDocumentId: input.balanceImportId,
-        discardedAt: IsNull(),
-      });
-    if (!snapshot)
-      throw new NotFoundException(
-        "account snapshot is not present in selected balance",
-      );
-
-    const [catalogAccounts, mapping, history, terms] = await Promise.all([
-      this.currentCatalog.findAccounts(manager),
-      manager.getRepository(CompanyAccountMappingEntity).findOne({
-        where: { companyAccountId: input.companyAccountId },
-        relations: { siiAccount: true },
-      }),
-      manager.getRepository(CompanyAccountMappingHistoryEntity).find({
+      .find({
         where: {
-          companyAccountId: input.companyAccountId,
-          newStatus: CompanyAccountMappingStatus.CONFIRMED,
+          companyId: input.companyId,
+          taxPeriodId: input.taxPeriodId,
+          sourceDocumentId: input.balanceImportId,
+          discardedAt: IsNull(),
         },
-        relations: { newSiiAccount: true },
-        order: { createdAt: "DESC" },
-      }),
-      manager.getRepository(SiiAccountTermEntity).find({
-        where: [
-          { scope: "global", active: true },
-          { scope: "company", companyId: input.companyId, active: true },
-        ],
-        relations: { siiAccount: true },
-      }),
-    ]);
+      });
+    const accountIds = snapshots.map((item) => item.companyAccountId);
+    if (!accountIds.length) return [];
+
+    const [catalogAccounts, mappings, history, terms, accounts] =
+      await Promise.all([
+        this.currentCatalog.findAccounts(manager),
+        manager.getRepository(CompanyAccountMappingEntity).find({
+          where: { companyAccountId: In(accountIds) },
+          relations: { siiAccount: true },
+        }),
+        manager.getRepository(CompanyAccountMappingHistoryEntity).find({
+          where: {
+            companyAccountId: In(accountIds),
+            newStatus: CompanyAccountMappingStatus.CONFIRMED,
+          },
+          relations: { newSiiAccount: true },
+          order: { createdAt: "DESC" },
+        }),
+        manager.getRepository(SiiAccountTermEntity).find({
+          where: [
+            { scope: "global", active: true },
+            { scope: "company", companyId: input.companyId, active: true },
+          ],
+          relations: { siiAccount: true },
+        }),
+        manager.getRepository(CompanyAccountEntity).findBy({
+          id: In(accountIds),
+          companyId: input.companyId,
+        }),
+      ]);
+    if (accounts.length !== new Set(accountIds).size)
+      throw new NotFoundException(
+        "balance contains an account outside company context",
+      );
     const currentIds = new Set(catalogAccounts.map((item) => item.id));
     const parentCodes = new Map(
       catalogAccounts.map((item) => [item.id, item.code]),
     );
-    const confirmedMapping = this.toConfirmedMapping(
-      mapping,
-      input.companyAccountId,
+    const mappingsByAccount = new Map(
+      mappings.map((item) => [item.companyAccountId, item]),
     );
-    const historicalCompanyMappings = history
-      .filter(
-        (item) =>
-          item.newSiiAccount &&
-          item.newSiiAccountId !== confirmedMapping?.siiAccountId,
-      )
-      .map((item) => ({
-        companyAccountId: item.companyAccountId,
-        siiAccountId: item.newSiiAccount!.id,
-        siiCode: item.newSiiAccount!.code,
-        siiName: item.newSiiAccount!.name,
-        confirmedAt: item.createdAt,
-        source: item.reason ?? "mapping_history",
-      }));
+    const historyByAccount = new Map<string, ConfirmedMappingEvidence[]>();
+    for (const item of history)
+      if (item.newSiiAccount) {
+        const values = historyByAccount.get(item.companyAccountId) ?? [];
+        values.push({
+          companyAccountId: item.companyAccountId,
+          siiAccountId: item.newSiiAccount!.id,
+          siiCode: item.newSiiAccount!.code,
+          siiName: item.newSiiAccount!.name,
+          confirmedAt: item.createdAt,
+          source: item.reason ?? "mapping_history",
+        });
+        historyByAccount.set(item.companyAccountId, values);
+      }
     const applicableTerms = terms.filter((term) =>
       currentIds.has(term.siiAccountId),
     );
@@ -148,24 +170,8 @@ export class MatchingResolutionContextFactoryService {
         active: term.active,
       }));
 
-    return {
-      companyId: input.companyId,
+    const shared = {
       industryId: company.industryId ?? undefined,
-      companyAccountId: input.companyAccountId,
-      accountObservation: {
-        accountCode: snapshot.accountCodeSnapshot,
-        accountName: snapshot.accountNameSnapshot,
-        assetAmount: snapshot.assetAmount,
-        liabilityAmount: snapshot.liabilityAmount,
-        lossAmount: snapshot.lossAmount,
-        gainAmount: snapshot.gainAmount,
-        debitBalance: snapshot.debitBalance,
-        creditBalance: snapshot.creditBalance,
-        debits: snapshot.debitAmount,
-        credits: snapshot.creditAmount,
-      },
-      confirmedMapping,
-      historicalCompanyMappings,
       companyAliases,
       catalogTerms: applicableTerms
         .filter((term) => !(term.scope === "company" && term.type === "alias"))
@@ -181,6 +187,35 @@ export class MatchingResolutionContextFactoryService {
         level: item.level ?? undefined,
       })),
     };
+    return snapshots.map((snapshot) => {
+      const confirmedMapping = this.toConfirmedMapping(
+        mappingsByAccount.get(snapshot.companyAccountId) ?? null,
+        snapshot.companyAccountId,
+      );
+      return {
+        companyId: input.companyId,
+        ...shared,
+        companyAccountId: snapshot.companyAccountId,
+        accountObservation: {
+          accountCode: snapshot.accountCodeSnapshot,
+          accountName: snapshot.accountNameSnapshot,
+          assetAmount: snapshot.assetAmount,
+          liabilityAmount: snapshot.liabilityAmount,
+          lossAmount: snapshot.lossAmount,
+          gainAmount: snapshot.gainAmount,
+          debitBalance: snapshot.debitBalance,
+          creditBalance: snapshot.creditBalance,
+          debits: snapshot.debitAmount,
+          credits: snapshot.creditAmount,
+        },
+        confirmedMapping,
+        historicalCompanyMappings: (
+          historyByAccount.get(snapshot.companyAccountId) ?? []
+        ).filter(
+          (item) => item.siiAccountId !== confirmedMapping?.siiAccountId,
+        ),
+      };
+    });
   }
 
   private toConfirmedMapping(

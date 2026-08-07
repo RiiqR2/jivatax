@@ -27,6 +27,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
       discardedAt: null,
     },
     TaxPeriodCompanyAccountEntity: {
+      companyAccountId: "a1",
       sourceDocumentId: "b2",
       accountCodeSnapshot: "1.01",
       accountNameSnapshot: "Caja balance 2",
@@ -49,7 +50,14 @@ function fixture(overrides: Record<string, unknown> = {}) {
       return {
         findOneBy: async () => rows[target.name],
         findOne: async () => rows[target.name],
-        find: async () => rows[target.name],
+        find: async () => {
+          const value = rows[target.name];
+          return Array.isArray(value) ? value : value ? [value] : [];
+        },
+        findBy: async () => {
+          const value = rows[target.name];
+          return Array.isArray(value) ? value : value ? [value] : [];
+        },
       };
     },
   };

@@ -182,3 +182,40 @@ Las cargas son por lote y no existe un query por candidato (N+1).
 no crea ni modifica sugerencias, no confirma mappings, no invoca aprendizaje y no
 está conectado a ningún controller o endpoint. Por tanto v2 continúa siendo un
 flujo shadow y no reemplaza al motor v7 ni afecta homologaciones productivas.
+
+## Shadow de Balance (Bloque 6)
+
+El shadow compara, sin efectos productivos, todas y únicamente las cuentas no
+descartadas de un Balance explícito. V2 se ejecuta en memoria. Para V7, el
+diagnóstico persistido aporta la decisión final y la sugerencia persistida de
+rank 1 de esa misma generación aporta el candidato final; nunca se interpreta
+`diagnostic.candidates[0]`, porque esa colección contiene candidatos anteriores
+a los filtros semánticos. No se generan sugerencias, no se escriben mappings y
+no se invoca aprendizaje.
+
+El modelo actual no relaciona diagnósticos ni sugerencias con
+`balanceImportId`. Por ello todo resultado V7 persistido se informa con
+`contextMatch=unverified` y no incrementa `sameWinner`, `differentWinner`,
+`v7Only` ni `v2Only`. No se deduce el Balance a partir de timestamps o de la
+última ejecución. `comparableAccounts` sólo cuenta resultados cuyo contexto
+fuera verificable. La ausencia de resultado se marca `unavailable`; una cuenta
+omitida por V7 debido a un mapping confirmado se marca `confirmed_mapping` con
+el código vigente del mapping.
+
+```bash
+pnpm --filter @jivatax/api matching:v2-shadow \
+  --company-id <uuid> \
+  --tax-period-id <uuid> \
+  --balance-import-id <uuid>
+```
+
+El JSON queda en `tmp/account-matching-shadow/` e incluye metadata, resumen y
+detalle por cuenta. `sameWinner` exige igualdad del **código SII** estable; no
+basta el nombre ni el UUID. Los mappings confirmados se reutilizan y se marcan
+con `confirmedMappingReused`, pero nunca se autoaprueban ni convierten una
+diferencia en regresión automática.
+
+El contexto batch realiza aproximadamente nueve lecturas constantes (empresa,
+período, documento, snapshots, catálogo, mappings, historial, terms y cuentas),
+más dos lecturas batch para diagnósticos y sugerencias V7. La cantidad no crece
+con el número de cuentas o candidatos y no utiliza caches globales.
