@@ -21,7 +21,8 @@
     "sii-accounts:sync-terms": "ts-node --files -r tsconfig-paths/register src/sii-account-matching/commands/sync-sii-account-terms.ts",
     "sii-accounts:sync-concepts": "ts-node --files -r tsconfig-paths/register src/sii-account-matching/commands/sync-sii-account-concepts.ts",
     "import:expert-account-mappings": "ts-node --files -r tsconfig-paths/register src/sii-account-matching/commands/import-expert-account-mappings.ts",
-    "matching:v2-shadow": "ts-node --files -r tsconfig-paths/register src/sii-account-matching/commands/run-v2-shadow.ts"
+    "matching:v2-shadow": "ts-node --files -r tsconfig-paths/register src/sii-account-matching/commands/run-v2-shadow.ts",
+    "matching:v2-evaluate": "ts-node --files -r tsconfig-paths/register src/sii-account-matching/commands/run-v2-evaluation.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.731.1",
