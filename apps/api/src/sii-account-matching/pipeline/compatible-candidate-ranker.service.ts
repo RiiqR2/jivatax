@@ -48,6 +48,9 @@ export class CompatibleCandidateRankerService {
             warnings: compatible.warnings,
             technicalScore: score,
             technicalConfidence: score,
+            reviewRequired: true,
+            resolvedSiiAccountId: account.id,
+            referenceResolution: "direct" as const,
           },
         ];
       })

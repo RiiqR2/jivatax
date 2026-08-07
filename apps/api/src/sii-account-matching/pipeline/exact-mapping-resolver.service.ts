@@ -17,22 +17,30 @@ export class ExactMappingResolverService {
     observation: AccountObservation,
     catalog: PipelineCatalogAccount[],
   ): SuggestionCandidate[] {
-    return catalog
-      .filter(
-        (account) =>
-          normalizeAccountTerm(account.name) === observation.normalizedName &&
-          this.compatibility.evaluateCatalog(observation, account).compatible,
-      )
-      .map((account) => ({
-        siiAccountId: account.id,
-        siiCode: account.code,
-        siiName: account.name,
-        resolutionType: "exact",
-        recommendationLevel: "strong",
-        evidence: ["exact_official_name"],
-        warnings: [],
-        technicalScore: 1,
-        technicalConfidence: 1,
-      }));
+    return catalog.flatMap((account) => {
+      if (normalizeAccountTerm(account.name) !== observation.normalizedName)
+        return [];
+      const compatibility = this.compatibility.evaluateCatalog(
+        observation,
+        account,
+      );
+      if (!compatibility.compatible) return [];
+      return [
+        {
+          siiAccountId: account.id,
+          siiCode: account.code,
+          siiName: account.name,
+          resolutionType: "exact_official_name",
+          recommendationLevel: "strong",
+          evidence: ["exact_official_name"],
+          warnings: compatibility.warnings,
+          technicalScore: 1,
+          technicalConfidence: 1,
+          reviewRequired: true,
+          resolvedSiiAccountId: account.id,
+          referenceResolution: "direct",
+        },
+      ];
+    });
   }
 }

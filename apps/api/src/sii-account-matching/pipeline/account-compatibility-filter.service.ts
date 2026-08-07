@@ -11,6 +11,7 @@ type FinancialSubfamily =
   | "marketable_securities"
   | "trade_receivables"
   | "notes_receivable"
+  | "loan_receivable"
   | "guarantees_and_deposits"
   | "financial_investments"
   | "lease_assets"
@@ -179,6 +180,15 @@ export class AccountCompatibilityFilterService {
     observation: AccountObservation,
   ): FinancialSubfamily | undefined {
     const name = observation.normalizedName;
+    // Loans (and their interest) are receivables, never marketable securities
+    // without explicit negotiable-instrument language.
+    if (
+      /prestamos?.*por cobrar|intereses?.*(?:de |por )?prestamos?.*por cobrar/.test(
+        name,
+      ) &&
+      !/instrumentos? negociables?|valores? negociables?/.test(name)
+    )
+      return "loan_receivable";
     if (/valores? negociables?|instrumentos? negociables?/.test(name))
       return "marketable_securities";
     if (
