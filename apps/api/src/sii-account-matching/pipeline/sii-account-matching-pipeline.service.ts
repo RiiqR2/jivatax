@@ -1,9 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import type {
-  PipelineCatalogAccount,
-  AccountObservationInput,
   SuggestionCandidate,
-  SuggestionDecision,
   MatchingResolutionContext,
   MatchingResolutionResult,
   AccountObservation,
@@ -33,40 +30,43 @@ export class SiiAccountMatchingPipelineService {
     private readonly catalogTerm = new ExactCatalogTermResolverService(),
   ) {}
 
-  suggest(
-    input: AccountObservationInput | string,
-    catalog: PipelineCatalogAccount[],
-  ): { decision: SuggestionDecision; candidates: SuggestionCandidate[] } {
-    const observation =
-      typeof input === "string"
-        ? this.classifier.classify(input)
-        : this.classifier.classify(input);
-    const exact = this.exact.resolve(observation, catalog);
-    const candidates = exact.length
-      ? exact
-      : this.rules.resolve(observation, catalog);
-    const resolved = candidates.length
-      ? candidates
-      : this.ranker.rank(observation, catalog);
-    return { decision: this.decisions.decide(resolved), candidates: resolved };
-  }
-
   /** Deterministic v2 entry point. It consumes injected data and has no persistence. */
   resolve(context: MatchingResolutionContext): MatchingResolutionResult {
     const observation: AccountObservation =
       "normalizedName" in context.accountObservation
         ? context.accountObservation
         : this.classifier.classify(context.accountObservation);
-    const current =
+    const applicableConfirmedMapping =
       context.confirmedMapping?.companyAccountId === context.companyAccountId
-        ? this.confirmed.resolve(
-            observation,
-            context.confirmedMapping,
-            context.catalogAccounts,
-          )
-        : [];
+        ? context.confirmedMapping
+        : undefined;
+    if (applicableConfirmedMapping) {
+      const current = this.confirmed.resolve(
+        applicableConfirmedMapping,
+        context.catalogAccounts,
+      );
+      if (current.length)
+        return {
+          decision: "strong",
+          candidates: current,
+          resolutionStatus: "resolved",
+          warnings: [],
+          autoConfirmed: false,
+        };
+      return {
+        decision: "ambiguous",
+        candidates: [],
+        resolutionStatus: "confirmed_mapping_unresolved",
+        warnings: ["confirmed_mapping_requires_manual_resolution"],
+        unresolvedConfirmedMapping: {
+          siiAccountId: applicableConfirmedMapping.siiAccountId,
+          siiCode: applicableConfirmedMapping.siiCode,
+          siiName: applicableConfirmedMapping.siiName,
+        },
+        autoConfirmed: false,
+      };
+    }
     const levels: SuggestionCandidate[][] = [
-      current,
       this.historical.resolve(
         observation,
         context.companyAccountId,
@@ -91,12 +91,20 @@ export class SiiAccountMatchingPipelineService {
     const distinctDestinations = new Set(
       candidates.map((candidate) => candidate.siiAccountId),
     );
+    const decision =
+      distinctDestinations.size > 1
+        ? "ambiguous"
+        : this.decisions.decide(candidates);
     return {
-      decision:
-        distinctDestinations.size > 1
-          ? "ambiguous"
-          : this.decisions.decide(candidates),
+      decision,
       candidates,
+      resolutionStatus:
+        decision === "ambiguous"
+          ? "ambiguous"
+          : decision === "no_candidate"
+            ? "no_candidate"
+            : "resolved",
+      warnings: [],
       autoConfirmed: false,
     };
   }

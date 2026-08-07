@@ -44,6 +44,19 @@ describe("nuevo pipeline de homologación - comportamiento del dominio", () => {
   const classifier = new AccountObservationClassifierService();
   const compatibility = new AccountCompatibilityFilterService(classifier);
   const exact = new ExactMappingResolverService(compatibility);
+  const resolve = (
+    accountName: string,
+    catalogAccounts: PipelineCatalogAccount[],
+  ) =>
+    pipeline.resolve({
+      companyId: "test-company",
+      companyAccountId: "test-account",
+      accountObservation: { accountCode: "", accountName },
+      historicalCompanyMappings: [],
+      companyAliases: [],
+      catalogTerms: [],
+      catalogAccounts,
+    });
 
   for (const [source, expected] of [
     ["Caja", "Disponible"],
@@ -56,7 +69,7 @@ describe("nuevo pipeline de homologación - comportamiento del dominio", () => {
     ["Capital emitido", "Capital emitido"],
   ])
     test(`resuelve ${source} hacia la familia contable ${expected}`, () => {
-      const result = pipeline.suggest(source, catalog);
+      const result = resolve(source, catalog);
       assert.notEqual(result.decision, "no_candidate");
       assert.equal(result.candidates[0].siiName, expected);
     });
@@ -107,10 +120,10 @@ describe("nuevo pipeline de homologación - comportamiento del dominio", () => {
 
   for (const source of ["Fondo Mutuo", "Pagos en tránsito", "Cuenta puente"])
     test(`permite que ${source} quede sin sugerencia`, () =>
-      assert.equal(pipeline.suggest(source, []).decision, "no_candidate"));
+      assert.equal(resolve(source, []).decision, "no_candidate"));
 
   it("no fuerza un ganador cuando el nombre es ambiguo", () => {
-    const result = pipeline.suggest("Cuenta general", [
+    const result = resolve("Cuenta general", [
       { id: "a", code: "a", name: "Cuenta activo general" },
       { id: "b", code: "b", name: "Cuenta pasivo general" },
     ]);

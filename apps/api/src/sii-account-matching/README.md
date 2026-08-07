@@ -123,6 +123,13 @@ Reutilizar un mapping ya confirmado se informa como `confirmed_mapping` y
 salidas son sugerencias con `reviewRequired`, y el resultado declara siempre
 `autoConfirmed: false`.
 
+`resolve()` es el único entrypoint de la fachada v2. Si existe un mapping
+confirmado aplicable, ninguna capa inferior se evalúa: una referencia vigente o
+remapeable se reutiliza incluso si el contexto actual parece incompatible; una
+referencia que no puede resolverse inequívocamente devuelve
+`confirmed_mapping_unresolved`, sin candidatos y con el warning estable
+`confirmed_mapping_requires_manual_resolution` para revisión humana.
+
 Cada referencia se valida contra una cuenta vigente, activa, hoja y homologable.
 Si su UUID desapareció, sólo se remapea cuando el código SII estable identifica
 una única cuenta vigente, conservando `originalSiiAccountId`,

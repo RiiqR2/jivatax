@@ -103,7 +103,102 @@ describe("pipeline v2 - resolución determinística priorizada", () => {
     assert.equal(result.candidates[0].resolutionType, "confirmed_mapping");
     assert.equal(result.candidates[0].siiAccountId, "cash");
     assert.equal(result.candidates[0].reviewRequired, false);
+    assert.equal(result.candidates[0].reusedConfirmedMapping, true);
+    assert.equal(result.resolutionStatus, "resolved");
     assert.equal(result.autoConfirmed, false);
+  });
+
+  it("remapea y reutiliza un mapping confirmado con código estable único", () => {
+    const result = pipeline.resolve(
+      context("Nombre cambiado", {
+        confirmedMapping: {
+          companyAccountId: "internal",
+          siiAccountId: "old-uuid",
+          siiCode: "1202",
+          siiName: "Nombre histórico",
+          source: "manual",
+        },
+      }),
+    );
+    assert.equal(result.resolutionStatus, "resolved");
+    assert.equal(result.candidates[0].siiAccountId, "old-current");
+    assert.equal(result.candidates[0].referenceResolution, "remapped");
+    assert.equal(result.candidates[0].reusedConfirmedMapping, true);
+    assert.equal(result.autoConfirmed, false);
+  });
+
+  it("bloquea un confirmado con código inexistente y no cae a alias", () => {
+    const result = pipeline.resolve(
+      context("Cuenta auxiliar", {
+        confirmedMapping: {
+          companyAccountId: "internal",
+          siiAccountId: "old-uuid",
+          siiCode: "missing",
+          siiName: "Cuenta histórica",
+          source: "manual",
+        },
+        companyAliases: [
+          {
+            normalizedTerm: "cuenta auxiliar",
+            siiAccountId: "cash",
+            siiCode: "1101",
+            siiName: "Disponible",
+            active: true,
+          },
+        ],
+      }),
+    );
+    assert.equal(result.resolutionStatus, "confirmed_mapping_unresolved");
+    assert.equal(result.decision, "ambiguous");
+    assert.deepEqual(result.candidates, []);
+    assert.deepEqual(result.warnings, [
+      "confirmed_mapping_requires_manual_resolution",
+    ]);
+    assert.equal(result.unresolvedConfirmedMapping?.siiAccountId, "old-uuid");
+    assert.equal(result.autoConfirmed, false);
+  });
+
+  it("bloquea un código confirmado ambiguo y no cae a ranking", () => {
+    const result = pipeline.resolve(
+      context("Cuenta general", {
+        confirmedMapping: {
+          companyAccountId: "internal",
+          siiAccountId: "old-uuid",
+          siiCode: "1201",
+          siiName: "Cuenta histórica",
+          source: "manual",
+        },
+        catalogAccounts: [
+          ...accounts,
+          {
+            id: "duplicate-code",
+            code: "1201",
+            name: "Otra cuenta por cobrar",
+            active: true,
+            isLeaf: true,
+            mappable: true,
+          },
+        ],
+      }),
+    );
+    assert.equal(result.resolutionStatus, "confirmed_mapping_unresolved");
+    assert.deepEqual(result.candidates, []);
+  });
+
+  it("reutiliza un confirmado aunque el contexto actual parezca incompatible", () => {
+    const result = pipeline.resolve(
+      context("Pasivo corriente", {
+        confirmedMapping: {
+          companyAccountId: "internal",
+          siiAccountId: "cash",
+          siiCode: "1101",
+          siiName: "Disponible",
+          source: "manual",
+        },
+      }),
+    );
+    assert.equal(result.candidates[0].resolutionType, "confirmed_mapping");
+    assert.equal(result.candidates[0].siiAccountId, "cash");
   });
 
   it("prioriza historial de la misma cuenta sobre términos globales", () => {
@@ -172,6 +267,7 @@ describe("pipeline v2 - resolución determinística priorizada", () => {
     const result = pipeline.resolve(context("Disponible"));
     assert.equal(result.candidates[0].resolutionType, "exact_official_name");
     assert.equal(result.candidates[0].recommendationLevel, "strong");
+    assert.equal(result.autoConfirmed, false);
   });
 
   it("un término negativo no resuelve", () => {

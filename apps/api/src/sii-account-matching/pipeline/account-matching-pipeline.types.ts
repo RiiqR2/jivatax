@@ -158,6 +158,13 @@ export interface MatchingResolutionContext {
 export interface MatchingResolutionResult {
   decision: SuggestionDecision;
   candidates: SuggestionCandidate[];
-  /** Always false except when describing reuse of an already-confirmed mapping. */
+  resolutionStatus:
+    "resolved" | "ambiguous" | "no_candidate" | "confirmed_mapping_unresolved";
+  warnings: string[];
+  unresolvedConfirmedMapping?: Pick<
+    ConfirmedMappingEvidence,
+    "siiAccountId" | "siiCode" | "siiName"
+  >;
+  /** v2 never creates a confirmation. */
   autoConfirmed: false;
 }
