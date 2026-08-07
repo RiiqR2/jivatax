@@ -107,3 +107,35 @@ Se aceptan `.xlsx` y `.xls`, `--sheet` es opcional y el usuario confirmador tamb
 La identidad idempotente es el SHA-256 de `expert + hash del nombre normalizado + siiAccountId + industryId`; por ello reordenar o volver a importar el archivo no aumenta evidencia. El reporte JSON separa filas importadas, duplicadas y rechazadas. Sin `industryId` la evidencia es global; con un rubro activo también participa en su proyección.
 
 La confianza es `agreementRate * max(min(1, distinctCompanyCount / 5), expertConfirmationCount > 0 ? 0.8 : 0)`: 0.8 reconoce la revisión experta sin equipararla a certeza colectiva. Las confirmaciones incorrectas deben invalidarse mediante `AccountMatchingConfirmationService.invalidate`; la siguiente reconstrucción excluye evidencia invalidada.
+
+## Pipeline v2 aislado: resolución priorizada
+
+Antes del ranking semántico, la fachada v2 evalúa, en este orden: (1) mapping
+confirmado de la `companyAccount`, (2) mapping histórico confirmado de la misma
+empresa y cuenta, (3) alias activo de empresa, (4) nombre oficial SII exacto,
+(5) alias o término curado exacto, (6) regla contable determinística y (7)
+ranking compatible. La primera capa con evidencia detiene las inferiores; dos
+destinos diferentes dentro de una misma capa producen `ambiguous`, nunca un
+desempate por UUID, código u orden de entrada.
+
+Reutilizar un mapping ya confirmado se informa como `confirmed_mapping` y
+`reusedConfirmedMapping`; no equivale a crear una confirmación. Todas las demás
+salidas son sugerencias con `reviewRequired`, y el resultado declara siempre
+`autoConfirmed: false`.
+
+`resolve()` es el único entrypoint de la fachada v2. Si existe un mapping
+confirmado aplicable, ninguna capa inferior se evalúa: una referencia vigente o
+remapeable se reutiliza incluso si el contexto actual parece incompatible; una
+referencia que no puede resolverse inequívocamente devuelve
+`confirmed_mapping_unresolved`, sin candidatos y con el warning estable
+`confirmed_mapping_requires_manual_resolution` para revisión humana.
+
+Cada referencia se valida contra una cuenta vigente, activa, hoja y homologable.
+Si su UUID desapareció, sólo se remapea cuando el código SII estable identifica
+una única cuenta vigente, conservando `originalSiiAccountId`,
+`resolvedSiiAccountId` y `referenceResolution=remapped`. Un código ausente o
+ambiguo no produce candidato.
+
+Este pipeline sigue completamente aislado: sus contratos reciben catálogo y
+evidencias por inyección pura, no consulta repositorios ni `DataSource`, no
+persiste, y sus servicios no están registrados en `SiiAccountMatchingModule`.

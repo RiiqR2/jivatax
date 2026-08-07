@@ -63,7 +63,14 @@ export interface CompatibilityResult {
   compatibilityLevel: "exact" | "compatible" | "uncertain" | "incompatible";
 }
 
-export type ResolutionType = "exact" | "accounting_rule" | "ranked";
+export type ResolutionType =
+  | "confirmed_mapping"
+  | "historical_company_mapping"
+  | "company_alias"
+  | "exact_official_name"
+  | "exact_catalog_term"
+  | "accounting_rule"
+  | "ranked";
 export type RecommendationLevel = "strong" | "probable" | "weak";
 
 export interface SuggestionCandidate {
@@ -76,6 +83,12 @@ export interface SuggestionCandidate {
   warnings: string[];
   technicalScore: number;
   technicalConfidence: number;
+  reviewRequired: boolean;
+  originalSiiAccountId?: string;
+  resolvedSiiAccountId?: string;
+  referenceResolution: "direct" | "remapped" | "unresolved";
+  /** Informational only: v2 never writes or confirms a mapping. */
+  reusedConfirmedMapping?: boolean;
 }
 
 export type SuggestionDecision =
@@ -90,4 +103,68 @@ export interface PipelineCatalogAccount {
   mappable?: boolean;
   parentCode?: string | null;
   level?: number;
+}
+
+export interface ConfirmedMappingEvidence {
+  companyAccountId: string;
+  siiAccountId: string;
+  siiCode: string;
+  siiName: string;
+  confirmedAt?: Date | string;
+  source: string;
+}
+
+export interface CompanyAliasEvidence {
+  normalizedTerm: string;
+  siiAccountId: string;
+  siiCode: string;
+  siiName: string;
+  active: boolean;
+}
+
+export type CatalogTermType =
+  | "official_name"
+  | "company_alias"
+  | "expert_alias"
+  | "erp_term"
+  | "industry_term"
+  | "abbreviation"
+  | "manual_term"
+  | "negative_term";
+
+export interface CatalogTermEvidence {
+  normalizedTerm: string;
+  type: CatalogTermType;
+  scope: string;
+  siiAccountId: string;
+  siiCode: string;
+  siiName: string;
+  active: boolean;
+  companyId?: string;
+  industryId?: string;
+}
+
+export interface MatchingResolutionContext {
+  companyId: string;
+  companyAccountId: string;
+  accountObservation: AccountObservation | AccountObservationInput;
+  confirmedMapping?: ConfirmedMappingEvidence;
+  historicalCompanyMappings: ConfirmedMappingEvidence[];
+  companyAliases: CompanyAliasEvidence[];
+  catalogTerms: CatalogTermEvidence[];
+  catalogAccounts: PipelineCatalogAccount[];
+}
+
+export interface MatchingResolutionResult {
+  decision: SuggestionDecision;
+  candidates: SuggestionCandidate[];
+  resolutionStatus:
+    "resolved" | "ambiguous" | "no_candidate" | "confirmed_mapping_unresolved";
+  warnings: string[];
+  unresolvedConfirmedMapping?: Pick<
+    ConfirmedMappingEvidence,
+    "siiAccountId" | "siiCode" | "siiName"
+  >;
+  /** v2 never creates a confirmation. */
+  autoConfirmed: false;
 }

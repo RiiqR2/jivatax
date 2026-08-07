@@ -40,6 +40,9 @@ export class AccountingRuleResolverService {
           warnings: result.warnings,
           technicalScore: 1,
           technicalConfidence: 1,
+          reviewRequired: true,
+          resolvedSiiAccountId: account.id,
+          referenceResolution: "direct" as const,
         },
       ];
     });
