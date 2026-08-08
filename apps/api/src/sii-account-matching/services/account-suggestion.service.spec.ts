@@ -353,7 +353,7 @@ describe("AccountSuggestionService persistence", () => {
       loadLearning: async () => [],
     });
 
-    const result = await service.generateForPeriod(companyId, "period-1");
+    const result = await service.generateWithV7(companyId, "period-1");
 
     assert.equal(result.suggestionsCreated, 3);
     assert.equal(saved.length, 3);
@@ -458,7 +458,7 @@ describe("AccountSuggestionService persistence", () => {
       loadLearning: async () => [],
     });
 
-    const result = await service.generateForPeriod(companyId, "period-1");
+    const result = await service.generateWithV7(companyId, "period-1");
     assert.equal(result.suggestionsCreated, 1);
     assert.equal(saved[0].companyAccountId, "internal-cash");
     assert.equal(saved[0].siiAccountId, "available");
@@ -532,7 +532,7 @@ describe("AccountSuggestionService persistence", () => {
       loadLearning: async () => [],
     });
 
-    const result = await service.generateForPeriod(companyId, "period-1");
+    const result = await service.generateWithV7(companyId, "period-1");
     assert.equal(result.suggestionsCreated, 1);
     assert.equal(saved[0].siiAccountId, "laundry");
     assert.equal(saved[0].status, CompanyAccountSuggestionStatus.REVIEW);
@@ -596,7 +596,7 @@ describe("AccountSuggestionService persistence", () => {
       loadLearning: async () => [],
     });
 
-    const result = await service.generateForPeriod(companyId, "period-1");
+    const result = await service.generateWithV7(companyId, "period-1");
     assert.equal(saved.length, 0);
     assert.equal(result.suggestionsCreated, 0);
     assert.equal(result.withoutSuggestion, 1);
@@ -660,7 +660,7 @@ describe("AccountSuggestionService persistence", () => {
       loadRules: async () => [],
       loadLearning: async () => [],
     });
-    const result = await service.generateForPeriod(companyId, "period-1");
+    const result = await service.generateWithV7(companyId, "period-1");
     assert.equal(result.withoutSuggestionReasons.confirmed_mapping, 1);
     assert.equal(repositoryUsed, false);
   });
