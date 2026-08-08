@@ -93,7 +93,8 @@ export class AccountSuggestionRankingService {
       observedSection: observed,
       balanceContext: context,
     });
-    if (semanticProfile.temporalTerm) source.term = semanticProfile.temporalTerm;
+    if (semanticProfile.temporalTerm)
+      source.term = semanticProfile.temporalTerm;
     const ruleEvaluations = new Map(
       candidates.map((candidate) => [
         candidate.account.id,
@@ -217,8 +218,11 @@ export class AccountSuggestionRankingService {
           return [
             {
               accountId: candidate.account.id,
-              reasons: [semanticCheck.reason ?? "incompatible_semantic_profile"],
-              condition: "observed semantic profile compatible with destination",
+              reasons: [
+                semanticCheck.reason ?? "incompatible_semantic_profile",
+              ],
+              condition:
+                "observed semantic profile compatible with destination",
               observedValue: [...semanticProfile.dimensions],
               requiredValue: candidate.account.name,
               discardedAt:

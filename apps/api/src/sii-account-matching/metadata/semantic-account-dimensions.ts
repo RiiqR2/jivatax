@@ -51,8 +51,7 @@ export const EXTENDED_GENERIC_MATCH_TOKENS = new Set([
 
 const NON_CURRENT_PATTERN =
   /\b(no corriente|no-corriente|largo plazo|lp\b|\bnc\b)\b/i;
-const CURRENT_TERM_PATTERN =
-  /\b(corto plazo|corriente)\b/i;
+const CURRENT_TERM_PATTERN = /\b(corto plazo|corriente)\b/i;
 const CUENTA_CORRIENTE_PATTERN = /cuenta corriente/i;
 
 export function inferTemporalTerm(name: string): AccountTerm | undefined {
@@ -83,7 +82,10 @@ export function inferSemanticProfile(
     /provision gastos por pagar|provisiones por pagar|provision obligaciones|provision cuentas por pagar/.test(
       normalized,
     );
-  if (isBadDebtAllowance || /provision complementaria|deterioro acumulado/.test(normalized)) {
+  if (
+    isBadDebtAllowance ||
+    /provision complementaria|deterioro acumulado/.test(normalized)
+  ) {
     dimensions.add("allowance_accounts");
   }
 
@@ -95,7 +97,11 @@ export function inferSemanticProfile(
     dimensions.add("prepaid_assets");
   }
 
-  if (/pagos en transito|pagos en tránsito|valores en transito|valores en tránsito/.test(normalized)) {
+  if (
+    /pagos en transito|pagos en tránsito|valores en transito|valores en tránsito/.test(
+      normalized,
+    )
+  ) {
     dimensions.add("temporary_or_bridge_accounts");
   }
 
@@ -107,30 +113,45 @@ export function inferSemanticProfile(
     dimensions.add("financial_assets");
   }
 
-  if (/leasing|arrendamiento financiero|intereses diferidos leasing|activo por derecho de uso/.test(normalized)) {
+  if (
+    /leasing|arrendamiento financiero|intereses diferidos leasing|activo por derecho de uso/.test(
+      normalized,
+    )
+  ) {
     dimensions.add("lease_accounts");
   }
 
   const isRelatedPartyReceivable =
-    /relacionad|relacionada|empresa relacionada|parte relacionada/.test(normalized) &&
-    /prestamo|préstamo|cobrar|deudor|credito|crédito/.test(normalized);
-  if (isRelatedPartyReceivable || /empresa relacionada|parte relacionada/.test(normalized)) {
+    /relacionad|relacionada|empresa relacionada|parte relacionada/.test(
+      normalized,
+    ) && /prestamo|préstamo|cobrar|deudor|credito|crédito/.test(normalized);
+  if (
+    isRelatedPartyReceivable ||
+    /empresa relacionada|parte relacionada/.test(normalized)
+  ) {
     dimensions.add("related_party_accounts");
   }
 
-  if (/intereses por pagar|honorarios por pagar|remuneraciones por pagar|vacaciones por pagar|provision imposiciones|provision vacaciones/.test(normalized)) {
+  if (
+    /intereses por pagar|honorarios por pagar|remuneraciones por pagar|vacaciones por pagar|provision imposiciones|provision vacaciones/.test(
+      normalized,
+    )
+  ) {
     dimensions.add("accrued_liabilities");
   }
 
-  if (/inversion|inversión|instrumentos financieros|sociedades|acciones en otras empresas|pagos basados en acciones/.test(normalized)) {
+  if (
+    /inversion|inversión|instrumentos financieros|sociedades|acciones en otras empresas|pagos basados en acciones/.test(
+      normalized,
+    )
+  ) {
     dimensions.add("investment_accounts");
   }
 
   const isRentalExpense =
     /^arriendo\b|arriendo fijo|gasto de arriendo|gastos de arriendo|arrendamiento operacional|canon de arrendamiento/.test(
       normalized,
-    ) &&
-    !/anticipad|prepag|pagado por adelantado/.test(normalized);
+    ) && !/anticipad|prepag|pagado por adelantado/.test(normalized);
   if (isRentalExpense) dimensions.add("rental_expenses");
 
   const isEquityRetained =
@@ -154,7 +175,8 @@ export function candidateSemanticProfile(
   candidate: GeneratedCandidate,
 ): InferredSemanticProfile {
   return inferSemanticProfile(candidate.account.name, {
-    observedSection: candidate.metadata.statementSection as ObservedAccountSection,
+    observedSection: candidate.metadata
+      .statementSection as ObservedAccountSection,
   });
 }
 
@@ -183,11 +205,17 @@ export function semanticProfilesCompatible(
       /\b(corriente|corto plazo)\b/.test(candidateNormalized) &&
       !NON_CURRENT_PATTERN.test(candidateNormalized)
     )
-      return { compatible: false, reason: "non_current_vs_current_destination" };
+      return {
+        compatible: false,
+        reason: "non_current_vs_current_destination",
+      };
   }
   if (observed.temporalTerm === "current") {
     if (NON_CURRENT_PATTERN.test(candidateNormalized))
-      return { compatible: false, reason: "current_vs_non_current_destination" };
+      return {
+        compatible: false,
+        reason: "current_vs_non_current_destination",
+      };
   }
 
   if (observed.isBadDebtAllowance) {
@@ -210,16 +238,40 @@ export function semanticProfilesCompatible(
   }
 
   if (observed.isBridgePayment) {
-    if (/existencias en transito|existencias en tránsito|inventario en transito/.test(candidateNormalized))
-      return { compatible: false, reason: "bridge_payment_vs_inventory_transit" };
-    if (/pagos basados en acciones|acciones otorgadas|stock options/.test(candidateNormalized))
-      return { compatible: false, reason: "bridge_payment_vs_equity_compensation" };
-    if (!/pagos en transito|pagos en tránsito|valores en transito|disponible|banco/.test(candidateNormalized))
-      return { compatible: false, reason: "bridge_payment_requires_cash_bridge" };
+    if (
+      /existencias en transito|existencias en tránsito|inventario en transito/.test(
+        candidateNormalized,
+      )
+    )
+      return {
+        compatible: false,
+        reason: "bridge_payment_vs_inventory_transit",
+      };
+    if (
+      /pagos basados en acciones|acciones otorgadas|stock options/.test(
+        candidateNormalized,
+      )
+    )
+      return {
+        compatible: false,
+        reason: "bridge_payment_vs_equity_compensation",
+      };
+    if (
+      !/pagos en transito|pagos en tránsito|valores en transito|disponible|banco/.test(
+        candidateNormalized,
+      )
+    )
+      return {
+        compatible: false,
+        reason: "bridge_payment_requires_cash_bridge",
+      };
   }
 
   if (observed.isRelatedPartyReceivable) {
-    if (observed.temporalTerm === "non_current" && candidate.metadata.term === "current")
+    if (
+      observed.temporalTerm === "non_current" &&
+      candidate.metadata.term === "current"
+    )
       return { compatible: false, reason: "related_party_nc_vs_current" };
     if (
       !/relacionad|prestamo|préstamo|cobrar|deudor|credito|crédito/.test(
@@ -236,7 +288,11 @@ export function semanticProfilesCompatible(
     ) &&
     observed.temporalTerm === "non_current"
   ) {
-    if (/intereses diferidos leasing|leasing|arrendamiento financiero/.test(candidateNormalized))
+    if (
+      /intereses diferidos leasing|leasing|arrendamiento financiero/.test(
+        candidateNormalized,
+      )
+    )
       return { compatible: false, reason: "loan_interest_vs_lease_deferred" };
   }
 
@@ -263,7 +319,9 @@ export function semanticProfilesCompatible(
   if (observed.dimensions.has("prepaid_assets")) {
     if (
       candidate.metadata.family !== "prepaid_expenses" &&
-      !/anticipad|diferido|prepag|pagado por adelantado/.test(candidateNormalized)
+      !/anticipad|diferido|prepag|pagado por adelantado/.test(
+        candidateNormalized,
+      )
     )
       return { compatible: false, reason: "prepaid_asset_required" };
   }

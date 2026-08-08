@@ -181,7 +181,11 @@ export function inferBasicAccountFamily(
   )
     return "cost";
 
-  if (/anticipad|prepag|prepago|pagado por adelantado|seguros anticipados|comisiones anticipadas|seguro anticipado|comision anticipada/.test(normalized))
+  if (
+    /anticipad|prepag|prepago|pagado por adelantado|seguros anticipados|comisiones anticipadas|seguro anticipado|comision anticipada/.test(
+      normalized,
+    )
+  )
     return "prepaid";
 
   if (
@@ -262,7 +266,11 @@ export function candidateBasicAccountFamily(
     return "cash_and_bank";
   if (/creditos por donaciones|créditos por donaciones/.test(normalized))
     return "financial_investment";
-  if (/gastos pagados por anticipado|seguros anticipados|comisiones anticipadas/.test(normalized))
+  if (
+    /gastos pagados por anticipado|seguros anticipados|comisiones anticipadas/.test(
+      normalized,
+    )
+  )
     return "prepaid";
   if (/gastos diferidos|costos diferidos/.test(normalized)) return "deferred";
   if (/honorarios diferidos/.test(normalized)) return "deferred";

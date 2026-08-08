@@ -5,6 +5,7 @@ import type {
   PipelineCatalogAccount,
 } from "./account-matching-pipeline.types";
 import { AccountObservationClassifierService } from "./account-observation-classifier.service";
+import { catalogChapterSection } from "../metadata/sii-catalog-hierarchy";
 
 type FinancialSubfamily =
   | "cash_and_bank"
@@ -29,15 +30,21 @@ export class AccountCompatibilityFilterService {
   ): CompatibilityResult {
     return this.evaluate(
       source,
-      this.classifier.classify({
-        accountCode: destination.code,
-        accountName: destination.name,
-        isLeaf: destination.isLeaf,
-        active: destination.active,
-        mappable: destination.mappable,
-        parentCode: destination.parentCode,
-        level: destination.level,
-      }),
+      this.classifier.classify(
+        {
+          accountCode: destination.code,
+          accountName: destination.name,
+          isLeaf: destination.isLeaf,
+          active: destination.active,
+          mappable: destination.mappable,
+          parentCode: destination.parentCode,
+          level: destination.level,
+        },
+        {
+          catalogHierarchySection: catalogChapterSection(destination.code),
+          catalogKnowledge: destination.knowledge,
+        },
+      ),
     );
   }
 
