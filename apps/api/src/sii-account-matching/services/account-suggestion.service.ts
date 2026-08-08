@@ -31,8 +31,18 @@ import { AccountMatchingDiagnosticEntity } from "../entities/account-matching-di
 import { CompanyAccountMappingHistoryEntity } from "../../accounting/entities/company-account-mapping-history.entity";
 import { CompanyEntity } from "../../companies/entities/company.entity";
 import { TaxPeriodEntity } from "../../accounting/entities/tax-period.entity";
+import { TaxDocumentEntity } from "../../accounting/entities/tax-document.entity";
+import { TaxDocumentType } from "../../accounting/enums/accounting.enums";
 import type { AccountLearningEvidence } from "../account-matching.types";
 import { CatalogReferenceResolverService } from "./catalog-reference-resolver.service";
+import { MatchingResolutionContextFactoryService } from "./matching-resolution-context-factory.service";
+import { SiiAccountMatchingPipelineService } from "../pipeline/sii-account-matching-pipeline.service";
+import { AccountObservationClassifierService } from "../pipeline/account-observation-classifier.service";
+import type {
+  AccountObservationInput,
+  MatchingResolutionResult,
+  SuggestionCandidate,
+} from "../pipeline/account-matching-pipeline.types";
 import { resolveCuratedCatalogKnowledge } from "../data/resolve-curated-catalog-knowledge";
 import { inferBasicAccountFamily } from "../metadata/basic-account-family";
 import {
@@ -69,7 +79,8 @@ type DiscardReason =
   | "all_candidates_penalized"
   | "confirmed_mapping"
   | "unsupported_term_type"
-  | "insufficient_semantic_evidence";
+  | "insufficient_semantic_evidence"
+  | "no_candidate";
 
 @Injectable()
 export class AccountSuggestionService {
@@ -81,9 +92,28 @@ export class AccountSuggestionService {
     private readonly ranking: AccountSuggestionRankingService = new AccountSuggestionRankingService(),
     @Optional()
     private readonly currentCatalog?: CurrentSiiAccountCatalogService,
+    @Optional()
+    private readonly contextFactory?: MatchingResolutionContextFactoryService,
+    @Optional()
+    private readonly pipeline?: SiiAccountMatchingPipelineService,
+    @Optional()
+    private readonly observationClassifier?: AccountObservationClassifierService,
   ) {}
 
+  /**
+   * Production entry point behind the "Generar sugerencias" button. Routes to
+   * the v2 deterministic pipeline by default. Rollback to the legacy v7 engine
+   * is a single environment switch: `ACCOUNT_SUGGESTIONS_ENGINE=v7`.
+   */
   async generateForPeriod(companyId: string, taxPeriodId: string) {
+    const engine = (
+      process.env.ACCOUNT_SUGGESTIONS_ENGINE ?? "v2"
+    ).toLowerCase();
+    if (engine === "v7") return this.generateWithV7(companyId, taxPeriodId);
+    return this.generateWithV2(companyId, taxPeriodId);
+  }
+
+  async generateWithV7(companyId: string, taxPeriodId: string) {
     const company = await this.loadCompanyContext(companyId, taxPeriodId);
     const accounts = await this.loadCompanyAccounts(companyId, taxPeriodId);
     const loadedTerms = await this.loadTerms(companyId);
@@ -428,6 +458,243 @@ export class AccountSuggestionService {
       homologationReport,
       homologationReportPath: reportPath,
     };
+  }
+
+  /**
+   * v2 cutover: assembles evidence with the read-only context factory, resolves
+   * every account with the isolated deterministic pipeline and persists the
+   * outcome into the same `company_account_suggestions` /
+   * `account_matching_diagnostics` tables the UI already reads. It reuses the v2
+   * services verbatim (no pipeline logic is reimplemented here) and keeps the
+   * exact transactional guarantees of v7: confirmed mappings are never touched,
+   * previous ACTIVE/REVIEW rows are superseded only inside a successful
+   * generation, history is preserved and nothing is auto-confirmed.
+   */
+  async generateWithV2(companyId: string, taxPeriodId: string) {
+    const contextFactory =
+      this.contextFactory ??
+      new MatchingResolutionContextFactoryService(
+        this.dataSource,
+        this.currentCatalog ??
+          new CurrentSiiAccountCatalogService(this.dataSource),
+      );
+    const pipeline = this.pipeline ?? new SiiAccountMatchingPipelineService();
+    const classifier =
+      this.observationClassifier ?? new AccountObservationClassifierService();
+
+    const diagnostics = {
+      engine: "v2" as const,
+      algorithmVersion: ACCOUNT_SUGGESTION_CONFIG.pipelineV2AlgorithmVersion,
+      accountsProcessed: 0,
+      mappingsReused: 0,
+      suggestionsCreated: 0,
+      active: 0,
+      review: 0,
+      withoutSuggestion: 0,
+      withoutSuggestionReasons: {} as Record<DiscardReason, number>,
+      byDecision: {} as Record<string, number>,
+      averageConfidence: 0,
+    };
+
+    // The productive flow only receives companyId/taxPeriodId; the current
+    // closing balance is the latest BALANCE document of the period, matching
+    // the source the mappings screen lists against.
+    const balanceDocument = await this.dataSource
+      .getRepository(TaxDocumentEntity)
+      .findOne({
+        where: {
+          companyId,
+          taxPeriodId,
+          documentType: TaxDocumentType.BALANCE,
+        },
+        order: { versionNumber: "DESC" },
+      });
+    if (!balanceDocument || balanceDocument.discardedAt) {
+      return { ...diagnostics, suggested: 0 };
+    }
+
+    const contexts = await contextFactory.createBatch({
+      companyId,
+      taxPeriodId,
+      balanceImportId: balanceDocument.id,
+    });
+    diagnostics.accountsProcessed = contexts.length;
+
+    await this.dataSource.transaction(async (manager) => {
+      const suggestionRepository = manager.getRepository(
+        CompanyAccountSuggestionEntity,
+      );
+      const diagnosticRepository = manager.getRepository(
+        AccountMatchingDiagnosticEntity,
+      );
+      const diagnosticsEnabled =
+        typeof diagnosticRepository.softDelete === "function";
+      if (diagnosticsEnabled)
+        await diagnosticRepository.softDelete({ companyId, taxPeriodId });
+
+      for (const context of contexts) {
+        // Confirmed mappings are reused as-is: never regenerated, superseded or
+        // degraded. Their suggestion history is left intact.
+        if (context.confirmedMapping) {
+          this.discard(
+            diagnostics.withoutSuggestionReasons,
+            "confirmed_mapping",
+          );
+          diagnostics.mappingsReused++;
+          continue;
+        }
+
+        const observation = classifier.classify(
+          context.accountObservation as AccountObservationInput,
+        );
+        const result = pipeline.resolve({
+          ...context,
+          accountObservation: observation,
+        });
+        diagnostics.byDecision[result.decision] =
+          (diagnostics.byDecision[result.decision] ?? 0) + 1;
+        const generatedAt = new Date();
+
+        // Retire the previous generation inside the same transaction. A failed
+        // transaction restores it; a successful no-match cannot leave a stale
+        // suggestion looking approvable.
+        await suggestionRepository.update(
+          {
+            companyAccountId: context.companyAccountId,
+            status: In([
+              CompanyAccountSuggestionStatus.ACTIVE,
+              CompanyAccountSuggestionStatus.REVIEW,
+            ]),
+          },
+          { status: CompanyAccountSuggestionStatus.SUPERSEDED },
+        );
+
+        if (diagnosticsEnabled)
+          await diagnosticRepository.save(
+            diagnosticRepository.create({
+              companyId,
+              taxPeriodId,
+              companyAccountId: context.companyAccountId,
+              accountName: observation.originalName,
+              normalizedName: observation.normalizedName,
+              observedSection: observation.observedSection,
+              decision: result.decision,
+              decisionReason: this.v2DecisionReason(result),
+              algorithmVersion:
+                ACCOUNT_SUGGESTION_CONFIG.pipelineV2AlgorithmVersion,
+              candidates: result.candidates.map((candidate) => ({
+                siiAccountId: candidate.siiAccountId,
+                code: candidate.siiCode,
+                name: candidate.siiName,
+                resolutionType: candidate.resolutionType,
+                recommendationLevel: candidate.recommendationLevel,
+                technicalScore: candidate.technicalScore,
+                technicalConfidence: candidate.technicalConfidence,
+                evidence: candidate.evidence,
+                warnings: candidate.warnings,
+              })),
+              discardedCandidates: result.unresolvedConfirmedMapping
+                ? [result.unresolvedConfirmedMapping]
+                : [],
+              rulesEvaluated: [
+                result.resolutionStatus,
+                ...observation.classificationWarnings,
+              ],
+              generatedAt,
+            }),
+          );
+
+        const status = this.v2DecisionStatus(result.decision);
+        if (!status || result.candidates.length === 0) {
+          this.discard(
+            diagnostics.withoutSuggestionReasons,
+            result.decision === "ambiguous"
+              ? "ambiguous_candidates"
+              : "no_candidate",
+          );
+          diagnostics.withoutSuggestion++;
+          continue;
+        }
+
+        const suggestions = result.candidates
+          .slice(0, ACCOUNT_SUGGESTION_CONFIG.topCandidates)
+          .map((candidate, index) =>
+            suggestionRepository.create({
+              companyAccountId: context.companyAccountId,
+              siiAccountId: candidate.siiAccountId,
+              suggestionRank: index + 1,
+              score: (candidate.technicalScore * 100).toFixed(2),
+              confidence: candidate.technicalConfidence.toFixed(4),
+              algorithmVersion:
+                ACCOUNT_SUGGESTION_CONFIG.pipelineV2AlgorithmVersion,
+              reasons: this.v2Reasons(result, candidate),
+              status,
+              generatedAt,
+              reviewedByUserId: null,
+              reviewedAt: null,
+            }),
+          );
+        await suggestionRepository.save(suggestions);
+        diagnostics.suggestionsCreated += suggestions.length;
+        if (status === CompanyAccountSuggestionStatus.ACTIVE)
+          diagnostics.active++;
+        else diagnostics.review++;
+        diagnostics.averageConfidence += suggestions.reduce(
+          (sum, suggestion) => sum + Number(suggestion.confidence),
+          0,
+        );
+      }
+    });
+
+    return {
+      ...diagnostics,
+      averageConfidence: diagnostics.suggestionsCreated
+        ? diagnostics.averageConfidence / diagnostics.suggestionsCreated
+        : 0,
+      suggested: diagnostics.suggestionsCreated,
+    };
+  }
+
+  /** Maps a v2 decision to the persisted suggestion status (or none). */
+  private v2DecisionStatus(
+    decision: MatchingResolutionResult["decision"],
+  ): CompanyAccountSuggestionStatus | null {
+    if (decision === "strong" || decision === "probable")
+      return CompanyAccountSuggestionStatus.ACTIVE;
+    if (decision === "weak" || decision === "ambiguous")
+      return CompanyAccountSuggestionStatus.REVIEW;
+    return null;
+  }
+
+  private v2DecisionReason(result: MatchingResolutionResult): string {
+    if (result.resolutionStatus === "confirmed_mapping_unresolved")
+      return "confirmed_mapping_unresolved";
+    if (result.decision === "no_candidate") return "no_candidate";
+    if (result.decision === "ambiguous") return "ambiguous_candidates";
+    return `resolved_${result.decision}`;
+  }
+
+  private v2Reasons(
+    result: MatchingResolutionResult,
+    candidate: SuggestionCandidate,
+  ) {
+    return [
+      {
+        signal: `resolution:${candidate.resolutionType}`,
+        description: `v2 ${result.decision} (${candidate.recommendationLevel})`,
+        points: Math.round(candidate.technicalScore * 100),
+      },
+      ...candidate.evidence.map((item) => ({
+        signal: item,
+        description: item,
+        points: 0,
+      })),
+      ...candidate.warnings.map((item) => ({
+        signal: `warning:${item}`,
+        description: item,
+        points: 0,
+      })),
+    ];
   }
 
   private loadCompanyAccounts(

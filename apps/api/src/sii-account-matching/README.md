@@ -273,3 +273,29 @@ El contexto batch realiza aproximadamente nueve lecturas constantes (empresa,
 período, documento, snapshots, catálogo, mappings, historial, terms y cuentas),
 más dos lecturas batch para diagnósticos y sugerencias V7. La cantidad no crece
 con el número de cuentas o candidatos y no utiliza caches globales.
+
+## Cutover productivo a v2 (Bloque 11)
+
+El botón "Generar sugerencias" (`POST /companies/:companyId/tax-periods/:taxPeriodId/account-mapping-suggestions`
+→ `AccountSuggestionService.generateForPeriod`) ahora ejecuta el pipeline v2 por
+defecto. `generateForPeriod` sólo despacha: reutiliza
+`MatchingResolutionContextFactoryService` (deriva el `balanceImportId` del último
+documento BALANCE del período) y `SiiAccountMatchingPipelineService.resolve` sin
+reimplementar el pipeline. La lógica v7 se conserva íntegra en `generateWithV7`.
+
+Mapeo decisión v2 → persistencia en `company_account_suggestions`:
+
+- `confirmed_mapping` (el mapping ya está CONFIRMED): no se regenera, no se
+  supersede y no se degrada; se reutiliza y cuenta como `mappingsReused`.
+- `strong` / `probable`: rank 1 `ACTIVE` (más alternativas hasta `topCandidates`).
+- `weak` / `ambiguous`: `REVIEW` (requiere aprobación manual explícita).
+- `no_candidate`: no se persiste sugerencia.
+
+Cada cuenta no confirmada supersede su generación previa `ACTIVE`/`REVIEW` dentro
+de la misma transacción; el historial nunca se borra. `account_matching_diagnostics`
+guarda, con `algorithmVersion = deterministic-v2-pipeline`, la decisión, el motivo,
+la sección observada, todos los candidatos con evidencia/warnings y el
+`resolutionStatus`. Nunca se autoconfirma.
+
+**Rollback a v7**: definir `ACCOUNT_SUGGESTIONS_ENGINE=v7` en el entorno de la API.
+Sin la variable (o con cualquier valor distinto de `v7`) el motor es v2.
