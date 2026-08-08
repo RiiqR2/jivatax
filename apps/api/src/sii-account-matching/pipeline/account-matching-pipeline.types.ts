@@ -2,8 +2,24 @@ import type {
   AccountTerm,
   BalanceNature,
   ObservedAccountSection,
+  StatementSection,
 } from "../account-matching.types";
 import type { PipelineAccountFamily } from "./account-family-taxonomy";
+
+/**
+ * Curated, per-account overlay from `sii_account_knowledge`. Optional and
+ * empty by default: absence never excludes a candidate, it only means the
+ * classifier keeps deriving the destination from the catalogue chapter and
+ * its name, same as today.
+ */
+export interface CatalogAccountKnowledge {
+  statementSection?: StatementSection;
+  balanceNature?: BalanceNature;
+  accountingFamily?: string;
+  isResidual?: boolean;
+  isContraAccount?: boolean;
+  isCurrent?: boolean | null;
+}
 
 export type RelationshipClass = "related_party" | "third_party" | "unknown";
 export type ContraAccountType =
@@ -110,6 +126,8 @@ export interface PipelineCatalogAccount {
   mappable?: boolean;
   parentCode?: string | null;
   level?: number;
+  /** Curated overlay from `sii_account_knowledge`, when it exists for this account. */
+  knowledge?: CatalogAccountKnowledge;
 }
 
 export interface ConfirmedMappingEvidence {

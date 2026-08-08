@@ -25,16 +25,28 @@ describe("semantic homologation precision", () => {
 
   const semanticCatalog = () => [
     account("prepaid", "1.01.11.00", "Gastos pagados por anticipado"),
-    account("admin-expense", "3.01.03.00", "Gastos de administración y ventas (menos)"),
+    account(
+      "admin-expense",
+      "3.01.03.00",
+      "Gastos de administración y ventas (menos)",
+    ),
     account("bad-debt", "1.01.05.00", "Provisión de deuda incobrable (menos)"),
     account("payables-provision", "2.01.08.00", "Provisión gastos por pagar"),
     account("payments-transit", "1.01.12.00", "Pagos en tránsito"),
     account("inventory-transit", "1.01.25.00", "Existencias en Tránsito"),
     account("stock-comp", "2.03.05.00", "Pagos basados en acciones"),
-    account("related-nc", "1.02.01.00", "Préstamos por cobrar empresas relacionadas NC"),
+    account(
+      "related-nc",
+      "1.02.01.00",
+      "Préstamos por cobrar empresas relacionadas NC",
+    ),
     account("current-receivable", "1.01.05.00", "Deudores por venta"),
     account("lease-deferred", "1.01.15.00", "Intereses diferidos leasing"),
-    account("loan-interest-nc", "1.02.02.00", "Intereses préstamos por cobrar NC"),
+    account(
+      "loan-interest-nc",
+      "1.02.02.00",
+      "Intereses préstamos por cobrar NC",
+    ),
     account("retained-gain", "2.03.02.00", "Utilidades acumuladas"),
     account("retained-loss", "2.03.03.00", "Pérdidas acumuladas"),
     account("cash", "1.01.01.00", "Disponible"),
@@ -104,7 +116,9 @@ describe("semantic homologation precision", () => {
       context("equity", "credit"),
     );
     assert.ok(
-      ["2.03.02.00", "2.03.03.00"].includes(result.candidates[0]?.account.code ?? ""),
+      ["2.03.02.00", "2.03.03.00"].includes(
+        result.candidates[0]?.account.code ?? "",
+      ),
     );
   });
 

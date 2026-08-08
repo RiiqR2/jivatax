@@ -42,9 +42,6 @@ export class SiiAccountMatchingPipelineService {
       // Real catalogue relationships take precedence over absent or stale flags.
       isLeaf: activeParentCodes.has(account.code) ? false : account.isLeaf,
     }));
-    const groupingWarnings = activeParentCodes.size
-      ? ["catalog_grouping_nodes_excluded"]
-      : [];
     const observation: AccountObservation =
       "normalizedName" in context.accountObservation
         ? context.accountObservation
@@ -63,7 +60,7 @@ export class SiiAccountMatchingPipelineService {
           decision: "strong",
           candidates: current,
           resolutionStatus: "resolved",
-          warnings: groupingWarnings,
+          warnings: [],
           autoConfirmed: false,
         };
       return {
@@ -100,14 +97,16 @@ export class SiiAccountMatchingPipelineService {
       this.rules.resolve(observation, catalogAccounts),
       this.ranker.rank(observation, catalogAccounts),
     ];
-    const candidates = levels.find((level) => level.length > 0) ?? [];
-    const distinctDestinations = new Set(
-      candidates.map((candidate) => candidate.siiAccountId),
-    );
-    const decision =
-      distinctDestinations.size > 1
-        ? "ambiguous"
-        : this.decisions.decide(candidates);
+    // Every layer already returns one candidate per distinct destination
+    // (never a duplicate for the same account), so the layer's own score
+    // ordering is the only fair tie-break: an exact/rule layer with several
+    // equally-scored destinations stays ambiguous on its own, while a
+    // clearly superior ranked candidate is no longer forced into ambiguity
+    // just because weaker alternatives also survived compatibility.
+    const candidates = [
+      ...(levels.find((level) => level.length > 0) ?? []),
+    ].sort((left, right) => right.technicalScore - left.technicalScore);
+    const decision = this.decisions.decide(candidates);
     return {
       decision,
       candidates,
@@ -117,7 +116,7 @@ export class SiiAccountMatchingPipelineService {
           : decision === "no_candidate"
             ? "no_candidate"
             : "resolved",
-      warnings: groupingWarnings,
+      warnings: [],
       autoConfirmed: false,
     };
   }

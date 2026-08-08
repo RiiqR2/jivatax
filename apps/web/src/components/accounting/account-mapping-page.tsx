@@ -20,8 +20,7 @@ const isApprovableSuggestionStatus = (status?: string) =>
   status === "active" || status === "review";
 
 const isMassApprovableSuggestion = (item: AccountMappingItem) =>
-  item.mapping.status === "pending" &&
-  item.suggestions[0]?.status === "active";
+  item.mapping.status === "pending" && item.suggestions[0]?.status === "active";
 
 const isIndividuallyApprovableSuggestion = (item: AccountMappingItem) =>
   item.mapping.status === "pending" &&
@@ -82,10 +81,7 @@ export function AccountMappingPage({
   const highConfidenceMassApprovable = massApprovableSuggested.filter(
     (item) => (item.suggestions[0]?.confidence ?? 0) >= 0.8,
   );
-  const approve = async (
-    items: AccountMappingItem[],
-    allowReview = false,
-  ) => {
+  const approve = async (items: AccountMappingItem[], allowReview = false) => {
     setApproving(true);
     try {
       await accountingService.approveAccountSuggestions(
@@ -180,9 +176,7 @@ export function AccountMappingPage({
       </button>
       <button
         type="button"
-        disabled={
-          approving || highConfidenceMassApprovable.length === 0
-        }
+        disabled={approving || highConfidenceMassApprovable.length === 0}
         onClick={() => setApprovalItems(highConfidenceMassApprovable)}
         className="ml-2 mt-4 rounded-lg border border-emerald-700 px-4 py-2 text-sm text-emerald-800 disabled:opacity-50"
       >
@@ -338,9 +332,7 @@ export function AccountMappingPage({
                         <input
                           type="checkbox"
                           aria-label={`Seleccionar ${item.periodName}`}
-                          checked={selectedIds.includes(
-                            item.companyAccountId,
-                          )}
+                          checked={selectedIds.includes(item.companyAccountId)}
                           onChange={(event) =>
                             setSelectedIds((current) =>
                               event.target.checked
@@ -576,9 +568,8 @@ function MappingDialog({
               <div className="rounded-md bg-amber-50 px-3 py-2 text-amber-900">
                 <p className="font-medium">Sugerencia pendiente de revisión</p>
                 <p className="mt-1">
-                  Confianza:{" "}
-                  {Math.round(item.suggestions[0].confidence * 100)}% · No
-                  apta para aprobación masiva automática.
+                  Confianza: {Math.round(item.suggestions[0].confidence * 100)}%
+                  · No apta para aprobación masiva automática.
                 </p>
                 <p className="mt-1">
                   {massApprovalIneligibleReason(item) ??

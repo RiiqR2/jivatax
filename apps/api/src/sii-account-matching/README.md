@@ -140,6 +140,41 @@ Este pipeline sigue completamente aislado: sus contratos reciben catálogo y
 evidencias por inyección pura, no consulta repositorios ni `DataSource`, no
 persiste. Su registro para evaluación no le agrega dependencias de TypeORM ni repositorios.
 
+## Bloque 9: reforma de precisión práctica
+
+Cuatro cambios mínimos, validados contra el reporte real de 134 cuentas
+(`tmp/account-matching-evaluation/`), corrigen la causa raíz de la baja
+precisión sin agregar reglas por cuenta:
+
+1. **Decisión sin cortocircuito.** `resolve()` ya no marca `ambiguous` sólo
+   porque una capa devolvió más de un destino distinto; siempre delega en
+   `SuggestionDecisionService.decide()`, que compara el score del primer y
+   segundo candidato. Un ganador claramente superior deja de perderse frente
+   a alternativas mucho más débiles que igual pasaron la compatibilidad.
+2. **Ranking sin ruido léxico.** `CompatibleCandidateRankerService` reutiliza
+   `weightedTokenSimilarity`/`relevantWords` (el mismo cálculo del motor
+   productivo) en vez de un conteo de tokens propio que contaba palabras
+   vacías ("por", "cuenta", "otros"...) como evidencia de similitud.
+3. **Jerarquía real del catálogo para el destino.** El código del catálogo
+   importado sigue la numeración oficial del Balance Tributario 8 Columnas:
+   capítulo 1 = Activos, 2.03 = Patrimonio, 2.\* = Pasivos. Esa jerarquía
+   ahora prevalece sobre una heurística léxica del nombre del destino (una
+   cuenta de activo llamada "Gastos Diferidos" ya no se clasifica como
+   gasto). El capítulo 5 es el prontuario de agregados/deducciones a la RLI
+   (~60% del catálogo): no es un destino de Balance o resultado, y el
+   ranking por solapamiento léxico nunca puede resolver hacia él; sólo un
+   nombre exacto, alias/término curado o regla contable pueden hacerlo.
+4. **`sii_account_knowledge` conectado.** `MatchingResolutionContextFactoryService`
+   carga la tabla (hoy vacía) y el clasificador la antepone a la heurística
+   léxica cuando existe una fila para esa cuenta SII (familia, sección,
+   naturaleza, plazo, contracuenta, residualidad). Es aditivo y no cambia
+   nada mientras la tabla esté vacía; queda listo para el día en que se
+   cargue conocimiento curado.
+
+Sobre el mismo Balance de 134 cuentas, `ambiguous` bajó de 48 a 16 cuentas y
+el total que requiere revisión manual bajó de 62 a 40, sin cambiar ningún
+`confirmed_mapping`, `strong_candidate` ni `protected_tax_case` existente.
+
 ## Bloque 5: contexto productivo de solo lectura y evaluación shadow
 
 `MatchingResolutionContextFactoryService.create()` es el único adapter entre las

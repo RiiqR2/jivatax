@@ -62,7 +62,18 @@ describe("Bloque 8 - barreras de precisión", () => {
       catalogAccounts: catalog,
     });
     assert.equal(result.candidates[0]?.siiAccountId, "available");
-    assert.ok(result.warnings.includes("catalog_grouping_nodes_excluded"));
+    // The grouping node is excluded per-candidate (verified below), not with
+    // a blanket top-level warning attached to every account regardless of
+    // relevance.
+    const groupedEvaluation = compatibility.evaluateCatalog(
+      classifier.classify({ accountCode: "1", accountName: "Caja" }),
+      // The pipeline derives `isLeaf` from real parent/child relationships
+      // (see resolve()); this mirrors that derivation for the direct call.
+      { ...catalog[0], isLeaf: false },
+    );
+    assert.ok(
+      groupedEvaluation.exclusionReasons.includes("destination_grouping_node"),
+    );
   });
 
   it("token overlap sin evidencia contable no crea candidato", () => {

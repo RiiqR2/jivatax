@@ -12,16 +12,33 @@ import type {
 import type {
   AccountObservation,
   AccountObservationInput,
+  CatalogAccountKnowledge,
   ContraAccountType,
   SpecialTaxCategory,
 } from "./account-matching-pipeline.types";
 import { decimalValueState } from "./decimal-value";
 
+/**
+ * Only ever supplied by `AccountCompatibilityFilterService.evaluateCatalog`,
+ * which knows the input is a real, currently imported SII catalogue account.
+ * It must never be inferred from an arbitrary company ERP code.
+ */
+export interface ClassifyDestinationHints {
+  catalogHierarchySection?: ObservedAccountSection;
+  catalogKnowledge?: CatalogAccountKnowledge;
+}
+
 @Injectable()
 export class AccountObservationClassifierService {
-  classify(input: AccountObservationInput): AccountObservation;
+  classify(
+    input: AccountObservationInput,
+    hints?: ClassifyDestinationHints,
+  ): AccountObservation;
   classify(name: string): AccountObservation;
-  classify(value: AccountObservationInput | string): AccountObservation {
+  classify(
+    value: AccountObservationInput | string,
+    hints?: ClassifyDestinationHints,
+  ): AccountObservation {
     const input: AccountObservationInput =
       typeof value === "string"
         ? { accountCode: "", accountName: value }
@@ -34,9 +51,11 @@ export class AccountObservationClassifierService {
     const localContraFallback = /cuenta complementaria (?:de )?activo/.test(
       name,
     );
+    const knowledgeSection = hints?.catalogKnowledge?.statementSection;
     const explicitContra =
       (metadata.contraAccount && !/^deuda incobrable$/.test(name)) ||
-      localContraFallback;
+      localContraFallback ||
+      hints?.catalogKnowledge?.isContraAccount === true;
     const lexicalSection: ObservedAccountSection | undefined =
       /\bactivo\b/.test(name)
         ? "asset"
@@ -80,10 +99,11 @@ export class AccountObservationClassifierService {
     const metadataOverride = explicitContra
       ? accountFamily === "bad_debt_allowance"
         ? "contra_asset"
-        : metadata.statementSection === "liability"
+        : metadata.statementSection === "liability" ||
+            knowledgeSection === "liability"
           ? "contra_liability"
           : "contra_asset"
-      : metadata.statementSection === "equity"
+      : knowledgeSection === "equity" || metadata.statementSection === "equity"
         ? "equity"
         : undefined;
     const structurallyContradictory = sectionSignals.length > 1;
@@ -91,13 +111,23 @@ export class AccountObservationClassifierService {
       /impuesto.*diferido/.test(name) &&
       !/\b(?:activo|pasivo)\b/.test(name) &&
       structuralSection === "unknown";
+    // Curated knowledge and the stable SII chapter (1 = asset, 2.03 = equity,
+    // 2.* = liability) are structural facts about the destination account
+    // itself; they take precedence over a lexical guess from its own name
+    // (e.g. an asset named "Gastos Diferidos" must not read as an expense),
+    // but never over an explicit Balance column or contra/equity override.
+    const structuralOverrideSection: ObservedAccountSection | undefined =
+      knowledgeSection && knowledgeSection !== "unknown"
+        ? knowledgeSection
+        : hints?.catalogHierarchySection;
     const observedSection: ObservedAccountSection =
       metadataOverride ??
       (structurallyContradictory
         ? "unknown"
         : structuralSection !== "unknown"
           ? structuralSection
-          : (family?.section ??
+          : (structuralOverrideSection ??
+            family?.section ??
             lexicalSection ??
             (!deferredTaxWithoutDirection &&
             metadata.statementSection !== "unknown"
@@ -109,7 +139,11 @@ export class AccountObservationClassifierService {
           ? `contra_account:${metadata.contraAccount ? "accounting_metadata" : "explicit_local_fallback"}:${metadataOverride}`
           : `explicit_equity_metadata:${metadataOverride}`,
       );
-    } else if (structuralSection === "unknown" && family)
+    } else if (structuralSection === "unknown" && knowledgeSection)
+      evidence.push(`catalog_knowledge:${knowledgeSection}`);
+    else if (structuralSection === "unknown" && hints?.catalogHierarchySection)
+      evidence.push(`catalog_chapter:${hints.catalogHierarchySection}`);
+    else if (structuralSection === "unknown" && family)
       evidence.push(`v2_family:${accountFamily}`);
     else if (
       structuralSection === "unknown" &&
@@ -128,7 +162,9 @@ export class AccountObservationClassifierService {
       warnings,
     );
     let balanceNature: BalanceNature | "unknown";
-    if (explicitContra) balanceNature = metadata.expectedBalanceNature;
+    if (hints?.catalogKnowledge?.balanceNature)
+      balanceNature = hints.catalogKnowledge.balanceNature;
+    else if (explicitContra) balanceNature = metadata.expectedBalanceNature;
     else if (debitPositive && creditPositive) {
       balanceNature = "unknown";
       warnings.push("contradictory_balance_natures:debit,credit");
@@ -162,7 +198,12 @@ export class AccountObservationClassifierService {
       observedSection,
       balanceNature,
       accountFamily,
-      temporalClass: this.temporalClass(name),
+      temporalClass:
+        hints?.catalogKnowledge?.isCurrent == null
+          ? this.temporalClass(name)
+          : hints.catalogKnowledge.isCurrent
+            ? "current"
+            : "non_current",
       relationshipClass: /\brel\b|relacionad|intercompania/.test(name)
         ? "related_party"
         : "unknown",

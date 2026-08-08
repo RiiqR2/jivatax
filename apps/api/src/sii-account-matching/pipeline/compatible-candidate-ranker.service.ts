@@ -1,11 +1,15 @@
 import { Injectable } from "@nestjs/common";
-import { normalizeAccountTerm } from "../normalization/account-term-normalizer";
+import {
+  normalizeAccountTerm,
+  weightedTokenSimilarity,
+} from "../normalization/account-term-normalizer";
 import type {
   AccountObservation,
   PipelineCatalogAccount,
   SuggestionCandidate,
 } from "./account-matching-pipeline.types";
 import { AccountCompatibilityFilterService } from "./account-compatibility-filter.service";
+import { isTaxReconciliationChapter } from "../metadata/sii-catalog-hierarchy";
 
 @Injectable()
 export class CompatibleCandidateRankerService {
@@ -17,11 +21,16 @@ export class CompatibleCandidateRankerService {
     observation: AccountObservation,
     catalog: PipelineCatalogAccount[],
   ): SuggestionCandidate[] {
-    const observedTokens = new Set(
-      observation.normalizedName.split(" ").filter((token) => token.length > 2),
-    );
     return catalog
       .flatMap((account) => {
+        // The RLI tax-reconciliation schedule (~60% of the catalogue) is a
+        // different domain from a Balance/P&L account; lexical overlap alone
+        // must never resolve into it, only an exact name, curated term or
+        // accounting rule may.
+        if (isTaxReconciliationChapter(account.code)) return [];
+        // A destination explicitly curated as residual/catch-all ("Otros ...")
+        // is a last resort: only exact evidence should ever reach it.
+        if (account.knowledge?.isResidual) return [];
         const compatible = this.compatibility.evaluateCatalog(
           observation,
           account,
@@ -33,15 +42,15 @@ export class CompatibleCandidateRankerService {
           (item) => !item.startsWith("shared_specific_tokens:"),
         );
         if (structuralEvidence.length === 0) return [];
-        const destinationTokens = new Set(
-          normalizeAccountTerm(account.name).split(" "),
+        // Reuses the same weighted, stopword-free similarity as the
+        // productive ranking engine instead of a competing raw token count,
+        // so generic words ("por", "cuenta", "otros"...) never manufacture a
+        // false match on their own.
+        const score = weightedTokenSimilarity(
+          observation.normalizedName,
+          normalizeAccountTerm(account.name),
         );
-        const shared = [...observedTokens].filter((token) =>
-          destinationTokens.has(token),
-        ).length;
-        const score =
-          shared / Math.max(observedTokens.size, destinationTokens.size, 1);
-        if (score === 0) return [];
+        if (score <= 0) return [];
         return [
           {
             siiAccountId: account.id,

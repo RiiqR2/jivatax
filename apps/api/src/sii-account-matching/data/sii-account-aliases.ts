@@ -107,7 +107,11 @@ export const SII_ACCOUNT_ALIASES: readonly CuratedSiiAccountKnowledge[] = [
       { term: "honorarios diferidos", type: "alias", weight: 55 },
       { term: "gastos diferidos", type: "alias", weight: 60 },
       { term: "costos diferidos", type: "alias", weight: 55 },
-      { term: "intereses diferidos leasing", type: "negative_term", weight: -45 },
+      {
+        term: "intereses diferidos leasing",
+        type: "negative_term",
+        weight: -45,
+      },
     ],
   },
   {

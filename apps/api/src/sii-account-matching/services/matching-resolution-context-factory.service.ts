@@ -16,11 +16,13 @@ import { CompanyAccountEntity } from "../../company-account-plan/entities/compan
 import { CompanyAccountMappingStatus } from "../../company-account-plan/enums/company-account-plan.enums";
 import { CurrentSiiAccountCatalogService } from "../../sii-account-plan/services/current-sii-account-catalog.service";
 import type {
+  CatalogAccountKnowledge,
   CatalogTermEvidence,
   ConfirmedMappingEvidence,
   MatchingResolutionContext,
 } from "../pipeline/account-matching-pipeline.types";
 import { SiiAccountTermEntity } from "../entities/sii-account-term.entity";
+import { SiiAccountKnowledgeEntity } from "../entities/sii-account-knowledge.entity";
 
 export interface MatchingResolutionContextRequest {
   companyId: string;
@@ -99,7 +101,7 @@ export class MatchingResolutionContextFactoryService {
     const accountIds = snapshots.map((item) => item.companyAccountId);
     if (!accountIds.length) return [];
 
-    const [catalogAccounts, mappings, history, terms, accounts] =
+    const [catalogAccounts, mappings, history, terms, accounts, knowledge] =
       await Promise.all([
         this.currentCatalog.findAccounts(manager),
         manager.getRepository(CompanyAccountMappingEntity).find({
@@ -125,6 +127,9 @@ export class MatchingResolutionContextFactoryService {
           id: In(accountIds),
           companyId: input.companyId,
         }),
+        manager
+          .getRepository(SiiAccountKnowledgeEntity)
+          .findBy({ active: true }),
       ]);
     if (accounts.length !== new Set(accountIds).size)
       throw new NotFoundException(
@@ -159,6 +164,21 @@ export class MatchingResolutionContextFactoryService {
     const applicableTerms = terms.filter((term) =>
       currentIds.has(term.siiAccountId),
     );
+    const knowledgeByAccount = new Map<string, CatalogAccountKnowledge>(
+      knowledge
+        .filter((item) => currentIds.has(item.siiAccountId))
+        .map((item) => [
+          item.siiAccountId,
+          {
+            statementSection: item.statementSection,
+            balanceNature: item.balanceNature,
+            accountingFamily: item.accountingFamily,
+            isResidual: item.isResidual,
+            isContraAccount: item.isContraAccount,
+            isCurrent: item.isCurrent,
+          },
+        ]),
+    );
     const companyAliases = applicableTerms
       .filter(
         (term) =>
@@ -191,6 +211,7 @@ export class MatchingResolutionContextFactoryService {
           : null,
         level: item.level ?? undefined,
         isLeaf: !activeParentIds.has(item.id),
+        knowledge: knowledgeByAccount.get(item.id),
       })),
     };
     return snapshots.map((snapshot) => {
