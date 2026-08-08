@@ -168,9 +168,14 @@ Fuentes del contexto:
   demostrable. El `industryId` real de la empresa sí viaja en el contexto para
   cuando exista evidencia correctamente asociada;
 - `catalogAccounts`: exclusivamente `CurrentSiiAccountCatalogService`. Se conservan
-  `id`, código, nombre, padre y nivel. `sii_accounts` no contiene `active`,
-  `isLeaf` ni `mappable`, y el adapter deliberadamente los deja `undefined` en vez
-  de inferirlos desde el código o la estructura.
+  `id`, código, nombre, padre y nivel. Como `sii_accounts` no contiene `active`,
+  `isLeaf` ni `mappable`, v2 deriva `isLeaf` únicamente de las relaciones reales:
+  una cuenta referenciada como padre por otra cuenta del catálogo vigente es un
+  agrupador. El `level` disponible se deriva durante la importación y no demuestra
+  por sí solo que un nodo sin hijos sea agrupador; por eso no se usa como heurística
+  ni se infiere elegibilidad por el formato del código. Un agrupador sin hijos no
+  puede distinguirse de una hoja con el modelo actual y queda sin clasificación
+  adicional hasta que exista metadata explícita.
 
 La construcción normal requiere nueve operaciones de lectura (cuatro validaciones
 de contexto en paralelo, snapshot, y cuatro cargas de evidencia en paralelo; el

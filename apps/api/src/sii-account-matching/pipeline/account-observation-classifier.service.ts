@@ -87,6 +87,10 @@ export class AccountObservationClassifierService {
         ? "equity"
         : undefined;
     const structurallyContradictory = sectionSignals.length > 1;
+    const deferredTaxWithoutDirection =
+      /impuesto.*diferido/.test(name) &&
+      !/\b(?:activo|pasivo)\b/.test(name) &&
+      structuralSection === "unknown";
     const observedSection: ObservedAccountSection =
       metadataOverride ??
       (structurallyContradictory
@@ -95,7 +99,8 @@ export class AccountObservationClassifierService {
           ? structuralSection
           : (family?.section ??
             lexicalSection ??
-            (metadata.statementSection !== "unknown"
+            (!deferredTaxWithoutDirection &&
+            metadata.statementSection !== "unknown"
               ? metadata.statementSection
               : "unknown")));
     if (metadataOverride) {
@@ -157,10 +162,12 @@ export class AccountObservationClassifierService {
       observedSection,
       balanceNature,
       accountFamily,
-      temporalClass: metadata.term,
-      relationshipClass: /relacionad/.test(name) ? "related_party" : "unknown",
+      temporalClass: this.temporalClass(name),
+      relationshipClass: /\brel\b|relacionad|intercompania/.test(name)
+        ? "related_party"
+        : "unknown",
       contraAccountType,
-      specialTaxCategory: this.taxCategory(name),
+      specialTaxCategory: this.taxCategory(name, structuralSection),
       normalizedName: name,
       originalName,
       classificationEvidence: evidence,
@@ -185,14 +192,37 @@ export class AccountObservationClassifierService {
     return state === "positive";
   }
 
-  private taxCategory(name: string): SpecialTaxCategory {
+  private temporalClass(name: string): AccountObservation["temporalClass"] {
+    if (/\b(no corrientes?|largo plazo|nc|lp)\b/.test(name))
+      return "non_current";
+    if (/cuenta corriente/.test(name)) return undefined;
+    if (/\b(corto plazo|corrientes?)\b/.test(name)) return "current";
+    return undefined;
+  }
+
+  private taxCategory(
+    name: string,
+    structuralSection: ObservedAccountSection,
+  ): SpecialTaxCategory {
     if (/gasto.*rechazad/.test(name)) return "rejected_expense";
+    if (/perdida tributaria.*arrastre/.test(name))
+      return "tax_loss_carryforward";
     if (/donacion/.test(name)) return "donation";
     if (/gasto.*no documentad/.test(name)) return "undocumented_expense";
     if (/multa.*tributaria/.test(name)) return "tax_fine";
     if (/renta.*extranjera|ingreso.*extranjero/.test(name))
       return "foreign_income";
-    if (/impuesto.*diferido/.test(name)) return "deferred_tax";
+    if (/iva credito fiscal/.test(name)) return "vat_credit";
+    if (/iva debito fiscal/.test(name)) return "vat_debit";
+    if (/provision.*impuesto|impuesto.*provision/.test(name))
+      return "tax_provision";
+    if (/impuesto.*(?:renta|primera categoria)/.test(name)) return "income_tax";
+    if (/impuesto.*diferido/.test(name))
+      return /pasivo/.test(name) || structuralSection === "liability"
+        ? "deferred_tax_liability"
+        : /activo/.test(name) || structuralSection === "asset"
+          ? "deferred_tax_asset"
+          : "deferred_tax_unspecified";
     if (/parte.*relacionad|empresa.*relacionad/.test(name))
       return "related_party";
     return "none";

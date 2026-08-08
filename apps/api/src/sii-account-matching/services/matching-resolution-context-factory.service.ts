@@ -134,6 +134,11 @@ export class MatchingResolutionContextFactoryService {
     const parentCodes = new Map(
       catalogAccounts.map((item) => [item.id, item.code]),
     );
+    const activeParentIds = new Set(
+      catalogAccounts
+        .filter((item) => item.parentId)
+        .map((item) => item.parentId as string),
+    );
     const mappingsByAccount = new Map(
       mappings.map((item) => [item.companyAccountId, item]),
     );
@@ -185,6 +190,7 @@ export class MatchingResolutionContextFactoryService {
           ? (parentCodes.get(item.parentId) ?? null)
           : null,
         level: item.level ?? undefined,
+        isLeaf: !activeParentIds.has(item.id),
       })),
     };
     return snapshots.map((snapshot) => {

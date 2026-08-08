@@ -14,7 +14,14 @@ export type SpecialTaxCategory =
   | "undocumented_expense"
   | "tax_fine"
   | "foreign_income"
-  | "deferred_tax"
+  | "deferred_tax_asset"
+  | "deferred_tax_liability"
+  | "deferred_tax_unspecified"
+  | "vat_credit"
+  | "vat_debit"
+  | "income_tax"
+  | "tax_provision"
+  | "tax_loss_carryforward"
   | "related_party"
   | "none";
 

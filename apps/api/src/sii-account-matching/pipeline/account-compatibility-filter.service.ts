@@ -77,7 +77,7 @@ export class AccountCompatibilityFilterService {
         targetSection.replace("contra_", "");
       if (!sameBase) exclude("incompatible_statement_section");
       else evidence.push(`statement_section:${sourceSection}:${targetSection}`);
-    }
+    } else warnings.push("insufficient_compatibility_evidence");
 
     if (
       source.balanceNature !== "unknown" &&
@@ -97,6 +97,13 @@ export class AccountCompatibilityFilterService {
     )
       exclude("receivable_payable_direction_mismatch");
 
+    if (
+      source.accountFamily !== "unknown" &&
+      target.accountFamily !== "unknown" &&
+      source.accountFamily !== target.accountFamily
+    )
+      exclude("incompatible_account_family");
+
     const sourceSubfamily = this.financialSubfamily(source);
     const targetSubfamily = this.financialSubfamily(target);
     if (sourceSubfamily && targetSubfamily) {
@@ -105,8 +112,15 @@ export class AccountCompatibilityFilterService {
       else evidence.push(`financial_subfamily:${sourceSubfamily}`);
     }
 
-    if (
-      target.specialTaxCategory !== "none" &&
+    const deferredTaxDirectionUnspecified =
+      source.specialTaxCategory === "deferred_tax_unspecified" &&
+      (target.specialTaxCategory === "deferred_tax_asset" ||
+        target.specialTaxCategory === "deferred_tax_liability");
+    if (deferredTaxDirectionUnspecified)
+      warnings.push("deferred_tax_direction_unspecified");
+    else if (
+      (target.specialTaxCategory !== "none" ||
+        source.specialTaxCategory !== "none") &&
       source.specialTaxCategory !== target.specialTaxCategory
     )
       exclude("protected_tax_category_requires_explicit_evidence");
@@ -171,7 +185,11 @@ export class AccountCompatibilityFilterService {
   private direction(name: string): "receivable" | "payable" | undefined {
     if (/por cobrar|cobranza judicial|deudor|cliente/.test(name))
       return "receivable";
-    if (/por pagar|proveedor|obligacion|pasivo.*prestamo/.test(name))
+    if (
+      /por pagar|proveedor|obligacion|pasivo.*prestamo|pasivo financiero/.test(
+        name,
+      )
+    )
       return "payable";
     return undefined;
   }
