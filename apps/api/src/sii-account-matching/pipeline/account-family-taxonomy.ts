@@ -95,9 +95,43 @@ export const PIPELINE_ACCOUNT_FAMILIES = {
     section: "liability",
   },
   lease_liability: {
-    observed: /pasivo.*arrendamiento/,
+    observed: /pasivo.*arrendamiento|obligacion.*leasing/,
     metadataFamily: "financial_liabilities",
     section: "liability",
+  },
+  documents_payable: {
+    observed: /documentos?.*por pagar/,
+    destination: /documentos?.*por pagar/,
+    metadataFamily: "payables",
+    section: "liability",
+  },
+  prepaid: {
+    observed:
+      /(?:seguro|comision|gasto).*anticipad|gastos? pagados? por anticipado|honorarios? diferidos?/,
+    metadataFamily: "prepaid_expenses",
+    section: "asset",
+  },
+  lease_interest: {
+    observed:
+      /interes.*(?:leasing|arrendamiento)|intereses? diferidos?.*arrendamiento/,
+    metadataFamily: "financial_liabilities",
+    section: "expense",
+  },
+  financial_interest: {
+    observed: /interes.*(?:financier|hipotec|prestamo|intercompania)/,
+    metadataFamily: "expenses",
+    section: "expense",
+  },
+  professional_services: {
+    observed:
+      /honorario|auditoria|asesoria (?:legal|tributaria)|outsourcing|gastos? legales?/,
+    metadataFamily: "expenses",
+    section: "expense",
+  },
+  utilities: {
+    observed: /agua|electricidad|conectividad|gastos? comunes?/,
+    metadataFamily: "expenses",
+    section: "expense",
   },
   bad_debt_allowance: {
     observed:
@@ -125,10 +159,16 @@ const FAMILY_CLASSIFICATION_ORDER: Exclude<PipelineAccountFamily, "unknown">[] =
     "supplier_advance",
     "customer_advance",
     "loan_payable",
+    "documents_payable",
     "lease_liability",
     "bank_debt",
     "issued_capital",
     "loan_receivable",
+    "lease_interest",
+    "financial_interest",
+    "professional_services",
+    "utilities",
+    "prepaid",
     "notes_receivable",
     "trade_receivable",
     "guarantees_and_deposits",

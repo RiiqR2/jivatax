@@ -158,7 +158,9 @@ export class AccountObservationClassifierService {
       balanceNature,
       accountFamily,
       temporalClass: metadata.term,
-      relationshipClass: /relacionad/.test(name) ? "related_party" : "unknown",
+      relationshipClass: /\brel\b|relacionad|intercompania/.test(name)
+        ? "related_party"
+        : "unknown",
       contraAccountType,
       specialTaxCategory: this.taxCategory(name),
       normalizedName: name,
@@ -187,12 +189,24 @@ export class AccountObservationClassifierService {
 
   private taxCategory(name: string): SpecialTaxCategory {
     if (/gasto.*rechazad/.test(name)) return "rejected_expense";
+    if (/perdida tributaria.*arrastre/.test(name))
+      return "tax_loss_carryforward";
     if (/donacion/.test(name)) return "donation";
     if (/gasto.*no documentad/.test(name)) return "undocumented_expense";
     if (/multa.*tributaria/.test(name)) return "tax_fine";
     if (/renta.*extranjera|ingreso.*extranjero/.test(name))
       return "foreign_income";
-    if (/impuesto.*diferido/.test(name)) return "deferred_tax";
+    if (/iva credito fiscal/.test(name)) return "vat_credit";
+    if (/iva debito fiscal/.test(name)) return "vat_debit";
+    if (/provision.*impuesto|impuesto.*provision/.test(name))
+      return "tax_provision";
+    if (/impuesto.*(?:renta|primera categoria)/.test(name)) return "income_tax";
+    if (/impuesto.*diferido/.test(name))
+      return /pasivo/.test(name)
+        ? "deferred_tax_liability"
+        : /activo/.test(name)
+          ? "deferred_tax_asset"
+          : "deferred_tax_unspecified";
     if (/parte.*relacionad|empresa.*relacionad/.test(name))
       return "related_party";
     return "none";

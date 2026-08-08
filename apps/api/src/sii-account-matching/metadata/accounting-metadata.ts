@@ -36,6 +36,7 @@ const FAMILY_RULES: ReadonlyArray<[RegExp, string, StatementSection]> = [
     "expense",
   ],
   [/^ventas?$|ingreso|ganancia/, "income", "income"],
+  [/^resultado de explotacion/, "income", "income"],
   [/existencia|inventario|mercaderia/, "inventory", "asset"],
 ];
 
@@ -77,11 +78,11 @@ export function accountingMetadata(value: string): AccountingMetadata {
       statementSection === "income"
         ? "credit"
         : "debit",
-    term: /\b(no corriente|no-corriente|largo plazo|\bnc\b|\blp\b)\b/.test(name)
+    term: /\b(no corrientes?|largo plazo|nc|lp)\b/.test(name)
       ? "non_current"
       : /cuenta corriente/.test(name)
         ? undefined
-        : /\b(corto plazo|corriente)\b/.test(name)
+        : /\b(corto plazo|corrientes?)\b/.test(name)
           ? "current"
           : undefined,
     contraAccount,

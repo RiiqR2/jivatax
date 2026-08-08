@@ -32,6 +32,19 @@ export class SiiAccountMatchingPipelineService {
 
   /** Deterministic v2 entry point. It consumes injected data and has no persistence. */
   resolve(context: MatchingResolutionContext): MatchingResolutionResult {
+    const activeParentCodes = new Set(
+      context.catalogAccounts
+        .filter((account) => account.active !== false && account.parentCode)
+        .map((account) => account.parentCode as string),
+    );
+    const catalogAccounts = context.catalogAccounts.map((account) => ({
+      ...account,
+      // Real catalogue relationships take precedence over absent or stale flags.
+      isLeaf: activeParentCodes.has(account.code) ? false : account.isLeaf,
+    }));
+    const groupingWarnings = activeParentCodes.size
+      ? ["catalog_grouping_nodes_excluded"]
+      : [];
     const observation: AccountObservation =
       "normalizedName" in context.accountObservation
         ? context.accountObservation
@@ -43,14 +56,14 @@ export class SiiAccountMatchingPipelineService {
     if (applicableConfirmedMapping) {
       const current = this.confirmed.resolve(
         applicableConfirmedMapping,
-        context.catalogAccounts,
+        catalogAccounts,
       );
       if (current.length)
         return {
           decision: "strong",
           candidates: current,
           resolutionStatus: "resolved",
-          warnings: [],
+          warnings: groupingWarnings,
           autoConfirmed: false,
         };
       return {
@@ -71,21 +84,21 @@ export class SiiAccountMatchingPipelineService {
         observation,
         context.companyAccountId,
         context.historicalCompanyMappings,
-        context.catalogAccounts,
+        catalogAccounts,
       ),
       this.companyAlias.resolve(
         observation,
         context.companyAliases,
-        context.catalogAccounts,
+        catalogAccounts,
       ),
-      this.exact.resolve(observation, context.catalogAccounts),
+      this.exact.resolve(observation, catalogAccounts),
       this.catalogTerm.resolve(
         observation,
         context.catalogTerms,
-        context.catalogAccounts,
+        catalogAccounts,
       ),
-      this.rules.resolve(observation, context.catalogAccounts),
-      this.ranker.rank(observation, context.catalogAccounts),
+      this.rules.resolve(observation, catalogAccounts),
+      this.ranker.rank(observation, catalogAccounts),
     ];
     const candidates = levels.find((level) => level.length > 0) ?? [];
     const distinctDestinations = new Set(
@@ -104,7 +117,7 @@ export class SiiAccountMatchingPipelineService {
           : decision === "no_candidate"
             ? "no_candidate"
             : "resolved",
-      warnings: [],
+      warnings: groupingWarnings,
       autoConfirmed: false,
     };
   }

@@ -27,6 +27,12 @@ export class CompatibleCandidateRankerService {
           account,
         );
         if (!compatible.compatible) return [];
+        // Lexical overlap orders candidates; it never establishes accounting
+        // compatibility on its own.
+        const structuralEvidence = compatible.compatibilityEvidence.filter(
+          (item) => !item.startsWith("shared_specific_tokens:"),
+        );
+        if (structuralEvidence.length === 0) return [];
         const destinationTokens = new Set(
           normalizeAccountTerm(account.name).split(" "),
         );
@@ -43,8 +49,10 @@ export class CompatibleCandidateRankerService {
             siiName: account.name,
             resolutionType: "ranked" as const,
             recommendationLevel:
-              score >= 0.75 ? ("probable" as const) : ("weak" as const),
-            evidence: ["compatible_token_overlap"],
+              structuralEvidence.length > 1 && score >= 0.75
+                ? ("probable" as const)
+                : ("weak" as const),
+            evidence: ["compatible_token_overlap", ...structuralEvidence],
             warnings: compatible.warnings,
             technicalScore: score,
             technicalConfidence: score,
