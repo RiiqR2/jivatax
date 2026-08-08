@@ -80,4 +80,57 @@ describe("Bloque 8 - barreras de precisión", () => {
     });
     assert.equal(result.decision, "no_candidate");
   });
+
+  it("impuesto diferido sin dirección acepta destinos tributarios como inciertos", () => {
+    const source = classifier.classify("Impuestos diferidos");
+    assert.equal(source.specialTaxCategory, "deferred_tax_unspecified");
+    assert.equal(source.observedSection, "unknown");
+    for (const destination of [
+      "Activo por impuestos diferidos",
+      "Pasivo por impuestos diferidos",
+    ]) {
+      const result = compatibility.evaluate(
+        source,
+        classifier.classify(destination),
+      );
+      assert.equal(result.compatible, true);
+      assert.equal(result.compatibilityLevel, "uncertain");
+      assert.ok(result.warnings.includes("deferred_tax_direction_unspecified"));
+    }
+    assert.equal(
+      compatibility.evaluate(source, classifier.classify("Gastos Diferidos"))
+        .compatible,
+      false,
+    );
+  });
+
+  it("el Balance determina activo o pasivo por impuestos diferidos", () => {
+    const asset = classifier.classify({
+      accountCode: "tax-a",
+      accountName: "Impuestos diferidos",
+      assetAmount: "1",
+    });
+    const liability = classifier.classify({
+      accountCode: "tax-l",
+      accountName: "Impuestos diferidos",
+      liabilityAmount: "1",
+    });
+    assert.deepEqual(
+      [asset.observedSection, asset.specialTaxCategory],
+      ["asset", "deferred_tax_asset"],
+    );
+    assert.deepEqual(
+      [liability.observedSection, liability.specialTaxCategory],
+      ["liability", "deferred_tax_liability"],
+    );
+  });
+
+  it("mantiene separadas las categorías protegidas de IVA", () => {
+    const credit = classifier.classify("IVA Crédito Fiscal");
+    const debit = classifier.classify("IVA Débito Fiscal");
+    assert.equal(compatibility.evaluate(credit, credit).compatible, true);
+    assert.equal(compatibility.evaluate(debit, debit).compatible, true);
+    assert.equal(compatibility.evaluate(credit, debit).compatible, false);
+    assert.equal(compatibility.evaluate(debit, credit).compatible, false);
+  });
 });

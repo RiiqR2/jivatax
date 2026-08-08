@@ -84,6 +84,11 @@ export const PIPELINE_ACCOUNT_FAMILIES = {
     metadataFamily: "equity",
     section: "equity",
   },
+  operating_result: {
+    observed: /^resultado de explotacion/,
+    metadataFamily: "income",
+    section: "income",
+  },
   loan_receivable: {
     observed: /prestamo.*por cobrar/,
     metadataFamily: "receivables",
@@ -163,6 +168,7 @@ const FAMILY_CLASSIFICATION_ORDER: Exclude<PipelineAccountFamily, "unknown">[] =
     "lease_liability",
     "bank_debt",
     "issued_capital",
+    "operating_result",
     "loan_receivable",
     "lease_interest",
     "financial_interest",

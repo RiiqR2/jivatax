@@ -112,7 +112,13 @@ export class AccountCompatibilityFilterService {
       else evidence.push(`financial_subfamily:${sourceSubfamily}`);
     }
 
-    if (
+    const deferredTaxDirectionUnspecified =
+      source.specialTaxCategory === "deferred_tax_unspecified" &&
+      (target.specialTaxCategory === "deferred_tax_asset" ||
+        target.specialTaxCategory === "deferred_tax_liability");
+    if (deferredTaxDirectionUnspecified)
+      warnings.push("deferred_tax_direction_unspecified");
+    else if (
       (target.specialTaxCategory !== "none" ||
         source.specialTaxCategory !== "none") &&
       source.specialTaxCategory !== target.specialTaxCategory
