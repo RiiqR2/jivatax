@@ -19,6 +19,16 @@ export function catalogChapterSection(
 }
 
 /**
+ * Chapter 3 is the income statement (Resultado). It mixes income and expense
+ * lines, so the chapter alone cannot pick a section, but it is never a
+ * Balance sheet destination: a P&L name that happens to mention "activo fijo"
+ * must not be classified as an asset just from that embedded phrase.
+ */
+export function isResultChapter(code: string): boolean {
+  return code.startsWith("3.");
+}
+
+/**
  * Chapter 5 is the RLI tax-reconciliation schedule (additions/deductions to
  * taxable income, e.g. "Otros agregados al resultado tributario por
  * inventarios"). It is not a Balance or income-statement destination: it
@@ -28,4 +38,24 @@ export function catalogChapterSection(
  */
 export function isTaxReconciliationChapter(code: string): boolean {
   return code.startsWith("5.");
+}
+
+/**
+ * Balance-sheet catch-all / residual catalogue lines ("Otros activos
+ * corrientes", "Otros pasivos NO Corrientes"...). Income-statement lines that
+ * legitimately start with "Otros ingresos/gastos" are NOT residual: those are
+ * real destinations. Without curated knowledge the official name itself is
+ * enough to keep these Balance catch-alls out of ranked overlap.
+ */
+export function isResidualCatalogName(name: string): boolean {
+  return /^(?:otros|otras)\s+(?:activos?|pasivos?)\b/.test(
+    name.trim().toLocaleLowerCase("es-CL"),
+  );
+}
+
+/**
+ * Off-balance / memo order accounts are not ordinary Balance destinations.
+ */
+export function isOrderCatalogName(name: string): boolean {
+  return /cuentas? de orden/.test(name.trim().toLocaleLowerCase("es-CL"));
 }

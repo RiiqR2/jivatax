@@ -25,6 +25,8 @@ import { decimalValueState } from "./decimal-value";
  */
 export interface ClassifyDestinationHints {
   catalogHierarchySection?: ObservedAccountSection;
+  /** True when the destination code belongs to the Resultado chapter (3.*). */
+  catalogResultChapter?: boolean;
   catalogKnowledge?: CatalogAccountKnowledge;
 }
 
@@ -56,16 +58,26 @@ export class AccountObservationClassifierService {
       (metadata.contraAccount && !/^deuda incobrable$/.test(name)) ||
       localContraFallback ||
       hints?.catalogKnowledge?.isContraAccount === true;
+    // Resultado (chapter 3) lines often embed Balance vocabulary ("activo
+    // fijo", "pasivo...") inside a P&L caption. Those words must not invent
+    // a Balance section for the destination; only explicit income/expense
+    // openings (or knowledge) may classify the line.
     const lexicalSection: ObservedAccountSection | undefined =
-      /\bactivo\b/.test(name)
-        ? "asset"
-        : /\bpasivo\b/.test(name)
-          ? "liability"
-          : /^(?:ingreso|renta|venta)\b/.test(name)
-            ? "income"
-            : /^(?:gasto|costo)\b/.test(name)
-              ? "expense"
-              : undefined;
+      hints?.catalogResultChapter
+        ? /^(?:ingreso|renta|venta|resultado)\b/.test(name)
+          ? "income"
+          : /^(?:gasto|costo|perdida)\b/.test(name)
+            ? "expense"
+            : undefined
+        : /\bactivo\b/.test(name)
+          ? "asset"
+          : /\bpasivo\b/.test(name)
+            ? "liability"
+            : /^(?:ingreso|renta|venta)\b/.test(name)
+              ? "income"
+              : /^(?:gasto|costo)\b/.test(name)
+                ? "expense"
+                : undefined;
     const accountFamily = classifyPipelineAccountFamily(name);
     const family =
       accountFamily === "unknown"
@@ -116,6 +128,12 @@ export class AccountObservationClassifierService {
     // itself; they take precedence over a lexical guess from its own name
     // (e.g. an asset named "Gastos Diferidos" must not read as an expense),
     // but never over an explicit Balance column or contra/equity override.
+    // For Resultado (chapter 3), Balance-sheet metadata inferred from embedded
+    // words like "activo fijo" must not override income/expense lexical cues.
+    const metadataSectionUsable =
+      !hints?.catalogResultChapter ||
+      metadata.statementSection === "income" ||
+      metadata.statementSection === "expense";
     const structuralOverrideSection: ObservedAccountSection | undefined =
       knowledgeSection && knowledgeSection !== "unknown"
         ? knowledgeSection
@@ -130,7 +148,8 @@ export class AccountObservationClassifierService {
             family?.section ??
             lexicalSection ??
             (!deferredTaxWithoutDirection &&
-            metadata.statementSection !== "unknown"
+            metadata.statementSection !== "unknown" &&
+            metadataSectionUsable
               ? metadata.statementSection
               : "unknown")));
     if (metadataOverride) {
@@ -147,7 +166,8 @@ export class AccountObservationClassifierService {
       evidence.push(`v2_family:${accountFamily}`);
     else if (
       structuralSection === "unknown" &&
-      metadata.statementSection !== "unknown"
+      metadata.statementSection !== "unknown" &&
+      metadataSectionUsable
     )
       evidence.push(`accounting_metadata:${metadata.statementSection}`);
 
