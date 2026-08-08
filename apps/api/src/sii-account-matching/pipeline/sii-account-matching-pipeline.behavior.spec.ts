@@ -276,15 +276,14 @@ describe("nuevo pipeline de homologación - comportamiento del dominio", () => {
         true,
       ));
 
-  it("una fuente relacionada frente a destino sin relación queda incierta", () => {
+  it("una fuente relacionada frente a destino sin relación se excluye", () => {
     const result = compatibility.evaluate(
       classifier.classify("Cuenta por cobrar relacionada"),
       classifier.classify("Cuenta por cobrar"),
     );
-    assert.equal(result.compatible, true);
-    assert.equal(result.compatibilityLevel, "uncertain");
+    assert.equal(result.compatible, false);
     assert.ok(
-      result.warnings.includes(
+      result.exclusionReasons.includes(
         "related_source_destination_relation_unspecified",
       ),
     );

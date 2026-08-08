@@ -28,7 +28,7 @@ export const PIPELINE_ACCOUNT_FAMILIES = {
     section: "asset",
   },
   financial_investments: {
-    observed: /inversion(?:es)? financiera/,
+    observed: /fondos? mutuos?|inversion(?:es)? financiera/,
     metadataFamily: "investments",
     section: "asset",
   },

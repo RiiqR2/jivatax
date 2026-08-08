@@ -175,6 +175,20 @@ Sobre el mismo Balance de 134 cuentas, `ambiguous` bajó de 48 a 16 cuentas y
 el total que requiere revisión manual bajó de 62 a 40, sin cambiar ningún
 `confirmed_mapping`, `strong_candidate` ni `protected_tax_case` existente.
 
+## Bloque 10: contención de falsos positivos residuales
+
+Tras el Bloque 9, el ranking seguía produciendo winners débiles absurdos
+cuando sección/naturaleza bastaban como “evidencia” y el solapamiento léxico
+era una sola palabra genérica (“fondo”, “deudores”, “fijo”). Cambios mínimos:
+
+1. El ranking exige evidencia semántica real (tokens específicos compartidos,
+   familia o subfamilia financiera), no sólo sección/naturaleza.
+2. Subfamilias más finas (judicial vs leasing vs trade; préstamos empleados;
+   loan payable vs trade payables; fondos mutuos vs opción de compra leasing).
+3. Related-party fuente → destino no relacionado pasa a exclusión.
+4. Residuales Balance “Otros activos/pasivos…” y cuentas de orden fuera del
+   ranking; capítulo 3 ya no hereda sección de Balance por palabras embebidas.
+
 ## Bloque 5: contexto productivo de solo lectura y evaluación shadow
 
 `MatchingResolutionContextFactoryService.create()` es el único adapter entre las

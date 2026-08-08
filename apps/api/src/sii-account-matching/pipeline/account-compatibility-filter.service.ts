@@ -5,18 +5,27 @@ import type {
   PipelineCatalogAccount,
 } from "./account-matching-pipeline.types";
 import { AccountObservationClassifierService } from "./account-observation-classifier.service";
-import { catalogChapterSection } from "../metadata/sii-catalog-hierarchy";
+import {
+  catalogChapterSection,
+  isResultChapter,
+} from "../metadata/sii-catalog-hierarchy";
 
 type FinancialSubfamily =
   | "cash_and_bank"
   | "marketable_securities"
   | "trade_receivables"
+  | "judicial_receivables"
+  | "lease_receivables"
   | "notes_receivable"
   | "loan_receivable"
+  | "employee_loans"
+  | "loan_payable"
+  | "trade_payables"
   | "guarantees_and_deposits"
   | "financial_investments"
   | "lease_assets"
-  | "lease_liabilities";
+  | "lease_liabilities"
+  | "lease_purchase_option";
 
 @Injectable()
 export class AccountCompatibilityFilterService {
@@ -42,6 +51,7 @@ export class AccountCompatibilityFilterService {
         },
         {
           catalogHierarchySection: catalogChapterSection(destination.code),
+          catalogResultChapter: isResultChapter(destination.code),
           catalogKnowledge: destination.knowledge,
         },
       ),
@@ -106,10 +116,12 @@ export class AccountCompatibilityFilterService {
 
     if (
       source.accountFamily !== "unknown" &&
-      target.accountFamily !== "unknown" &&
-      source.accountFamily !== target.accountFamily
-    )
-      exclude("incompatible_account_family");
+      target.accountFamily !== "unknown"
+    ) {
+      if (source.accountFamily !== target.accountFamily)
+        exclude("incompatible_account_family");
+      else evidence.push(`account_family:${source.accountFamily}`);
+    }
 
     const sourceSubfamily = this.financialSubfamily(source);
     const targetSubfamily = this.financialSubfamily(target);
@@ -139,11 +151,14 @@ export class AccountCompatibilityFilterService {
       source.relationshipClass !== "related_party"
     )
       exclude("related_party_requires_explicit_evidence");
+    // A related-party source must not resolve into an ordinary third-party
+    // destination by lexical overlap alone; prefer no_candidate over a
+    // generic "Cuentas por pagar" / "Otros activos" catch-all.
     if (
       source.relationshipClass === "related_party" &&
       target.relationshipClass !== "related_party"
     )
-      warnings.push("related_source_destination_relation_unspecified");
+      exclude("related_source_destination_relation_unspecified");
 
     if (this.isBridge(source.normalizedName)) {
       if (!this.isBridge(target.normalizedName))
@@ -208,29 +223,52 @@ export class AccountCompatibilityFilterService {
     // Loans (and their interest) are receivables, never marketable securities
     // without explicit negotiable-instrument language.
     if (
+      /anticipo(?:s)? y prestamos? a|prestamos? a (?:los )?empleados/.test(
+        name,
+      )
+    )
+      return "employee_loans";
+    if (
       /prestamos?.*por cobrar|intereses?.*(?:de |por )?prestamos?.*por cobrar/.test(
         name,
       ) &&
       !/instrumentos? negociables?|valores? negociables?/.test(name)
     )
       return "loan_receivable";
+    if (/prestamos?.*por pagar|intereses?.*prestamos?.*por pagar/.test(name))
+      return "loan_payable";
     if (/valores? negociables?|instrumentos? negociables?/.test(name))
       return "marketable_securities";
+    if (/fondos? mutuos?/.test(name)) return "financial_investments";
+    if (/fondo opcion de compra|opcion de compra.*(?:leasing|arrendamiento)/.test(
+      name,
+    ))
+      return "lease_purchase_option";
+    if (/deudores?.*leasing|leasing.*deudor/.test(name))
+      return "lease_receivables";
+    // Judicial collection is a distinct trade-receivable flavour; it must not
+    // collapse into generic "Deudores varios" / "Deudores a largo plazo" just
+    // because both sit under the broad receivables umbrella.
+    if (/deudores?.*cobranza judicial|cobranza judicial/.test(name))
+      return "judicial_receivables";
     if (
-      /cheques?.*por cobrar|deudores?.*cobranza judicial|cuentas?.*por cobrar/.test(
+      /cheques?.*por cobrar|cuentas?.*por cobrar|deudores? por venta|deudores? varios|deudores? a largo plazo/.test(
         name,
       )
     )
       return "trade_receivables";
     if (/pagare.*por cobrar|documentos?.*por cobrar/.test(name))
       return "notes_receivable";
-    if (/garantia|deposito.*garantia/.test(name))
+    if (/cuentas? por pagar|proveedores? por pagar/.test(name))
+      return "trade_payables";
+    if (/garantia|deposito.*garantia|fondo(?:s)? de garantias?/.test(name))
       return "guarantees_and_deposits";
     if (/inversion(?:es)? financiera/.test(name))
       return "financial_investments";
     if (/derecho de uso|activo.*arrendamiento/.test(name))
       return "lease_assets";
-    if (/pasivo.*arrendamiento/.test(name)) return "lease_liabilities";
+    if (/pasivo.*arrendamiento|obligacion.*leasing/.test(name))
+      return "lease_liabilities";
     if (/caja|banco|disponible|efectivo/.test(name)) return "cash_and_bank";
     return undefined;
   }
@@ -247,16 +285,34 @@ export class AccountCompatibilityFilterService {
       "ingresos",
       "pago",
       "pagos",
+      "pagar",
+      "cobrar",
       "credito",
       "interes",
+      "intereses",
       "fondo",
+      "fondos",
+      "deudor",
+      "deudores",
+      "prestamo",
+      "prestamos",
       "corriente",
+      "corrientes",
       "provision",
+      "provisiones",
       "transito",
       "comercial",
       "comun",
       "cuenta",
       "cuentas",
+      "activo",
+      "activos",
+      "pasivo",
+      "pasivos",
+      "fijo",
+      "fijos",
+      "explotacion",
+      "resultado",
       "por",
       "para",
       "del",

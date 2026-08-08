@@ -9,7 +9,11 @@ import type {
   SuggestionCandidate,
 } from "./account-matching-pipeline.types";
 import { AccountCompatibilityFilterService } from "./account-compatibility-filter.service";
-import { isTaxReconciliationChapter } from "../metadata/sii-catalog-hierarchy";
+import {
+  isOrderCatalogName,
+  isResidualCatalogName,
+  isTaxReconciliationChapter,
+} from "../metadata/sii-catalog-hierarchy";
 
 @Injectable()
 export class CompatibleCandidateRankerService {
@@ -28,20 +32,47 @@ export class CompatibleCandidateRankerService {
         // must never resolve into it, only an exact name, curated term or
         // accounting rule may.
         if (isTaxReconciliationChapter(account.code)) return [];
-        // A destination explicitly curated as residual/catch-all ("Otros ...")
-        // is a last resort: only exact evidence should ever reach it.
-        if (account.knowledge?.isResidual) return [];
+        // Residual catch-alls and memo/order accounts are last-resort
+        // destinations: only exact evidence (earlier pipeline layers) may
+        // reach them, never ranked token overlap.
+        if (
+          account.knowledge?.isResidual ||
+          isResidualCatalogName(account.name) ||
+          isOrderCatalogName(account.name)
+        )
+          return [];
         const compatible = this.compatibility.evaluateCatalog(
           observation,
           account,
         );
         if (!compatible.compatible) return [];
-        // Lexical overlap orders candidates; it never establishes accounting
-        // compatibility on its own.
+        // Section/nature alone are compatibility gates, not semantic proof.
+        // Ranking requires shared specific tokens, a matched family or a
+        // matched financial subfamily — otherwise prefer no_candidate.
+        const semanticEvidence = compatible.compatibilityEvidence.filter(
+          (item) =>
+            item.startsWith("shared_specific_tokens:") ||
+            item.startsWith("financial_subfamily:") ||
+            item.startsWith("account_family:"),
+        );
+        if (semanticEvidence.length === 0) return [];
+        // Token overlap without any accounting compatibility signal still
+        // must not invent a candidate (e.g. two unrelated names that share
+        // one rare word while both sections are unknown).
+        const accountingEvidence = compatible.compatibilityEvidence.filter(
+          (item) =>
+            item.startsWith("statement_section:") ||
+            item.startsWith("balance_nature:") ||
+            item.startsWith("temporal_class:") ||
+            item.startsWith("financial_subfamily:") ||
+            item.startsWith("account_family:") ||
+            item.startsWith("protected_tax_category:") ||
+            item === "exact_normalized_name",
+        );
+        if (accountingEvidence.length === 0) return [];
         const structuralEvidence = compatible.compatibilityEvidence.filter(
           (item) => !item.startsWith("shared_specific_tokens:"),
         );
-        if (structuralEvidence.length === 0) return [];
         // Reuses the same weighted, stopword-free similarity as the
         // productive ranking engine instead of a competing raw token count,
         // so generic words ("por", "cuenta", "otros"...) never manufacture a
@@ -61,7 +92,13 @@ export class CompatibleCandidateRankerService {
               structuralEvidence.length > 1 && score >= 0.75
                 ? ("probable" as const)
                 : ("weak" as const),
-            evidence: ["compatible_token_overlap", ...structuralEvidence],
+            evidence: [
+              "compatible_token_overlap",
+              ...semanticEvidence,
+              ...structuralEvidence.filter(
+                (item) => !semanticEvidence.includes(item),
+              ),
+            ],
             warnings: compatible.warnings,
             technicalScore: score,
             technicalConfidence: score,
