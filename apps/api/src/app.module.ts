@@ -14,6 +14,7 @@ import { CompanyUsersModule } from "./company-users/company-users.module";
 import { AccountingModule } from "./accounting/accounting.module";
 import { SiiAccountMatchingModule } from "./sii-account-matching/sii-account-matching.module";
 import { IndustriesModule } from "./industries/industries.module";
+import { TaxWorkPapersModule } from "./tax-work-papers/tax-work-papers.module";
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { IndustriesModule } from "./industries/industries.module";
     AccountingModule,
     SiiAccountMatchingModule,
     IndustriesModule,
+    TaxWorkPapersModule,
   ],
   controllers: [AppController],
 })

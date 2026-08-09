@@ -27,6 +27,13 @@ import { IndustryEntity } from "../industries/entities/industry.entity";
 import { AccountMatchingConfirmationEntity } from "../sii-account-matching/entities/account-matching-confirmation.entity";
 import { AccountMatchingLearningIndustryEntity } from "../sii-account-matching/entities/account-matching-learning-industry.entity";
 import { AccountMatchingDiagnosticEntity } from "../sii-account-matching/entities/account-matching-diagnostic.entity";
+import { WorkPaperDefinitionEntity } from "../tax-work-papers/entities/work-paper-definition.entity";
+import { WorkPaperApplicabilityEntity } from "../tax-work-papers/entities/work-paper-applicability.entity";
+import { WorkPaperExecutionEntity } from "../tax-work-papers/entities/work-paper-execution.entity";
+import { WorkPaperInputEntity } from "../tax-work-papers/entities/work-paper-input.entity";
+import { WorkPaperEvidenceEntity } from "../tax-work-papers/entities/work-paper-evidence.entity";
+import { WorkPaperDependencyEntity } from "../tax-work-papers/entities/work-paper-dependency.entity";
+import { TaxAdjustmentEntity } from "../tax-work-papers/entities/tax-adjustment.entity";
 
 loadEnv({ path: "../../.env" });
 
@@ -64,6 +71,13 @@ export default new DataSource({
     AccountMatchingLearningIndustryEntity,
     IndustryEntity,
     AccountMatchingDiagnosticEntity,
+    WorkPaperDefinitionEntity,
+    WorkPaperApplicabilityEntity,
+    WorkPaperExecutionEntity,
+    WorkPaperInputEntity,
+    WorkPaperEvidenceEntity,
+    WorkPaperDependencyEntity,
+    TaxAdjustmentEntity,
   ],
   migrations: ["src/database/migrations/*.ts"],
   synchronize: false,
