@@ -20,6 +20,7 @@ export interface CalculationInput {
   evidence?: CalculationEvidence[];
 }
 export interface ReconciliationResult {
+  key: string;
   calculatedAmount: string;
   reportedAmount: string;
   difference: string;
@@ -32,7 +33,7 @@ export interface CalculationTaxAdjustment {
   type: TaxAdjustmentType;
   amount: string;
   description: string;
-  differenceNature?: TaxDifferenceNature;
+  differenceNature?: TaxDifferenceNature | null;
   ruleKey: string;
   evidence?: CalculationEvidence[];
 }
@@ -47,7 +48,9 @@ export interface CalculationContext {
 export interface CalculationResult {
   inputsUsed: CalculationInput[];
   calculatedValues: Record<string, string | number | boolean | null>;
+  /** @deprecated use reconciliations; retained for older calculators/clients. */
   reconciliation?: ReconciliationResult;
+  reconciliations: ReconciliationResult[];
   warnings: string[];
   missingInputs: string[];
   taxAdjustments: CalculationTaxAdjustment[];

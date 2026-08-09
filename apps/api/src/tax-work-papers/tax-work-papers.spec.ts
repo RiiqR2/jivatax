@@ -11,6 +11,7 @@ import { WorkPaperApplicabilityEntity } from "./entities/work-paper-applicabilit
 import { WorkPaperDefinitionEntity } from "./entities/work-paper-definition.entity";
 import { WorkPaperDependencyEntity } from "./entities/work-paper-dependency.entity";
 import { WorkPaperExecutionEntity } from "./entities/work-paper-execution.entity";
+import { TaxWorkPapersService } from "./tax-work-papers.service";
 
 describe("tax work paper framework", () => {
   it("versions definitions and execution revisions with composite uniqueness", () => {
@@ -39,7 +40,7 @@ describe("tax work paper framework", () => {
       )
       .map((column) => column.propertyName);
     assert.deepEqual(
-      ["definitionId", "siiAccountId", "roleKey"].every((key) =>
+      ["definitionId", "siiAccountCode", "roleKey"].every((key) =>
         columns.includes(key),
       ),
       true,
@@ -124,6 +125,7 @@ describe("tax work paper framework", () => {
       calculate: async () => ({
         inputsUsed: [],
         calculatedValues: {},
+        reconciliations: [],
         warnings: [],
         missingInputs: [],
         taxAdjustments: [],
@@ -133,5 +135,71 @@ describe("tax work paper framework", () => {
     registry.register(calculator);
     assert.equal(registry.get("A.17", 1), calculator);
     assert.throws(() => registry.register(calculator), /already registered/);
+  });
+  it("A.17 orchestration enforces tenant, paper version, draft state and revision history", () => {
+    const service = readFileSync(
+      "src/tax-work-papers/tax-work-papers.service.ts",
+      "utf8",
+    );
+    const calculation = service.slice(service.indexOf("async calculateA17"));
+    assert.match(calculation, /id: executionId, companyId, taxPeriodId/);
+    assert.match(calculation, /execution\.definition\.code !== "A\.17"/);
+    assert.match(calculation, /execution\.definition\.version !== 1/);
+    assert.match(
+      calculation,
+      /execution\.status !== WorkPaperExecutionStatus\.DRAFT/,
+    );
+    assert.match(calculation, /WorkPaperRecordStatus\.VOID/);
+    assert.match(calculation, /nextInputRevision/);
+    assert.match(calculation, /nextAdjustmentRevision/);
+    assert.doesNotMatch(calculation, /company_account_mappings (SET|DELETE)/i);
+    assert.doesNotMatch(calculation, /\.delete\(|\.remove\(/);
+  });
+  it("applicability uses stable SII code and resolves the active catalog UUID at runtime", () => {
+    const migration = readFileSync(
+      "src/database/migrations/1785044000000-stabilize-work-paper-applicability.ts",
+      "utf8",
+    );
+    const service = readFileSync(
+      "src/tax-work-papers/tax-work-papers.service.ts",
+      "utf8",
+    );
+    assert.match(migration, /sii_account_code/);
+    assert.match(migration, /SET a\.sii_account_code=s\.code/);
+    assert.match(service, /sii\.code = a\.sii_account_code/);
+    assert.match(service, /mappedSii\.code = a\.sii_account_code/);
+    assert.match(service, /SiiAccountPlanVersionStatus\.ACTIVE/);
+    assert.doesNotMatch(service, /sii\.name\s*=/);
+  });
+  it("separates current evidence from preserved VOID history", async () => {
+    const rows = [
+      { id: "current", inputId: "input-current", adjustmentId: null },
+      { id: "old-input", inputId: "input-void", adjustmentId: null },
+      { id: "old-adjustment", inputId: null, adjustmentId: "adjustment-void" },
+    ];
+    const manager = {
+      getRepository: () => ({ findBy: async () => rows }),
+    };
+    const result = await (
+      TaxWorkPapersService.prototype as unknown as {
+        resolveExecutionEvidence: (...args: unknown[]) => Promise<{
+          activeEvidence: typeof rows;
+          historicalEvidence: typeof rows;
+        }>;
+      }
+    ).resolveExecutionEvidence(
+      manager,
+      "execution",
+      [{ id: "input-current" }],
+      [],
+    );
+    assert.deepEqual(
+      result.activeEvidence.map((item) => item.id),
+      ["current"],
+    );
+    assert.deepEqual(
+      result.historicalEvidence.map((item) => item.id),
+      ["old-input", "old-adjustment"],
+    );
   });
 });

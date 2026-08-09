@@ -1,5 +1,23 @@
 # Papeles de Trabajo Tributarios
 
+## A.17@1 — Obligación en Leasing
+
+Primer vertical ejecutable del framework, desde la perspectiva del arrendatario. Sus roles soportados son `LEASE_LIABILITY` y `DEFERRED_LEASE_INTEREST`; `LEASE_INTEREST_EXPENSE` y `LEASE_REMEASUREMENT` quedan sin asociación hasta que la matriz curada entregue códigos inequívocos. La applicability conserva el **código SII estable** y en runtime lo resuelve contra el UUID de la cuenta de la versión activa. Por ello, un cambio de UUID o nombre del catálogo no altera la detección. No se cargan asociaciones por nombre: los códigos A.17 deben provenir de la matriz externa validada. La detección sigue limitada a homologaciones `CONFIRMED`: no crea ejecuciones, no confirma ni altera mappings y no calcula.
+
+Inputs estables: `LEASE_LIABILITY_OPENING`, `LEASE_LIABILITY_CLOSING`, `DEFERRED_INTEREST_OPENING`, `DEFERRED_INTEREST_CLOSING`, `NEW_LEASE_CONTRACTS`, `LEASE_PAYMENTS`, `LEASE_MONETARY_CORRECTION`, `LEASE_REMEASUREMENTS`, `OTHER_LEASE_MOVEMENTS`, `NEW_DEFERRED_INTEREST`, `DEFERRED_INTEREST_MONETARY_CORRECTION`, `DEFERRED_INTEREST_REMEASUREMENTS`, `OTHER_DEFERRED_INTEREST_MOVEMENTS` y `DEFERRED_INTEREST_AMORTIZATION`. Pagos y amortización son magnitudes no negativas; las correcciones, remediciones y otros movimientos conservan signo.
+
+La obligación se calcula como apertura + contratos nuevos + corrección monetaria + remediciones + otros movimientos − pagos. El interés diferido se calcula como apertura + nuevo interés diferido + corrección monetaria + remediciones + otros movimientos − amortización. Ningún componente faltante se presume cero. Se entregan conciliaciones independientes contra los cierres reportados, con diferencia explícita, tolerancia cero y warning al no cuadrar.
+
+El cierre de obligación e interés diferido se resuelve automáticamente desde cuentas internas con mapping confirmado y el Balance de cierre vigente publicado en `tax_period_company_accounts`; se congelan cuenta, documento, rol y monto. Aperturas y movimientos del período son manuales/auxiliares por ahora: no se clasifican glosas del Mayor y no se inventa el período anterior. Un input manual puede corregir explícitamente un cierre automático y queda trazado al usuario.
+
+Con evidencia e importe no cero se proponen —siempre en estado draft— ajustes RLI por corrección, amortización y cuotas, y ajustes CPT por interés diferido y obligación. Se conserva la dirección económica: una corrección negativa invierte el tipo direccional y no se oculta con valor absoluto. La naturaleza queda `null`, especialmente para CPT, hasta revisión profesional. El contador debe validar procedencia, deducibilidad, dirección y naturaleza tributaria según contrato y régimen; A.17 no genera F22.
+
+`POST /companies/:companyId/tax-periods/:taxPeriodId/work-papers/executions/:executionId/calculate` calcula/recalcula únicamente un draft A.17@1. `GET` sobre esa misma ejecución devuelve snapshot, inputs, faltantes, conciliaciones, warnings, evidencia vigente, `historicalEvidence` y ajustes. El recálculo anula registros draft anteriores y crea una nueva revisión sin borrar historia. Una futura acción común de finalización deberá rechazar ejecuciones con required `missingInputs`, reconciliaciones no resueltas o `requiresProfessionalReview` vigente; calcular nunca equivale a finalizar. A futuro podrá consumir movimientos normalizados del Mayor y referenciar A.5/A.5.1 para impuestos diferidos, sin convertir esa dependencia en requisito.
+
+La matriz completa A.1–A.20 podrá importarse como filas `(definition, siiAccountCode, roleKey, rationale)` sin cambiar la arquitectura ni depender de UUIDs del catálogo. Esta entrega no importa esa matriz ni agrega applicabilities de otros papeles.
+
+Limitación: sin el Excel original no se han reconstruido criterios, porcentajes ni campos adicionales. Comparar contra la plantilla requiere el archivo/versionado, instrucciones tributarias, contratos, auxiliares de cuotas, detalle de interés y reajustes, saldos contables firmados, política de signos/redondeo y conclusión documentada del revisor.
+
 ## Responsabilidades y reutilización
 
 Este módulo implementa el marco auditable común, no los cálculos de A.1–A.20. Una ejecución pertenece siempre a una empresa, un `tax_period` (que conserva año comercial y tributario) y una versión inmutable de definición. Las fuentes contables siguen viviendo en `tax_documents`, `tax_period_company_accounts`, movimientos y cuentas de empresa; un input conserva una referencia y el snapshot puntual utilizado, no una copia del Balance.
