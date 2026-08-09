@@ -223,9 +223,7 @@ export class AccountCompatibilityFilterService {
     // Loans (and their interest) are receivables, never marketable securities
     // without explicit negotiable-instrument language.
     if (
-      /anticipo(?:s)? y prestamos? a|prestamos? a (?:los )?empleados/.test(
-        name,
-      )
+      /anticipo(?:s)? y prestamos? a|prestamos? a (?:los )?empleados/.test(name)
     )
       return "employee_loans";
     if (
@@ -240,9 +238,11 @@ export class AccountCompatibilityFilterService {
     if (/valores? negociables?|instrumentos? negociables?/.test(name))
       return "marketable_securities";
     if (/fondos? mutuos?/.test(name)) return "financial_investments";
-    if (/fondo opcion de compra|opcion de compra.*(?:leasing|arrendamiento)/.test(
-      name,
-    ))
+    if (
+      /fondo opcion de compra|opcion de compra.*(?:leasing|arrendamiento)/.test(
+        name,
+      )
+    )
       return "lease_purchase_option";
     if (/deudores?.*leasing|leasing.*deudor/.test(name))
       return "lease_receivables";

@@ -74,6 +74,8 @@ export class ApproveAccountSuggestionsBatchDto {
   companyAccountIds!: string[];
 
   /** When true, REVIEW suggestions may be approved via explicit manual batch. */
+  @IsOptional()
+  @IsBoolean()
   allowReview?: boolean;
 }
 

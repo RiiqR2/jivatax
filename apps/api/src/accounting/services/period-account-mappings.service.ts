@@ -27,7 +27,7 @@ import {
 import { TaxPeriodCompanyAccountEntity } from "../entities/tax-period-company-account.entity";
 import { TaxPeriodsService } from "./tax-periods.service";
 import { TaxDocumentEntity } from "../entities/tax-document.entity";
-import { TaxDocumentType } from "../enums/accounting.enums";
+import { findCurrentClosingBalance } from "./current-closing-balance";
 import { AccountMatchingFeedbackEntity } from "../../sii-account-matching/entities/account-matching-feedback.entity";
 import { SupervisedLearningService } from "../../sii-account-matching/services/supervised-learning.service";
 import { LearningAggregatorService } from "../../sii-account-matching/services/learning-aggregator.service";
@@ -104,15 +104,14 @@ export class PeriodAccountMappingsService {
           where: { id: query.documentId, companyId, taxPeriodId },
           relations: { storedFile: true },
         })
-      : await this.documents.findOne({
-          where: {
-            companyId,
-            taxPeriodId,
-            documentType: TaxDocumentType.BALANCE,
+      : await findCurrentClosingBalance(
+          this.documents,
+          companyId,
+          taxPeriodId,
+          {
+            storedFile: true,
           },
-          relations: { storedFile: true },
-          order: { versionNumber: "DESC" },
-        });
+        );
     const page = query.page ?? 1;
     const limit = query.limit ?? 25;
     const builder = this.createListQuery(companyId, taxPeriodId, query);
