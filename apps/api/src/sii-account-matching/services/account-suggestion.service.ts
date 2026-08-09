@@ -32,7 +32,7 @@ import { CompanyAccountMappingHistoryEntity } from "../../accounting/entities/co
 import { CompanyEntity } from "../../companies/entities/company.entity";
 import { TaxPeriodEntity } from "../../accounting/entities/tax-period.entity";
 import { TaxDocumentEntity } from "../../accounting/entities/tax-document.entity";
-import { TaxDocumentType } from "../../accounting/enums/accounting.enums";
+import { findCurrentClosingBalance } from "../../accounting/services/current-closing-balance";
 import type { AccountLearningEvidence } from "../account-matching.types";
 import { CatalogReferenceResolverService } from "./catalog-reference-resolver.service";
 import { MatchingResolutionContextFactoryService } from "./matching-resolution-context-factory.service";
@@ -496,21 +496,30 @@ export class AccountSuggestionService {
       averageConfidence: 0,
     };
 
-    // The productive flow only receives companyId/taxPeriodId; the current
-    // closing balance is the latest BALANCE document of the period, matching
-    // the source the mappings screen lists against.
-    const balanceDocument = await this.dataSource
-      .getRepository(TaxDocumentEntity)
-      .findOne({
-        where: {
-          companyId,
-          taxPeriodId,
-          documentType: TaxDocumentType.BALANCE,
-        },
-        order: { versionNumber: "DESC" },
+    // The productive flow only receives companyId/taxPeriodId. The homologation
+    // source is the current, valid closing Balance (processed, not discarded,
+    // highest version); shared with the mappings screen so UI and generation
+    // read exactly the same document. A failed/opening/higher-version import is
+    // never selected. Absent a valid closing Balance this is a safe no-op: it
+    // returns before opening any transaction, so no suggestion is superseded
+    // and no mapping is touched.
+    const balanceDocument = await findCurrentClosingBalance(
+      this.dataSource.getRepository(TaxDocumentEntity),
+      companyId,
+      taxPeriodId,
+    );
+    if (!balanceDocument) {
+      this.logger.warn({
+        message: "No hay Balance de cierre válido para generar sugerencias v2",
+        companyId,
+        taxPeriodId,
       });
-    if (!balanceDocument || balanceDocument.discardedAt) {
-      return { ...diagnostics, suggested: 0 };
+      return {
+        ...diagnostics,
+        suggested: 0,
+        balanceImportId: null,
+        reason: "no_valid_closing_balance" as const,
+      };
     }
 
     const contexts = await contextFactory.createBatch({

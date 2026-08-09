@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { DataSource } from "typeorm";
 import { CompanyAccountSuggestionStatus } from "../../accounting/entities/company-account-suggestion.entity";
+import {
+  BalanceRole,
+  TaxDocumentStatus,
+  TaxDocumentType,
+} from "../../accounting/enums/accounting.enums";
 import { AccountMatchingDiagnosticEntity } from "../entities/account-matching-diagnostic.entity";
 import type {
   MatchingResolutionContext,
@@ -62,13 +67,26 @@ const context = (
     ...extra,
   }) as MatchingResolutionContext;
 
+const closingBalance = (id: string, versionNumber: number) => ({
+  id,
+  documentType: TaxDocumentType.BALANCE,
+  balanceRole: BalanceRole.CLOSING,
+  status: TaxDocumentStatus.PROCESSED,
+  discardedAt: null,
+  versionNumber,
+});
+
 function makeService(
   contexts: MatchingResolutionContext[],
   resolve: (context: MatchingResolutionContext) => MatchingResolutionResult,
+  balanceDocuments: Array<Record<string, unknown>> = [
+    closingBalance("balance-1", 5),
+  ],
 ) {
   const savedSuggestions: Array<Record<string, unknown>> = [];
   const supersededAccounts: string[] = [];
   const diagnostics: Array<Record<string, unknown>> = [];
+  const createBatchArgs: Array<{ balanceImportId: string }> = [];
 
   const suggestionRepository = {
     update: async (where: { companyAccountId: string }) => {
@@ -92,7 +110,7 @@ function makeService(
 
   const dataSource = {
     getRepository: () => ({
-      findOne: async () => ({ id: "balance-1", discardedAt: null }),
+      find: async () => balanceDocuments,
     }),
     transaction: async (
       callback: (manager: {
@@ -108,7 +126,10 @@ function makeService(
   } as unknown as DataSource;
 
   const contextFactory = {
-    createBatch: async () => contexts,
+    createBatch: async (input: { balanceImportId: string }) => {
+      createBatchArgs.push(input);
+      return contexts;
+    },
   } as never;
   const pipeline = { resolve } as never;
   const classifier = {
@@ -125,7 +146,13 @@ function makeService(
     pipeline,
     classifier,
   );
-  return { service, savedSuggestions, supersededAccounts, diagnostics };
+  return {
+    service,
+    savedSuggestions,
+    supersededAccounts,
+    diagnostics,
+    createBatchArgs,
+  };
 }
 
 const result = (
@@ -170,10 +197,22 @@ describe("AccountSuggestionService v2 cutover", () => {
       ]),
       "acc-none": result("no_candidate", []),
     };
-    const { service, savedSuggestions, supersededAccounts, diagnostics } =
-      makeService(contexts, (ctx) => byAccount[ctx.companyAccountId]);
+    const {
+      service,
+      savedSuggestions,
+      supersededAccounts,
+      diagnostics,
+      createBatchArgs,
+    } = makeService(contexts, (ctx) => byAccount[ctx.companyAccountId]);
 
     const summary = await service.generateWithV2(companyId, taxPeriodId);
+
+    // Evidence is loaded only for the selected closing Balance document, so
+    // snapshots from other versions can never be mixed in.
+    assert.deepEqual(
+      createBatchArgs.map((arg) => arg.balanceImportId),
+      ["balance-1"],
+    );
 
     // Confirmed mapping is never regenerated nor superseded.
     assert.equal(summary.mappingsReused, 1);
@@ -224,27 +263,53 @@ describe("AccountSuggestionService v2 cutover", () => {
     );
   });
 
-  it("returns an empty summary when the period has no balance document", async () => {
-    const savedSuggestions: Array<Record<string, unknown>> = [];
-    const dataSource = {
-      getRepository: () => ({ findOne: async () => null }),
-      transaction: async () => {
-        throw new Error("must not open a transaction without a balance");
-      },
-    } as unknown as DataSource;
-    const service = new AccountSuggestionService(
-      dataSource,
-      undefined,
-      undefined,
-      undefined,
-      { createBatch: async () => [] } as never,
-      { resolve: () => result("no_candidate", []) } as never,
-      { classify: () => observation("x") } as never,
-    );
+  it("is a safe no-op without a valid closing balance: no supersede, no writes", async () => {
+    const { service, savedSuggestions, supersededAccounts, createBatchArgs } =
+      makeService(
+        [context("acc-strong")],
+        () => result("strong", [candidate("sii-a", "strong", 1)]),
+        // Only invalid balances exist for the period (failed / discarded /
+        // opening): none must be selected.
+        [
+          {
+            id: "closing-failed",
+            documentType: TaxDocumentType.BALANCE,
+            balanceRole: BalanceRole.CLOSING,
+            status: TaxDocumentStatus.PROCESSING_ERROR,
+            discardedAt: null,
+            versionNumber: 9,
+          },
+          {
+            id: "opening-processed",
+            documentType: TaxDocumentType.BALANCE,
+            balanceRole: BalanceRole.OPENING,
+            status: TaxDocumentStatus.PROCESSED,
+            discardedAt: null,
+            versionNumber: 8,
+          },
+          {
+            id: "closing-discarded",
+            documentType: TaxDocumentType.BALANCE,
+            balanceRole: BalanceRole.CLOSING,
+            status: TaxDocumentStatus.DISCARDED,
+            discardedAt: new Date(),
+            versionNumber: 7,
+          },
+        ],
+      );
 
-    const summary = await service.generateWithV2(companyId, taxPeriodId);
+    const summary = (await service.generateWithV2(
+      companyId,
+      taxPeriodId,
+    )) as Record<string, unknown>;
+
     assert.equal(summary.suggested, 0);
     assert.equal(summary.accountsProcessed, 0);
+    assert.equal(summary.reason, "no_valid_closing_balance");
+    assert.equal(summary.balanceImportId, null);
+    // Nothing loaded, nothing superseded, nothing written.
+    assert.equal(createBatchArgs.length, 0);
+    assert.equal(supersededAccounts.length, 0);
     assert.equal(savedSuggestions.length, 0);
   });
 });
