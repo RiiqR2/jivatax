@@ -2,6 +2,8 @@ import { Module } from "@nestjs/common";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { TaxPeriodEntity } from "../accounting/entities/tax-period.entity";
 import { AuthModule } from "../auth/auth.module";
+import { CompanyEntity } from "../companies/entities/company.entity";
+import { OrganizationMemberEntity } from "../organizations/entities/organization-member.entity";
 import { TaxAdjustmentEntity } from "./entities/tax-adjustment.entity";
 import { WorkPaperApplicabilityEntity } from "./entities/work-paper-applicability.entity";
 import { WorkPaperDefinitionEntity } from "./entities/work-paper-definition.entity";
@@ -19,6 +21,8 @@ import { A17V1Calculator } from "./calculators/a17-v1.calculator";
   imports: [
     TypeOrmModule.forFeature([
       TaxPeriodEntity,
+      CompanyEntity,
+      OrganizationMemberEntity,
       WorkPaperDefinitionEntity,
       WorkPaperApplicabilityEntity,
       WorkPaperExecutionEntity,
