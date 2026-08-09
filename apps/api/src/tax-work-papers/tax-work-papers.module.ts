@@ -14,6 +14,7 @@ import {
   WorkPaperDefinitionsController,
 } from "./tax-work-papers.controller";
 import { TaxWorkPapersService } from "./tax-work-papers.service";
+import { A17V1Calculator } from "./calculators/a17-v1.calculator";
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -29,7 +30,7 @@ import { TaxWorkPapersService } from "./tax-work-papers.service";
     AuthModule,
   ],
   controllers: [WorkPaperDefinitionsController, TaxWorkPapersController],
-  providers: [TaxWorkPapersService],
+  providers: [TaxWorkPapersService, A17V1Calculator],
   exports: [TaxWorkPapersService],
 })
 export class TaxWorkPapersModule {}

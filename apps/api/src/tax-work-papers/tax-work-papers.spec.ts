@@ -124,6 +124,7 @@ describe("tax work paper framework", () => {
       calculate: async () => ({
         inputsUsed: [],
         calculatedValues: {},
+        reconciliations: [],
         warnings: [],
         missingInputs: [],
         taxAdjustments: [],
@@ -133,5 +134,34 @@ describe("tax work paper framework", () => {
     registry.register(calculator);
     assert.equal(registry.get("A.17", 1), calculator);
     assert.throws(() => registry.register(calculator), /already registered/);
+  });
+  it("A.17 orchestration enforces tenant, paper version, draft state and revision history", () => {
+    const service = readFileSync(
+      "src/tax-work-papers/tax-work-papers.service.ts",
+      "utf8",
+    );
+    const calculation = service.slice(service.indexOf("async calculateA17"));
+    assert.match(calculation, /id: executionId, companyId, taxPeriodId/);
+    assert.match(calculation, /execution\.definition\.code !== "A\.17"/);
+    assert.match(calculation, /execution\.definition\.version !== 1/);
+    assert.match(
+      calculation,
+      /execution\.status !== WorkPaperExecutionStatus\.DRAFT/,
+    );
+    assert.match(calculation, /WorkPaperRecordStatus\.VOID/);
+    assert.match(calculation, /nextInputRevision/);
+    assert.match(calculation, /nextAdjustmentRevision/);
+    assert.doesNotMatch(calculation, /company_account_mappings (SET|DELETE)/i);
+    assert.doesNotMatch(calculation, /\.delete\(|\.remove\(/);
+  });
+  it("A.17 applicability is curated only from exact active-catalog labels", () => {
+    const migration = readFileSync(
+      "src/database/migrations/1785043000000-implement-a17-work-paper.ts",
+      "utf8",
+    );
+    assert.match(migration, /Obligaciones por Leasing/);
+    assert.match(migration, /Intereses diferidos leasing/);
+    assert.match(migration, /s\.name=\?/);
+    assert.doesNotMatch(migration, /LIKE|REGEXP/);
   });
 });

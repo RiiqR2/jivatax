@@ -1,5 +1,21 @@
 # Papeles de Trabajo Tributarios
 
+## A.17@1 — Obligación en Leasing
+
+Primer vertical ejecutable del framework, desde la perspectiva del arrendatario. Sus roles curados son `LEASE_LIABILITY` y `DEFERRED_LEASE_INTEREST`. Solo se cargan cuando el catálogo SII activo contiene exactamente **Obligaciones por Leasing** o **Intereses diferidos leasing**; `LEASE_INTEREST_EXPENSE` y `LEASE_REMEASUREMENT` quedan sin asociación por no existir una cuenta inequívoca verificada. La detección sigue limitada a homologaciones `CONFIRMED`: no crea ejecuciones, no confirma ni altera mappings y no calcula.
+
+Inputs estables: `LEASE_LIABILITY_OPENING`, `LEASE_LIABILITY_CLOSING`, `DEFERRED_INTEREST_OPENING`, `DEFERRED_INTEREST_CLOSING`, `NEW_LEASE_CONTRACTS`, `LEASE_PAYMENTS`, `LEASE_MONETARY_CORRECTION`, `LEASE_REMEASUREMENTS`, `DEFERRED_INTEREST_AMORTIZATION` y `OTHER_LEASE_MOVEMENTS`.
+
+La obligación se calcula como apertura + contratos nuevos + corrección monetaria + remediciones + otros movimientos − pagos. El interés diferido se calcula como apertura − amortización. Se entregan conciliaciones independientes contra los cierres reportados, con diferencia explícita, tolerancia cero y warning al no cuadrar.
+
+El cierre de obligación e interés diferido se resuelve automáticamente desde cuentas internas con mapping confirmado y el Balance de cierre vigente publicado en `tax_period_company_accounts`; se congelan cuenta, documento, rol y monto. Aperturas y movimientos del período son manuales/auxiliares por ahora: no se clasifican glosas del Mayor y no se inventa el período anterior. Un input manual puede corregir explícitamente un cierre automático y queda trazado al usuario.
+
+Con evidencia e importe no cero se proponen (no finalizan) ajustes RLI por corrección, amortización y cuotas, y ajustes CPT por interés diferido y obligación. Todos son diferencias temporarias pendientes de revisión profesional. El contador debe validar procedencia, signo y naturaleza tributaria según contrato y régimen antes de finalizar; A.17 no genera F22.
+
+`POST /companies/:companyId/tax-periods/:taxPeriodId/work-papers/executions/:executionId/calculate` calcula/recalcula únicamente un draft A.17@1. `GET` sobre esa misma ejecución devuelve snapshot, inputs, faltantes, conciliaciones, warnings, evidencia y ajustes. El recálculo anula registros draft anteriores y crea una nueva revisión sin borrar historia. A futuro podrá consumir movimientos normalizados del Mayor y referenciar A.5/A.5.1 para impuestos diferidos, sin convertir esa dependencia en requisito.
+
+Limitación: sin el Excel original no se han reconstruido criterios, porcentajes ni campos adicionales. Comparar contra la plantilla requiere el archivo/versionado, instrucciones tributarias, contratos, auxiliares de cuotas, detalle de interés y reajustes, saldos contables firmados, política de signos/redondeo y conclusión documentada del revisor.
+
 ## Responsabilidades y reutilización
 
 Este módulo implementa el marco auditable común, no los cálculos de A.1–A.20. Una ejecución pertenece siempre a una empresa, un `tax_period` (que conserva año comercial y tributario) y una versión inmutable de definición. Las fuentes contables siguen viviendo en `tax_documents`, `tax_period_company_accounts`, movimientos y cuentas de empresa; un input conserva una referencia y el snapshot puntual utilizado, no una copia del Balance.

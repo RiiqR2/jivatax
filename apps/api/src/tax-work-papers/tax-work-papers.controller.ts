@@ -3,7 +3,10 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { CompanyAccessGuard } from "../auth/guards/company-access.guard";
 import { CompanyWriteAccessGuard } from "../auth/guards/company-write-access.guard";
 import type { AuthenticatedUser } from "../auth/interfaces/authenticated-user.interface";
-import { CreateWorkPaperExecutionDto } from "./dto/tax-work-paper.dto";
+import {
+  CalculateA17Dto,
+  CreateWorkPaperExecutionDto,
+} from "./dto/tax-work-paper.dto";
 import { TaxWorkPapersService } from "./tax-work-papers.service";
 
 @Controller("tax-work-paper-definitions")
@@ -50,5 +53,22 @@ export class TaxWorkPapersController {
     @Param("executionId") executionId: string,
   ) {
     return this.service.getExecution(companyId, taxPeriodId, executionId);
+  }
+  @Post("executions/:executionId/calculate")
+  @UseGuards(CompanyWriteAccessGuard)
+  calculate(
+    @Param("companyId") companyId: string,
+    @Param("taxPeriodId") taxPeriodId: string,
+    @Param("executionId") executionId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CalculateA17Dto,
+  ) {
+    return this.service.calculateA17(
+      companyId,
+      taxPeriodId,
+      executionId,
+      user.id,
+      dto.manualInputs,
+    );
   }
 }
