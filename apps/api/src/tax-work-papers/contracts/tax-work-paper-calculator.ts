@@ -33,7 +33,7 @@ export interface CalculationTaxAdjustment {
   type: TaxAdjustmentType;
   amount: string;
   description: string;
-  differenceNature?: TaxDifferenceNature;
+  differenceNature?: TaxDifferenceNature | null;
   ruleKey: string;
   evidence?: CalculationEvidence[];
 }

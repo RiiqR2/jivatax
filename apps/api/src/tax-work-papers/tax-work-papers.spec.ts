@@ -11,6 +11,7 @@ import { WorkPaperApplicabilityEntity } from "./entities/work-paper-applicabilit
 import { WorkPaperDefinitionEntity } from "./entities/work-paper-definition.entity";
 import { WorkPaperDependencyEntity } from "./entities/work-paper-dependency.entity";
 import { WorkPaperExecutionEntity } from "./entities/work-paper-execution.entity";
+import { TaxWorkPapersService } from "./tax-work-papers.service";
 
 describe("tax work paper framework", () => {
   it("versions definitions and execution revisions with composite uniqueness", () => {
@@ -39,7 +40,7 @@ describe("tax work paper framework", () => {
       )
       .map((column) => column.propertyName);
     assert.deepEqual(
-      ["definitionId", "siiAccountId", "roleKey"].every((key) =>
+      ["definitionId", "siiAccountCode", "roleKey"].every((key) =>
         columns.includes(key),
       ),
       true,
@@ -154,14 +155,51 @@ describe("tax work paper framework", () => {
     assert.doesNotMatch(calculation, /company_account_mappings (SET|DELETE)/i);
     assert.doesNotMatch(calculation, /\.delete\(|\.remove\(/);
   });
-  it("A.17 applicability is curated only from exact active-catalog labels", () => {
+  it("applicability uses stable SII code and resolves the active catalog UUID at runtime", () => {
     const migration = readFileSync(
-      "src/database/migrations/1785043000000-implement-a17-work-paper.ts",
+      "src/database/migrations/1785044000000-stabilize-work-paper-applicability.ts",
       "utf8",
     );
-    assert.match(migration, /Obligaciones por Leasing/);
-    assert.match(migration, /Intereses diferidos leasing/);
-    assert.match(migration, /s\.name=\?/);
-    assert.doesNotMatch(migration, /LIKE|REGEXP/);
+    const service = readFileSync(
+      "src/tax-work-papers/tax-work-papers.service.ts",
+      "utf8",
+    );
+    assert.match(migration, /sii_account_code/);
+    assert.match(migration, /SET a\.sii_account_code=s\.code/);
+    assert.match(service, /sii\.code = a\.sii_account_code/);
+    assert.match(service, /mappedSii\.code = a\.sii_account_code/);
+    assert.match(service, /SiiAccountPlanVersionStatus\.ACTIVE/);
+    assert.doesNotMatch(service, /sii\.name\s*=/);
+  });
+  it("separates current evidence from preserved VOID history", async () => {
+    const rows = [
+      { id: "current", inputId: "input-current", adjustmentId: null },
+      { id: "old-input", inputId: "input-void", adjustmentId: null },
+      { id: "old-adjustment", inputId: null, adjustmentId: "adjustment-void" },
+    ];
+    const manager = {
+      getRepository: () => ({ findBy: async () => rows }),
+    };
+    const result = await (
+      TaxWorkPapersService.prototype as unknown as {
+        resolveExecutionEvidence: (...args: unknown[]) => Promise<{
+          activeEvidence: typeof rows;
+          historicalEvidence: typeof rows;
+        }>;
+      }
+    ).resolveExecutionEvidence(
+      manager,
+      "execution",
+      [{ id: "input-current" }],
+      [],
+    );
+    assert.deepEqual(
+      result.activeEvidence.map((item) => item.id),
+      ["current"],
+    );
+    assert.deepEqual(
+      result.historicalEvidence.map((item) => item.id),
+      ["old-input", "old-adjustment"],
+    );
   });
 });

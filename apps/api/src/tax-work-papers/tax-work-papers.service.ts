@@ -8,6 +8,12 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { DataSource, EntityManager, Repository } from "typeorm";
 import { TaxPeriodEntity } from "../accounting/entities/tax-period.entity";
 import { CompanyAccountMappingStatus } from "../company-account-plan/enums/company-account-plan.enums";
+import { SiiAccountEntity } from "../sii-account-plan/entities/sii-account.entity";
+import { SiiAccountPlanVersionEntity } from "../sii-account-plan/entities/sii-account-plan-version.entity";
+import { SiiAccountPlanVersionStatus } from "../sii-account-plan/enums/sii-account-plan-version-status.enum";
+import { TaxPeriodCompanyAccountEntity } from "../accounting/entities/tax-period-company-account.entity";
+import { CompanyAccountMappingEntity } from "../company-account-plan/entities/company-account-mapping.entity";
+import { CompanyAccountEntity } from "../company-account-plan/entities/company-account.entity";
 import { WorkPaperApplicabilityEntity } from "./entities/work-paper-applicability.entity";
 import { WorkPaperDefinitionEntity } from "./entities/work-paper-definition.entity";
 import { WorkPaperDependencyEntity } from "./entities/work-paper-dependency.entity";
@@ -16,6 +22,7 @@ import { WorkPaperExecutionEntity } from "./entities/work-paper-execution.entity
 import { WorkPaperInputEntity } from "./entities/work-paper-input.entity";
 import { TaxAdjustmentEntity } from "./entities/tax-adjustment.entity";
 import { A17_INPUT, A17V1Calculator } from "./calculators/a17-v1.calculator";
+import { FixedDecimal } from "./calculators/fixed-decimal";
 import type { CalculationInput } from "./contracts/tax-work-paper-calculator";
 import type { A17ManualInputDto } from "./dto/tax-work-paper.dto";
 import {
@@ -96,12 +103,27 @@ export class TaxWorkPapersService {
         "d.status = :active AND d.deleted_at IS NULL",
         { active: WorkPaperDefinitionStatus.ACTIVE },
       )
-      .innerJoin("a.siiAccount", "sii")
+      .innerJoin(
+        SiiAccountEntity,
+        "sii",
+        "sii.code = a.sii_account_code AND sii.deleted_at IS NULL",
+      )
+      .innerJoin(
+        SiiAccountPlanVersionEntity,
+        "spv",
+        "spv.id = sii.version_id AND spv.status = :catalogActive AND spv.deleted_at IS NULL",
+        { catalogActive: SiiAccountPlanVersionStatus.ACTIVE },
+      )
       .innerJoin(
         "company_account_mappings",
         "m",
-        "m.sii_account_id = a.sii_account_id AND m.status = :confirmed AND m.deleted_at IS NULL",
+        "m.status = :confirmed AND m.deleted_at IS NULL",
         { confirmed: CompanyAccountMappingStatus.CONFIRMED },
+      )
+      .innerJoin(
+        SiiAccountEntity,
+        "mappedSii",
+        "mappedSii.id = m.sii_account_id AND mappedSii.code = a.sii_account_code AND mappedSii.deleted_at IS NULL",
       )
       .innerJoin(
         "company_accounts",
@@ -253,13 +275,10 @@ export class TaxWorkPapersService {
       execution.status === WorkPaperExecutionStatus.DRAFT
         ? WorkPaperRecordStatus.DRAFT
         : WorkPaperRecordStatus.FINALIZED;
-    const [inputs, evidence, dependencies, adjustments] = await Promise.all([
+    const [inputs, dependencies, adjustments] = await Promise.all([
       this.dataSource
         .getRepository(WorkPaperInputEntity)
         .findBy({ executionId: id, status: recordStatus }),
-      this.dataSource
-        .getRepository(WorkPaperEvidenceEntity)
-        .findBy({ executionId: id }),
       this.dataSource.getRepository(WorkPaperDependencyEntity).find({
         where: { executionId: id },
         relations: { dependsOnExecution: true },
@@ -271,7 +290,21 @@ export class TaxWorkPapersService {
         status: recordStatus,
       }),
     ]);
-    return { ...execution, inputs, evidence, dependencies, adjustments };
+    const { activeEvidence: evidence, historicalEvidence } =
+      await this.resolveExecutionEvidence(
+        this.dataSource.manager,
+        id,
+        inputs,
+        adjustments,
+      );
+    return {
+      ...execution,
+      inputs,
+      evidence,
+      historicalEvidence,
+      dependencies,
+      adjustments,
+    };
   }
 
   async calculateA17(
@@ -440,24 +473,59 @@ export class TaxWorkPapersService {
     taxPeriodId: string,
     definitionId: string,
   ): Promise<CalculationInput[]> {
-    const rows = await manager.query<
-      Array<{
+    const rows = await manager
+      .createQueryBuilder(WorkPaperApplicabilityEntity, "a")
+      .innerJoin(
+        SiiAccountEntity,
+        "sii",
+        "sii.code = a.sii_account_code AND sii.deleted_at IS NULL",
+      )
+      .innerJoin(
+        SiiAccountPlanVersionEntity,
+        "spv",
+        "spv.id = sii.version_id AND spv.status = :catalogActive AND spv.deleted_at IS NULL",
+        { catalogActive: SiiAccountPlanVersionStatus.ACTIVE },
+      )
+      .innerJoin(
+        CompanyAccountMappingEntity,
+        "m",
+        "m.status = :confirmed AND m.deleted_at IS NULL",
+        { confirmed: CompanyAccountMappingStatus.CONFIRMED },
+      )
+      .innerJoin(
+        SiiAccountEntity,
+        "mappedSii",
+        "mappedSii.id = m.sii_account_id AND mappedSii.code = a.sii_account_code AND mappedSii.deleted_at IS NULL",
+      )
+      .innerJoin(
+        CompanyAccountEntity,
+        "ca",
+        "ca.id = m.company_account_id AND ca.company_id = :companyId AND ca.deleted_at IS NULL",
+        { companyId },
+      )
+      .innerJoin(
+        TaxPeriodCompanyAccountEntity,
+        "pca",
+        "pca.company_account_id = ca.id AND pca.company_id = :companyId AND pca.tax_period_id = :taxPeriodId AND pca.discarded_at IS NULL",
+        { companyId, taxPeriodId },
+      )
+      .select("a.role_key", "roleKey")
+      .addSelect(
+        "CASE WHEN a.role_key = 'LEASE_LIABILITY' THEN pca.liability_amount ELSE pca.asset_amount END",
+        "amount",
+      )
+      .addSelect("pca.id", "sourceEntityId")
+      .addSelect("pca.source_document_id", "documentId")
+      .where("a.definition_id = :definitionId", { definitionId })
+      .andWhere("a.is_active = :isActive AND a.deleted_at IS NULL", {
+        isActive: true,
+      })
+      .getRawMany<{
         roleKey: string;
         amount: string;
         sourceEntityId: string;
         documentId: string;
-      }>
-    >(
-      `SELECT a.role_key roleKey,
-              CASE WHEN a.role_key = 'LEASE_LIABILITY' THEN pca.liability_amount ELSE pca.asset_amount END amount,
-              pca.id sourceEntityId, pca.source_document_id documentId
-         FROM tax_work_paper_applicabilities a
-         JOIN company_account_mappings m ON m.sii_account_id=a.sii_account_id AND m.status='confirmed' AND m.deleted_at IS NULL
-         JOIN company_accounts ca ON ca.id=m.company_account_id AND ca.company_id=? AND ca.deleted_at IS NULL
-         JOIN tax_period_company_accounts pca ON pca.company_account_id=ca.id AND pca.company_id=? AND pca.tax_period_id=? AND pca.discarded_at IS NULL
-        WHERE a.definition_id=? AND a.is_active=1 AND a.deleted_at IS NULL`,
-      [companyId, companyId, taxPeriodId, definitionId],
-    );
+      }>();
     const grouped = new Map<string, typeof rows>();
     for (const row of rows)
       grouped.set(row.roleKey, [...(grouped.get(row.roleKey) ?? []), row]);
@@ -468,11 +536,12 @@ export class TaxWorkPapersService {
     ] as const) {
       const matches = grouped.get(role) ?? [];
       if (!matches.length) continue;
-      // SQL decimal addition preserves precision and avoids JS numeric coercion.
-      const [{ total }] = await manager.query<Array<{ total: string }>>(
-        `SELECT CAST(SUM(x.amount) AS DECIMAL(24,4)) total FROM (${matches.map(() => "SELECT CAST(? AS DECIMAL(24,4)) amount").join(" UNION ALL ")}) x`,
-        matches.map((row) => row.amount),
-      );
+      const total = matches
+        .reduce(
+          (sum, row) => sum.add(FixedDecimal.parse(row.amount)),
+          FixedDecimal.zero(),
+        )
+        .toString();
       output.push({
         inputKey: key,
         sourceType: WorkPaperInputSourceType.BALANCE,
@@ -501,16 +570,42 @@ export class TaxWorkPapersService {
     inputs: WorkPaperInputEntity[],
     adjustments: TaxAdjustmentEntity[],
   ) {
-    return manager
+    return this.resolveExecutionEvidence(
+      manager,
+      execution.id,
+      inputs,
+      adjustments,
+    ).then(({ activeEvidence, historicalEvidence }) => ({
+      ...execution,
+      inputs,
+      evidence: activeEvidence,
+      historicalEvidence,
+      dependencies: [],
+      adjustments,
+    }));
+  }
+
+  private async resolveExecutionEvidence(
+    manager: EntityManager,
+    executionId: string,
+    inputs: WorkPaperInputEntity[],
+    adjustments: TaxAdjustmentEntity[],
+  ) {
+    const allEvidence = await manager
       .getRepository(WorkPaperEvidenceEntity)
-      .findBy({ executionId: execution.id })
-      .then((evidence) => ({
-        ...execution,
-        inputs,
-        evidence,
-        dependencies: [],
-        adjustments,
-      }));
+      .findBy({ executionId });
+    const activeInputIds = new Set(inputs.map((input) => input.id));
+    const activeAdjustmentIds = new Set(
+      adjustments.map((adjustment) => adjustment.id),
+    );
+    const isActive = (item: WorkPaperEvidenceEntity) =>
+      (item.inputId !== null && activeInputIds.has(item.inputId)) ||
+      (item.adjustmentId !== null &&
+        activeAdjustmentIds.has(item.adjustmentId));
+    return {
+      activeEvidence: allEvidence.filter(isActive),
+      historicalEvidence: allEvidence.filter((item) => !isActive(item)),
+    };
   }
   private async requirePeriod(companyId: string, taxPeriodId: string) {
     const period = await this.periods.findOneBy({ id: taxPeriodId, companyId });

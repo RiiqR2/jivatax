@@ -15,12 +15,16 @@ const values: Record<string, string> = {
   [A17_INPUT.LIABILITY_OPENING]: "1000.1000",
   [A17_INPUT.LIABILITY_CLOSING]: "1280.3500",
   [A17_INPUT.DEFERRED_OPENING]: "120.0000",
-  [A17_INPUT.DEFERRED_CLOSING]: "90.0000",
+  [A17_INPUT.DEFERRED_CLOSING]: "140.0000",
   [A17_INPUT.NEW_CONTRACTS]: "500.2500",
   [A17_INPUT.PAYMENTS]: "300.0000",
   [A17_INPUT.MONETARY_CORRECTION]: "50.0000",
   [A17_INPUT.REMEASUREMENTS]: "25.0000",
   [A17_INPUT.DEFERRED_AMORTIZATION]: "30.0000",
+  [A17_INPUT.DEFERRED_ADDITIONS]: "40.0000",
+  [A17_INPUT.DEFERRED_MONETARY_CORRECTION]: "5.0000",
+  [A17_INPUT.DEFERRED_REMEASUREMENTS]: "-3.0000",
+  [A17_INPUT.DEFERRED_OTHER_MOVEMENTS]: "8.0000",
   [A17_INPUT.OTHER_MOVEMENTS]: "5.0000",
 };
 const inputs = (
@@ -54,7 +58,7 @@ test("A.17@1 calcula ambos roll-forwards con decimal exacto y concilia", async (
     ]),
     [
       ["LEASE_LIABILITY", "1280.3500", "ok"],
-      ["DEFERRED_LEASE_INTEREST", "90.0000", "ok"],
+      ["DEFERRED_LEASE_INTEREST", "140.0000", "ok"],
     ],
   );
   assert.equal(result.missingInputs.length, 0);
@@ -66,13 +70,42 @@ test("A.17@1 calcula ambos roll-forwards con decimal exacto y concilia", async (
     ),
   );
 });
+test("A.17@1 conserva la dirección de una corrección monetaria negativa", async () => {
+  const result = await calculate(
+    inputs({
+      [A17_INPUT.MONETARY_CORRECTION]: "-50.0000",
+      [A17_INPUT.LIABILITY_CLOSING]: "1180.3500",
+    }),
+  );
+  const adjustment = result.taxAdjustments.find(
+    (item) => item.ruleKey === "A17_RLI_MONETARY_CORRECTION",
+  );
+  assert.equal(adjustment?.type, "RLI_DEDUCT");
+  assert.equal(adjustment?.amount, "50.0000");
+  assert.equal(
+    result.inputsUsed.find(
+      (item) => item.inputKey === A17_INPUT.MONETARY_CORRECTION,
+    )?.valueSnapshot,
+    "-50.0000",
+  );
+});
+test("A.17@1 no fuerza naturaleza temporal en propuestas CPT", async () => {
+  const result = await calculate();
+  const cpt = result.taxAdjustments.filter((item) =>
+    item.ruleKey.startsWith("A17_CPT_"),
+  );
+  assert.ok(cpt.length > 0);
+  assert.ok(cpt.every((item) => item.differenceNature === null));
+  assert.equal(result.calculatedValues.requiresProfessionalReview, true);
+  assert.match(result.warnings.at(-1) ?? "", /resolución profesional/);
+});
 test("A.17@1 expone diferencias sin ocultarlas", async () => {
   const result = await calculate(
     inputs({ [A17_INPUT.LIABILITY_CLOSING]: "1280.3400" }),
   );
   assert.equal(result.reconciliations[0].difference, "0.0100");
   assert.equal(result.reconciliations[0].status, "warning");
-  assert.equal(result.warnings.length, 1);
+  assert.ok(result.warnings.some((warning) => warning.includes("no cuadra")));
 });
 test("A.17@1 informa faltantes y no inventa conciliación ni ajuste", async () => {
   const result = await calculate(
@@ -84,6 +117,7 @@ test("A.17@1 informa faltantes y no inventa conciliación ni ajuste", async () =
   assert.ok(result.missingInputs.includes(A17_INPUT.PAYMENTS));
   assert.ok(result.missingInputs.includes(A17_INPUT.DEFERRED_CLOSING));
   assert.equal(result.reconciliations.length, 0);
+  assert.ok(result.missingInputs.length > 0);
   assert.ok(
     !result.taxAdjustments.some(
       (item) => item.ruleKey === "A17_RLI_LEASE_PAYMENTS",

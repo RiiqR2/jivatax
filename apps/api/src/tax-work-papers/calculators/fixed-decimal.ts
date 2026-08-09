@@ -29,6 +29,12 @@ export class FixedDecimal {
   isZero(): boolean {
     return this.units === 0n;
   }
+  isNegative(): boolean {
+    return this.units < 0n;
+  }
+  negate(): FixedDecimal {
+    return new FixedDecimal(-this.units);
+  }
   greaterThan(other: FixedDecimal): boolean {
     return this.units > other.units;
   }

@@ -1,6 +1,6 @@
 import { MigrationInterface, QueryRunner } from "typeorm";
 
-/** Activates only exact, unambiguous catalog labels; absent roles remain deliberately uncurated. */
+/** Configures A.17; stable SII codes are supplied only by the curated matrix. */
 export class ImplementA17WorkPaper1785043000000 implements MigrationInterface {
   name = "ImplementA17WorkPaper1785043000000";
   async up(q: QueryRunner): Promise<void> {
@@ -14,6 +14,10 @@ export class ImplementA17WorkPaper1785043000000 implements MigrationInterface {
       "LEASE_MONETARY_CORRECTION",
       "LEASE_REMEASUREMENTS",
       "DEFERRED_INTEREST_AMORTIZATION",
+      "NEW_DEFERRED_INTEREST",
+      "DEFERRED_INTEREST_MONETARY_CORRECTION",
+      "DEFERRED_INTEREST_REMEASUREMENTS",
+      "OTHER_DEFERRED_INTEREST_MOVEMENTS",
       "OTHER_LEASE_MOVEMENTS",
     ];
     await q.query(
@@ -33,25 +37,8 @@ export class ImplementA17WorkPaper1785043000000 implements MigrationInterface {
         ]),
       ],
     );
-    for (const item of [
-      {
-        name: "Obligaciones por Leasing",
-        role: "LEASE_LIABILITY",
-        rationale: "Cuenta SII explícita de obligación por leasing.",
-      },
-      {
-        name: "Intereses diferidos leasing",
-        role: "DEFERRED_LEASE_INTEREST",
-        rationale: "Cuenta SII explícita de interés diferido de leasing.",
-      },
-    ])
-      await q.query(
-        `INSERT IGNORE INTO tax_work_paper_applicabilities (id,definition_id,sii_account_id,role_key,rationale,is_active)
-       SELECT UUID(),d.id,s.id,?,?,1 FROM tax_work_paper_definitions d JOIN sii_accounts s ON s.name=? AND s.deleted_at IS NULL
-       JOIN sii_account_plan_versions v ON v.id=s.version_id AND v.status='active' AND v.deleted_at IS NULL
-       WHERE d.code='A.17' AND d.version=1 AND d.deleted_at IS NULL`,
-        [item.role, item.rationale, item.name],
-      );
+    // Codes are supplied by the externally curated applicability matrix. This
+    // migration intentionally does not infer them from catalog names.
   }
   async down(q: QueryRunner): Promise<void> {
     await q.query(
