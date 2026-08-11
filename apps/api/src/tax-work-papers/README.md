@@ -14,9 +14,7 @@ Con evidencia e importe no cero se proponen —siempre en estado draft— ajuste
 
 `POST /companies/:companyId/tax-periods/:taxPeriodId/work-papers/executions/:executionId/calculate` calcula/recalcula únicamente un draft A.17@1. `GET` sobre esa misma ejecución devuelve snapshot, inputs, faltantes, conciliaciones, warnings, evidencia vigente, `historicalEvidence` y ajustes. El recálculo anula registros draft anteriores y crea una nueva revisión sin borrar historia. Una futura acción común de finalización deberá rechazar ejecuciones con required `missingInputs`, reconciliaciones no resueltas o `requiresProfessionalReview` vigente; calcular nunca equivale a finalizar. A futuro podrá consumir movimientos normalizados del Mayor y referenciar A.5/A.5.1 para impuestos diferidos, sin convertir esa dependencia en requisito.
 
-La matriz completa A.1–A.20 podrá importarse como filas `(definition, siiAccountCode, roleKey, rationale)` sin cambiar la arquitectura ni depender de UUIDs del catálogo. Esta entrega no importa esa matriz ni agrega applicabilities de otros papeles.
-
-Limitación: sin el Excel original no se han reconstruido criterios, porcentajes ni campos adicionales. Comparar contra la plantilla requiere el archivo/versionado, instrucciones tributarias, contratos, auxiliares de cuotas, detalle de interés y reajustes, saldos contables firmados, política de signos/redondeo y conclusión documentada del revisor.
+La matriz A.1–A.20 vive versionada en `data/curated-applicability-matrix.ts` (transcripción de `Carga Masiva Plan de Cuentas V2.xlsx`). Se compila con `compile-curated-applicability.ts`, se carga de forma determinística por `siiAccountCode` + `APPLICABILITY_ONLY` (migración `1785045000000` y comando `work-papers:sync-applicability`) y nunca depende de UUID ni nombre SII. Filas con papel `0` o A.21+ se ignoran. Los códigos A.17 de la matriz activan applicability, pero no reciben `LEASE_LIABILITY` / `DEFERRED_LEASE_INTEREST` hasta curación inequívoca de roles.
 
 ## Responsabilidades y reutilización
 

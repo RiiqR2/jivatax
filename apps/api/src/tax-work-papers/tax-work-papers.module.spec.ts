@@ -1,11 +1,10 @@
-/// <reference path="../auth/express.d.ts" />
-
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { getRepositoryToken } from "@nestjs/typeorm";
 import { Test } from "@nestjs/testing";
 import { MODULE_METADATA } from "@nestjs/common/constants";
 import type { DynamicModule, Provider } from "@nestjs/common";
+import "../auth/express.d";
 import { CompanyAccessGuard } from "../auth/guards/company-access.guard";
 import { CompanyWriteAccessGuard } from "../auth/guards/company-write-access.guard";
 import { CompanyEntity } from "../companies/entities/company.entity";
