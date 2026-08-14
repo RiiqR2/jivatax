@@ -31,47 +31,13 @@ import {
   WorkPaperInputSourceType,
   WorkPaperRecordStatus,
 } from "./tax-work-paper.enums";
+import {
+  groupApplicableRows,
+  type ApplicableRawRow,
+  type ApplicableResult,
+} from "./detect-applicable.mapper";
 
-interface ApplicableRawRow {
-  definitionId: string;
-  code: string;
-  name: string;
-  definitionVersion: number;
-  roleKey: string;
-  companyAccountId: string;
-  companyAccountCode: string;
-  companyAccountName: string;
-  siiAccountId: string;
-  siiAccountCode: string;
-  siiAccountName: string;
-  executionId: string | null;
-  executionStatus: WorkPaperExecutionStatus | null;
-  executionRevision: number | null;
-}
-export interface ApplicableResult {
-  definitionId: string;
-  code: string;
-  name: string;
-  definitionVersion: number;
-  reason: "confirmed_sii_account_mapping";
-  relatedAccounts: Array<
-    Omit<
-      ApplicableRawRow,
-      | "definitionId"
-      | "code"
-      | "name"
-      | "definitionVersion"
-      | "executionId"
-      | "executionStatus"
-      | "executionRevision"
-    >
-  >;
-  executions: Array<{
-    id: string;
-    status: WorkPaperExecutionStatus;
-    revision: number;
-  }>;
-}
+export type { ApplicableResult };
 
 @Injectable()
 export class TaxWorkPapersService {
@@ -147,7 +113,9 @@ export class TaxWorkPapersService {
         "d.code AS code",
         "d.name AS name",
         "d.version AS definitionVersion",
+        "d.metadata AS definitionMetadata",
         "a.roleKey AS roleKey",
+        "a.rationale AS rationale",
         "ca.id AS companyAccountId",
         "ca.internalCode AS companyAccountCode",
         "ca.name AS companyAccountName",
@@ -157,43 +125,14 @@ export class TaxWorkPapersService {
         "e.id AS executionId",
         "e.status AS executionStatus",
         "e.revision AS executionRevision",
+        "e.supersedesExecutionId AS supersedesExecutionId",
+        "e.finalizedAt AS finalizedAt",
       ])
       .andWhere("a.is_active = 1 AND a.deleted_at IS NULL")
       .orderBy("d.code", "ASC")
       .addOrderBy("a.role_key", "ASC")
       .getRawMany<ApplicableRawRow>();
-    const grouped = new Map<string, ApplicableResult>();
-    for (const row of rows) {
-      const item = grouped.get(row.definitionId) ?? {
-        definitionId: row.definitionId,
-        code: row.code,
-        name: row.name,
-        definitionVersion: row.definitionVersion,
-        reason: "confirmed_sii_account_mapping",
-        relatedAccounts: [],
-        executions: [],
-      };
-      item.relatedAccounts.push({
-        roleKey: row.roleKey,
-        companyAccountId: row.companyAccountId,
-        companyAccountCode: row.companyAccountCode,
-        companyAccountName: row.companyAccountName,
-        siiAccountId: row.siiAccountId,
-        siiAccountCode: row.siiAccountCode,
-        siiAccountName: row.siiAccountName,
-      });
-      if (
-        row.executionId &&
-        !item.executions.some((execution) => execution.id === row.executionId)
-      )
-        item.executions.push({
-          id: row.executionId,
-          status: row.executionStatus!,
-          revision: row.executionRevision!,
-        });
-      grouped.set(row.definitionId, item);
-    }
-    return [...grouped.values()];
+    return groupApplicableRows(rows);
   }
 
   async createDraft(

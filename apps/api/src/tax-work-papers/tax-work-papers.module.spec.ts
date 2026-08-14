@@ -1,4 +1,7 @@
+/* ts-node cannot load a `.d.ts` via `import`; the reference is required for Express typings. */
+/* eslint-disable @typescript-eslint/triple-slash-reference -- see comment above */
 /// <reference path="../auth/express.d.ts" />
+/* eslint-enable @typescript-eslint/triple-slash-reference */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -10,9 +13,18 @@ import { CompanyAccessGuard } from "../auth/guards/company-access.guard";
 import { CompanyWriteAccessGuard } from "../auth/guards/company-write-access.guard";
 import { CompanyEntity } from "../companies/entities/company.entity";
 import { OrganizationMemberEntity } from "../organizations/entities/organization-member.entity";
+import { CuratedApplicabilitySyncService } from "./services/curated-applicability-sync.service";
 import { TaxWorkPapersModule } from "./tax-work-papers.module";
+import { TaxWorkPapersService } from "./tax-work-papers.service";
 
 test("bootstrap resolves both company guards with the repositories registered by TaxWorkPapersModule", async () => {
+  const providers = Reflect.getMetadata(
+    MODULE_METADATA.PROVIDERS,
+    TaxWorkPapersModule,
+  ) as unknown[];
+  assert.ok(providers.includes(TaxWorkPapersService));
+  assert.ok(providers.includes(CuratedApplicabilitySyncService));
+
   const imports = Reflect.getMetadata(
     MODULE_METADATA.IMPORTS,
     TaxWorkPapersModule,

@@ -160,12 +160,20 @@ describe("tax work paper framework", () => {
       "src/database/migrations/1785044000000-stabilize-work-paper-applicability.ts",
       "utf8",
     );
+    const load = readFileSync(
+      "src/database/migrations/1785045000000-load-curated-work-paper-applicability.ts",
+      "utf8",
+    );
     const service = readFileSync(
       "src/tax-work-papers/tax-work-papers.service.ts",
       "utf8",
     );
     assert.match(migration, /sii_account_code/);
     assert.match(migration, /SET a\.sii_account_code=s\.code/);
+    assert.match(migration, /DROP FOREIGN KEY fk_work_paper_app_sii/);
+    assert.match(load, /CURATED_APPLICABILITY_SOURCE_ROWS/);
+    assert.match(load, /sii_account_code/);
+    assert.doesNotMatch(load, /s\.name\s*=/);
     assert.match(service, /sii\.code = a\.sii_account_code/);
     assert.match(service, /mappedSii\.code = a\.sii_account_code/);
     assert.match(service, /SiiAccountPlanVersionStatus\.ACTIVE/);
