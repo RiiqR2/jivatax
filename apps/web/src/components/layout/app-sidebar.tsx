@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ClipboardList,
   FileText,
   ListChecks,
   LayoutDashboard,
@@ -78,6 +79,19 @@ export function AppSidebar() {
             title: operationalBase
               ? undefined
               : "Selecciona un período tributario para explorar la contabilidad",
+          },
+          {
+            label: "Papeles de trabajo",
+            href: operationalBase
+              ? `${operationalBase}/work-papers`
+              : setupPath,
+            icon: ClipboardList,
+            active: Boolean(
+              operationalBase && pathname.includes("/work-papers"),
+            ),
+            title: operationalBase
+              ? undefined
+              : "Selecciona un período tributario para ver papeles de trabajo",
           },
           {
             label: "Usuarios",

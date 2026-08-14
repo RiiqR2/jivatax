@@ -42,8 +42,12 @@ export function periodSelectionPath(
     return `/companies/${companyId}/periods/${taxPeriodId}/balance`;
   }
 
+  if (/\/work-papers\/executions\//.test(pathname)) {
+    return `/companies/${companyId}/periods/${taxPeriodId}/work-papers`;
+  }
+
   const section = pathname.match(
-    /\/(dashboard|documents|account-mapping|balance)\/?$/,
+    /\/(dashboard|documents|account-mapping|balance|work-papers)\/?$/,
   )?.[1];
 
   return `/companies/${companyId}/periods/${taxPeriodId}/${section ?? "dashboard"}`;
