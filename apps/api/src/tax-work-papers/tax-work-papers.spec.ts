@@ -141,7 +141,10 @@ describe("tax work paper framework", () => {
       "src/tax-work-papers/tax-work-papers.service.ts",
       "utf8",
     );
-    const calculation = service.slice(service.indexOf("async calculateA17"));
+    const calculation = service.slice(
+      service.indexOf("private async executeA17Calculation"),
+      service.indexOf("private async resolveA17ClosingInputs"),
+    );
     assert.match(calculation, /id: executionId, companyId, taxPeriodId/);
     assert.match(calculation, /execution\.definition\.code !== "A\.17"/);
     assert.match(calculation, /execution\.definition\.version !== 1/);

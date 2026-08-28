@@ -34,6 +34,7 @@ import { WorkPaperInputEntity } from "../tax-work-papers/entities/work-paper-inp
 import { WorkPaperEvidenceEntity } from "../tax-work-papers/entities/work-paper-evidence.entity";
 import { WorkPaperDependencyEntity } from "../tax-work-papers/entities/work-paper-dependency.entity";
 import { TaxAdjustmentEntity } from "../tax-work-papers/entities/tax-adjustment.entity";
+import { WorkPaperJobEntity } from "../tax-work-papers/entities/work-paper-job.entity";
 
 loadEnv({ path: "../../.env" });
 
@@ -78,6 +79,7 @@ export default new DataSource({
     WorkPaperEvidenceEntity,
     WorkPaperDependencyEntity,
     TaxAdjustmentEntity,
+    WorkPaperJobEntity,
   ],
   migrations: ["src/database/migrations/*.ts"],
   synchronize: false,

@@ -3,6 +3,8 @@ import type {
   WorkPaperExecutionDetail,
   WorkPaperExecutionStatus,
   WorkPaperExecutionSummary,
+  WorkPaperJobStatus,
+  WorkPaperPeriodSummaryRow,
   WorkPaperReconciliation,
   WorkPaperResultSnapshot,
 } from "@/types/work-papers.types";
@@ -222,9 +224,40 @@ export function relatedAccountsForExecution(
   );
 }
 
-export function formatRationale(rationale: string | null): string | null {
-  if (!rationale) return null;
-  const match = rationale.match(/sourceRows=([\d,]+)/);
-  if (match) return `Fila fuente ${match[1]}`;
-  return rationale;
+export function isJobInProgress(
+  status: WorkPaperJobStatus | null | undefined,
+): boolean {
+  return status === "pending" || status === "running";
+}
+
+export function jobStatusLabel(status: WorkPaperJobStatus): string {
+  if (status === "pending") return "Pendiente";
+  if (status === "running") return "Procesando";
+  if (status === "completed") return "Completado";
+  return "Error";
+}
+
+export function jobStatusVariant(
+  status: WorkPaperJobStatus,
+): "neutral" | "info" | "success" | "error" {
+  if (status === "pending") return "neutral";
+  if (status === "running") return "info";
+  if (status === "completed") return "success";
+  return "error";
+}
+
+export function executionStatusLabel(
+  status: WorkPaperPeriodSummaryRow["executionStatus"],
+): string {
+  if (status === "not_started") return "Sin iniciar";
+  if (status === "draft") return "Borrador";
+  return "Finalizado";
+}
+
+export function executionStatusVariant(
+  status: WorkPaperPeriodSummaryRow["executionStatus"],
+): "neutral" | "warning" | "success" {
+  if (status === "finalized") return "success";
+  if (status === "draft") return "warning";
+  return "neutral";
 }

@@ -2,7 +2,10 @@ import { api } from "@/lib/api";
 import type {
   A17ManualInput,
   ApplicableWorkPaper,
+  WorkPaperCalculationJobResponse,
   WorkPaperExecutionDetail,
+  WorkPaperJobSummary,
+  WorkPaperPeriodSummaryRow,
 } from "@/types/work-papers.types";
 
 function workPapersBase(companyId: string, taxPeriodId: string): string {
@@ -16,6 +19,16 @@ export const workPapersService = {
   ): Promise<ApplicableWorkPaper[]> {
     const response = await api.get<ApplicableWorkPaper[]>(
       `${workPapersBase(companyId, taxPeriodId)}/applicable`,
+    );
+    return response.data;
+  },
+
+  async summary(
+    companyId: string,
+    taxPeriodId: string,
+  ): Promise<WorkPaperPeriodSummaryRow[]> {
+    const response = await api.get<WorkPaperPeriodSummaryRow[]>(
+      `${workPapersBase(companyId, taxPeriodId)}/summary`,
     );
     return response.data;
   },
@@ -44,12 +57,23 @@ export const workPapersService = {
     return response.data;
   },
 
-  async calculateA17(
+  async job(
+    companyId: string,
+    taxPeriodId: string,
+    jobId: string,
+  ): Promise<WorkPaperJobSummary> {
+    const response = await api.get<WorkPaperJobSummary>(
+      `${workPapersBase(companyId, taxPeriodId)}/jobs/${jobId}`,
+    );
+    return response.data;
+  },
+
+  async startCalculation(
     companyId: string,
     taxPeriodId: string,
     executionId: string,
     manualInputs: A17ManualInput[],
-  ): Promise<WorkPaperExecutionDetail> {
+  ): Promise<WorkPaperCalculationJobResponse> {
     const payload = {
       manualInputs: manualInputs.map((item) => {
         if (item.description) {
@@ -62,8 +86,8 @@ export const workPapersService = {
         return { inputKey: item.inputKey, value: item.value };
       }),
     };
-    const response = await api.post<WorkPaperExecutionDetail>(
-      `${workPapersBase(companyId, taxPeriodId)}/executions/${executionId}/calculate`,
+    const response = await api.post<WorkPaperCalculationJobResponse>(
+      `${workPapersBase(companyId, taxPeriodId)}/executions/${executionId}/calculations`,
       payload,
     );
     return response.data;

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
@@ -36,11 +37,20 @@ import {
   type ApplicableRawRow,
   type ApplicableResult,
 } from "./detect-applicable.mapper";
+import { WorkPaperJobEntity } from "./entities/work-paper-job.entity";
+import { WorkPaperJobStatus, WorkPaperJobType } from "./tax-work-paper.enums";
+import {
+  WorkPaperJobService,
+  type WorkPaperJobSummary,
+} from "./services/work-paper-job.service";
+import { buildPeriodSummaryRows } from "./work-paper-period-summary.mapper";
 
-export type { ApplicableResult };
+export type { ApplicableResult, WorkPaperJobSummary };
 
 @Injectable()
 export class TaxWorkPapersService {
+  private readonly logger = new Logger(TaxWorkPapersService.name);
+
   constructor(
     @InjectRepository(WorkPaperDefinitionEntity)
     private readonly definitions: Repository<WorkPaperDefinitionEntity>,
@@ -50,6 +60,7 @@ export class TaxWorkPapersService {
     private readonly periods: Repository<TaxPeriodEntity>,
     private readonly dataSource: DataSource,
     private readonly a17Calculator: A17V1Calculator,
+    private readonly jobService: WorkPaperJobService,
   ) {}
 
   listDefinitions(): Promise<WorkPaperDefinitionEntity[]> {
@@ -236,6 +247,10 @@ export class TaxWorkPapersService {
         inputs,
         adjustments,
       );
+    const [activeJobEntity, latestJobEntity] = await Promise.all([
+      this.jobService.findActiveForExecution(id),
+      this.jobService.findLatestForExecution(id),
+    ]);
     return {
       ...execution,
       inputs,
@@ -243,7 +258,173 @@ export class TaxWorkPapersService {
       historicalEvidence,
       dependencies,
       adjustments,
+      activeJob: activeJobEntity
+        ? this.jobService.toSummary(activeJobEntity)
+        : null,
+      latestJob: latestJobEntity
+        ? this.jobService.toSummary(latestJobEntity)
+        : null,
     };
+  }
+
+  async getPeriodSummary(companyId: string, taxPeriodId: string) {
+    const applicable = await this.detectApplicable(companyId, taxPeriodId);
+    const executionIds = applicable.flatMap((paper) =>
+      paper.executions.map((item) => item.id),
+    );
+    const [executionRows, latestJobs, adjustmentRows] = await Promise.all([
+      executionIds.length
+        ? this.executions
+            .createQueryBuilder("e")
+            .select(["e.id", "e.resultSnapshot"])
+            .where("e.id IN (:...executionIds)", { executionIds })
+            .andWhere("e.company_id = :companyId", { companyId })
+            .andWhere("e.tax_period_id = :taxPeriodId", { taxPeriodId })
+            .getMany()
+        : Promise.resolve([]),
+      this.jobService.findLatestJobsForExecutions(executionIds),
+      executionIds.length
+        ? this.dataSource
+            .getRepository(TaxAdjustmentEntity)
+            .createQueryBuilder("a")
+            .select("a.execution_id", "executionId")
+            .addSelect("COUNT(*)", "count")
+            .addSelect("SUM(a.amount)", "total")
+            .where("a.execution_id IN (:...executionIds)", { executionIds })
+            .andWhere("a.company_id = :companyId", { companyId })
+            .andWhere("a.tax_period_id = :taxPeriodId", { taxPeriodId })
+            .andWhere("a.status = :draft", {
+              draft: WorkPaperRecordStatus.DRAFT,
+            })
+            .groupBy("a.execution_id")
+            .getRawMany<{ executionId: string; count: string; total: string }>()
+        : Promise.resolve([]),
+    ]);
+    const executionDetails = new Map(executionRows.map((row) => [row.id, row]));
+    const adjustmentStats = new Map(
+      adjustmentRows.map((row) => [
+        row.executionId,
+        {
+          executionId: row.executionId,
+          count: Number(row.count),
+          total: row.total ?? null,
+        },
+      ]),
+    );
+    return buildPeriodSummaryRows(
+      applicable,
+      executionDetails,
+      latestJobs,
+      adjustmentStats,
+    );
+  }
+
+  async enqueueCalculation(
+    companyId: string,
+    taxPeriodId: string,
+    executionId: string,
+    userId: string,
+    manual: A17ManualInputDto[],
+  ): Promise<{ id: string; status: WorkPaperJobStatus }> {
+    await this.requirePeriod(companyId, taxPeriodId);
+    const execution = await this.executions.findOne({
+      where: { id: executionId, companyId, taxPeriodId },
+      relations: { definition: true },
+    });
+    if (!execution)
+      throw new NotFoundException("Ejecución de papel no encontrada.");
+    if (execution.status !== WorkPaperExecutionStatus.DRAFT)
+      throw new ConflictException(
+        "Una ejecución finalizada no puede recalcularse.",
+      );
+    if (
+      execution.definition.code !== "A.17" ||
+      execution.definition.version !== 1
+    )
+      throw new BadRequestException("La ejecución no corresponde a A.17@1.");
+
+    const job = await this.jobService.enqueueCalculatorRun({
+      companyId,
+      taxPeriodId,
+      executionId,
+      userId,
+      definitionCode: execution.definition.code,
+      definitionVersion: execution.definition.version,
+      manualInputs: manual,
+    });
+    return { id: job.id, status: job.status };
+  }
+
+  async getJob(
+    companyId: string,
+    taxPeriodId: string,
+    jobId: string,
+  ): Promise<WorkPaperJobSummary> {
+    await this.requirePeriod(companyId, taxPeriodId);
+    const job = await this.jobService.getJobForTenant(
+      companyId,
+      taxPeriodId,
+      jobId,
+    );
+    return this.jobService.toSummary(job);
+  }
+
+  async processCalculatorRunJob(job: WorkPaperJobEntity): Promise<void> {
+    if (job.jobType !== WorkPaperJobType.CALCULATOR_RUN) {
+      await this.jobService.markFailed(
+        job.id,
+        new BadRequestException("Tipo de job no soportado."),
+      );
+      return;
+    }
+    const payload = job.payload ?? {};
+    const definitionCode =
+      typeof payload.definitionCode === "string"
+        ? payload.definitionCode
+        : null;
+    const definitionVersion =
+      typeof payload.definitionVersion === "number"
+        ? payload.definitionVersion
+        : null;
+    const manualInputs = Array.isArray(payload.manualInputs)
+      ? (payload.manualInputs as A17ManualInputDto[])
+      : [];
+    if (!definitionCode || definitionVersion == null) {
+      await this.jobService.markFailed(
+        job.id,
+        new BadRequestException("Payload de job inválido."),
+      );
+      return;
+    }
+    try {
+      await this.dataSource.transaction(async (manager) => {
+        if (definitionCode === "A.17" && definitionVersion === 1) {
+          await this.executeA17Calculation(
+            manager,
+            job.companyId,
+            job.taxPeriodId,
+            job.executionId,
+            job.requestedByUserId,
+            manualInputs,
+          );
+          return;
+        }
+        throw new BadRequestException(
+          "No hay calculator registrado para este job.",
+        );
+      });
+      await this.jobService.markCompleted(job.id, {
+        executionId: job.executionId,
+        definitionCode,
+        definitionVersion,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Work paper job ${job.id} failed`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      await this.jobService.markFailed(job.id, error);
+    }
   }
 
   async calculateA17(
@@ -253,157 +434,163 @@ export class TaxWorkPapersService {
     userId: string,
     manual: A17ManualInputDto[],
   ) {
-    await this.requirePeriod(companyId, taxPeriodId);
-    return this.dataSource.transaction(async (manager) => {
-      const executionRepository = manager.getRepository(
-        WorkPaperExecutionEntity,
-      );
-      const execution = await executionRepository.findOne({
-        where: { id: executionId, companyId, taxPeriodId },
-        relations: { definition: true },
-        lock: { mode: "pessimistic_write" },
-      });
-      if (!execution)
-        throw new NotFoundException("Ejecución de papel no encontrada.");
-      if (execution.status !== WorkPaperExecutionStatus.DRAFT)
-        throw new ConflictException(
-          "Una ejecución finalizada no puede recalcularse.",
-        );
-      if (
-        execution.definition.code !== "A.17" ||
-        execution.definition.version !== 1
-      )
-        throw new BadRequestException("La ejecución no corresponde a A.17@1.");
+    return this.enqueueCalculation(
+      companyId,
+      taxPeriodId,
+      executionId,
+      userId,
+      manual,
+    );
+  }
 
-      const automatic = await this.resolveA17ClosingInputs(
-        manager,
-        companyId,
-        taxPeriodId,
-        execution.definitionId,
+  private async executeA17Calculation(
+    manager: EntityManager,
+    companyId: string,
+    taxPeriodId: string,
+    executionId: string,
+    userId: string,
+    manual: A17ManualInputDto[],
+  ) {
+    const executionRepository = manager.getRepository(WorkPaperExecutionEntity);
+    const execution = await executionRepository.findOne({
+      where: { id: executionId, companyId, taxPeriodId },
+      relations: { definition: true },
+      lock: { mode: "pessimistic_write" },
+    });
+    if (!execution)
+      throw new NotFoundException("Ejecución de papel no encontrada.");
+    if (execution.status !== WorkPaperExecutionStatus.DRAFT)
+      throw new ConflictException(
+        "Una ejecución finalizada no puede recalcularse.",
       );
-      const manualInputs: CalculationInput[] = manual.map((item) => ({
-        inputKey: item.inputKey,
-        sourceType: WorkPaperInputSourceType.MANUAL,
-        sourceEntityType: "user",
-        sourceEntityId: userId,
-        valueSnapshot: item.value,
-        payloadSnapshot: {
-          description: item.description ?? null,
-          capturedAt: new Date().toISOString(),
+    if (
+      execution.definition.code !== "A.17" ||
+      execution.definition.version !== 1
+    )
+      throw new BadRequestException("La ejecución no corresponde a A.17@1.");
+
+    const automatic = await this.resolveA17ClosingInputs(
+      manager,
+      companyId,
+      taxPeriodId,
+      execution.definitionId,
+    );
+    const manualInputs: CalculationInput[] = manual.map((item) => ({
+      inputKey: item.inputKey,
+      sourceType: WorkPaperInputSourceType.MANUAL,
+      sourceEntityType: "user",
+      sourceEntityId: userId,
+      valueSnapshot: item.value,
+      payloadSnapshot: {
+        description: item.description ?? null,
+        capturedAt: new Date().toISOString(),
+      },
+      evidence: [
+        {
+          type: "manual_declaration",
+          sourceEntityType: "user",
+          sourceEntityId: userId,
+          locator: { inputKey: item.inputKey },
         },
-        evidence: [
-          {
-            type: "manual_declaration",
-            sourceEntityType: "user",
-            sourceEntityId: userId,
-            locator: { inputKey: item.inputKey },
-          },
-        ],
-      }));
-      const merged = new Map(automatic.map((input) => [input.inputKey, input]));
-      for (const input of manualInputs) merged.set(input.inputKey, input);
-      const inputs = [...merged.values()];
-      const result = await this.a17Calculator.calculate({
-        companyId,
-        taxPeriodId,
-        executionId,
-        definitionCode: "A.17",
-        definitionVersion: 1,
-        inputs,
-      });
+      ],
+    }));
+    const merged = new Map(automatic.map((input) => [input.inputKey, input]));
+    for (const input of manualInputs) merged.set(input.inputKey, input);
+    const inputs = [...merged.values()];
+    const result = await this.a17Calculator.calculate({
+      companyId,
+      taxPeriodId,
+      executionId,
+      definitionCode: "A.17",
+      definitionVersion: 1,
+      inputs,
+    });
 
-      const inputRepository = manager.getRepository(WorkPaperInputEntity);
-      const adjustmentRepository = manager.getRepository(TaxAdjustmentEntity);
-      await inputRepository.update(
-        { executionId, status: WorkPaperRecordStatus.DRAFT },
-        { status: WorkPaperRecordStatus.VOID },
-      );
-      await adjustmentRepository.update(
-        { executionId, status: WorkPaperRecordStatus.DRAFT },
-        { status: WorkPaperRecordStatus.VOID },
-      );
-      const previousInputs = await inputRepository.find({
-        where: { executionId },
-        order: { revision: "DESC" },
-      });
-      const nextInputRevision =
-        Math.max(0, ...previousInputs.map((item) => item.revision)) + 1;
-      const savedInputs = await inputRepository.save(
-        inputs.map((input) =>
-          inputRepository.create({
-            executionId,
-            inputKey: input.inputKey,
-            sourceType: input.sourceType,
-            sourceEntityType: input.sourceEntityType ?? null,
-            sourceEntityId: input.sourceEntityId ?? null,
-            valueSnapshot: input.valueSnapshot ?? null,
-            payloadSnapshot: input.payloadSnapshot ?? null,
-            revision: nextInputRevision,
-            status: WorkPaperRecordStatus.DRAFT,
-          }),
-        ),
-      );
-      const previousAdjustments = await adjustmentRepository.find({
-        where: { executionId },
-        order: { revision: "DESC" },
-      });
-      const nextAdjustmentRevision =
-        Math.max(0, ...previousAdjustments.map((item) => item.revision)) + 1;
-      const savedAdjustments = await adjustmentRepository.save(
-        result.taxAdjustments.map((adjustment) =>
-          adjustmentRepository.create({
-            companyId,
-            taxPeriodId,
-            executionId,
-            type: adjustment.type,
-            amount: adjustment.amount,
-            description: adjustment.description,
-            differenceNature: adjustment.differenceNature ?? null,
-            ruleKey: adjustment.ruleKey,
-            revision: nextAdjustmentRevision,
-            status: WorkPaperRecordStatus.DRAFT,
-          }),
-        ),
-      );
-      const evidenceRepository = manager.getRepository(WorkPaperEvidenceEntity);
-      const evidenceRows = savedInputs.flatMap((saved, index) =>
-        (inputs[index].evidence ?? []).map((item) =>
+    const inputRepository = manager.getRepository(WorkPaperInputEntity);
+    const adjustmentRepository = manager.getRepository(TaxAdjustmentEntity);
+    await inputRepository.update(
+      { executionId, status: WorkPaperRecordStatus.DRAFT },
+      { status: WorkPaperRecordStatus.VOID },
+    );
+    await adjustmentRepository.update(
+      { executionId, status: WorkPaperRecordStatus.DRAFT },
+      { status: WorkPaperRecordStatus.VOID },
+    );
+    const previousInputs = await inputRepository.find({
+      where: { executionId },
+      order: { revision: "DESC" },
+    });
+    const nextInputRevision =
+      Math.max(0, ...previousInputs.map((item) => item.revision)) + 1;
+    const savedInputs = await inputRepository.save(
+      inputs.map((input) =>
+        inputRepository.create({
+          executionId,
+          inputKey: input.inputKey,
+          sourceType: input.sourceType,
+          sourceEntityType: input.sourceEntityType ?? null,
+          sourceEntityId: input.sourceEntityId ?? null,
+          valueSnapshot: input.valueSnapshot ?? null,
+          payloadSnapshot: input.payloadSnapshot ?? null,
+          revision: nextInputRevision,
+          status: WorkPaperRecordStatus.DRAFT,
+        }),
+      ),
+    );
+    const previousAdjustments = await adjustmentRepository.find({
+      where: { executionId },
+      order: { revision: "DESC" },
+    });
+    const nextAdjustmentRevision =
+      Math.max(0, ...previousAdjustments.map((item) => item.revision)) + 1;
+    const savedAdjustments = await adjustmentRepository.save(
+      result.taxAdjustments.map((adjustment) =>
+        adjustmentRepository.create({
+          companyId,
+          taxPeriodId,
+          executionId,
+          type: adjustment.type,
+          amount: adjustment.amount,
+          description: adjustment.description,
+          differenceNature: adjustment.differenceNature ?? null,
+          ruleKey: adjustment.ruleKey,
+          revision: nextAdjustmentRevision,
+          status: WorkPaperRecordStatus.DRAFT,
+        }),
+      ),
+    );
+    const evidenceRepository = manager.getRepository(WorkPaperEvidenceEntity);
+    const evidenceRows = savedInputs.flatMap((saved, index) =>
+      (inputs[index].evidence ?? []).map((item) =>
+        evidenceRepository.create({
+          executionId,
+          inputId: saved.id,
+          adjustmentId: null,
+          evidenceType: item.type,
+          sourceEntityType: item.sourceEntityType,
+          sourceEntityId: item.sourceEntityId,
+          locator: item.locator ?? null,
+          description: null,
+        }),
+      ),
+    );
+    for (let index = 0; index < savedAdjustments.length; index++)
+      for (const item of result.taxAdjustments[index].evidence ?? [])
+        evidenceRows.push(
           evidenceRepository.create({
             executionId,
-            inputId: saved.id,
-            adjustmentId: null,
+            inputId: null,
+            adjustmentId: savedAdjustments[index].id,
             evidenceType: item.type,
             sourceEntityType: item.sourceEntityType,
             sourceEntityId: item.sourceEntityId,
             locator: item.locator ?? null,
             description: null,
           }),
-        ),
-      );
-      for (let index = 0; index < savedAdjustments.length; index++)
-        for (const item of result.taxAdjustments[index].evidence ?? [])
-          evidenceRows.push(
-            evidenceRepository.create({
-              executionId,
-              inputId: null,
-              adjustmentId: savedAdjustments[index].id,
-              evidenceType: item.type,
-              sourceEntityType: item.sourceEntityType,
-              sourceEntityId: item.sourceEntityId,
-              locator: item.locator ?? null,
-              description: null,
-            }),
-          );
-      await evidenceRepository.save(evidenceRows);
-      execution.resultSnapshot = result as unknown as Record<string, unknown>;
-      await executionRepository.save(execution);
-      return this.getExecutionSnapshot(
-        manager,
-        execution,
-        savedInputs,
-        savedAdjustments,
-      );
-    });
+        );
+    await evidenceRepository.save(evidenceRows);
+    execution.resultSnapshot = result as unknown as Record<string, unknown>;
+    await executionRepository.save(execution);
   }
 
   private async resolveA17ClosingInputs(
@@ -501,27 +688,6 @@ export class TaxWorkPapersService {
       });
     }
     return output;
-  }
-
-  private getExecutionSnapshot(
-    manager: EntityManager,
-    execution: WorkPaperExecutionEntity,
-    inputs: WorkPaperInputEntity[],
-    adjustments: TaxAdjustmentEntity[],
-  ) {
-    return this.resolveExecutionEvidence(
-      manager,
-      execution.id,
-      inputs,
-      adjustments,
-    ).then(({ activeEvidence, historicalEvidence }) => ({
-      ...execution,
-      inputs,
-      evidence: activeEvidence,
-      historicalEvidence,
-      dependencies: [],
-      adjustments,
-    }));
   }
 
   private async resolveExecutionEvidence(

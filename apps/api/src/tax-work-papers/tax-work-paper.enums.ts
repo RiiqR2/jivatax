@@ -37,3 +37,14 @@ export enum TaxDifferenceNature {
   PERMANENT = "permanent",
   NOT_APPLICABLE = "not_applicable",
 }
+
+export enum WorkPaperJobStatus {
+  PENDING = "pending",
+  RUNNING = "running",
+  COMPLETED = "completed",
+  FAILED = "failed",
+}
+
+export enum WorkPaperJobType {
+  CALCULATOR_RUN = "calculator_run",
+}

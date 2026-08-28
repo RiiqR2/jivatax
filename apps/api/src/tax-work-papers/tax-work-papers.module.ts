@@ -11,6 +11,7 @@ import { WorkPaperDependencyEntity } from "./entities/work-paper-dependency.enti
 import { WorkPaperEvidenceEntity } from "./entities/work-paper-evidence.entity";
 import { WorkPaperExecutionEntity } from "./entities/work-paper-execution.entity";
 import { WorkPaperInputEntity } from "./entities/work-paper-input.entity";
+import { WorkPaperJobEntity } from "./entities/work-paper-job.entity";
 import {
   TaxWorkPapersController,
   WorkPaperDefinitionsController,
@@ -18,6 +19,8 @@ import {
 import { TaxWorkPapersService } from "./tax-work-papers.service";
 import { A17V1Calculator } from "./calculators/a17-v1.calculator";
 import { CuratedApplicabilitySyncService } from "./services/curated-applicability-sync.service";
+import { WorkPaperJobProcessor } from "./services/work-paper-job.processor";
+import { WorkPaperJobService } from "./services/work-paper-job.service";
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -31,6 +34,7 @@ import { CuratedApplicabilitySyncService } from "./services/curated-applicabilit
       WorkPaperEvidenceEntity,
       WorkPaperDependencyEntity,
       TaxAdjustmentEntity,
+      WorkPaperJobEntity,
     ]),
     AuthModule,
   ],
@@ -39,6 +43,8 @@ import { CuratedApplicabilitySyncService } from "./services/curated-applicabilit
     TaxWorkPapersService,
     A17V1Calculator,
     CuratedApplicabilitySyncService,
+    WorkPaperJobService,
+    WorkPaperJobProcessor,
   ],
   exports: [TaxWorkPapersService, CuratedApplicabilitySyncService],
 })

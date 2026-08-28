@@ -8,7 +8,9 @@ import {
   PROFESSIONAL_REVIEW_LABEL,
   canCalculateA17,
   hasExecutionHistory,
+  isJobInProgress,
   isValidA17Decimal,
+  jobStatusLabel,
   latestExecution,
   listPresentationStatus,
   parseResultSnapshot,
@@ -108,6 +110,15 @@ test("expone missingInputs, reconciliaciones y revisión profesional", () => {
   );
 });
 
+test("job helpers y polling se detienen en completed/failed", () => {
+  assert.equal(isJobInProgress("pending"), true);
+  assert.equal(isJobInProgress("running"), true);
+  assert.equal(isJobInProgress("completed"), false);
+  assert.equal(isJobInProgress("failed"), false);
+  assert.equal(jobStatusLabel("pending"), "Pendiente");
+  assert.equal(jobStatusLabel("running"), "Procesando");
+});
+
 test("el listado y el detalle cubren empty state, cuentas, crear y abrir", () => {
   const list = readFileSync(
     new URL(
@@ -135,6 +146,14 @@ test("el listado y el detalle cubren empty state, cuentas, crear y abrir", () =>
     "utf8",
   );
 
+  const summary = readFileSync(
+    new URL(
+      "../src/components/work-papers/work-papers-summary.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
   assert.match(list, /EMPTY_APPLICABLE_MESSAGE/);
   assert.match(list, /Crear papel/);
   assert.match(list, /Abrir/);
@@ -142,16 +161,31 @@ test("el listado y el detalle cubren empty state, cuentas, crear y abrir", () =>
   assert.match(list, /siiAccountCode/);
   assert.match(list, /definitionId/);
   assert.doesNotMatch(list, /calculatorKey/);
+  assert.doesNotMatch(list, /Fila fuente/);
+  assert.doesNotMatch(list, /formatRationale/);
   assert.match(list, /CALCULATOR_NOT_IMPLEMENTED/);
+  assert.match(list, /WorkPapersSummaryTable/);
 
   assert.match(detail, /canCalculateA17/);
   assert.match(detail, /Antecedentes pendientes/);
   assert.match(detail, /PROFESSIONAL_REVIEW_LABEL/);
   assert.match(detail, /A17CalculateForm/);
   assert.match(detail, /CALCULATOR_NOT_IMPLEMENTED/);
+  assert.match(detail, /refetchInterval/);
+  assert.match(detail, /isJobInProgress/);
+  assert.doesNotMatch(detail, /Fila fuente/);
+  assert.doesNotMatch(detail, /formatRationale/);
+
+  assert.match(summary, /Resumen de Papeles de Trabajo/);
+  assert.match(summary, /refetchInterval/);
+  assert.match(summary, /isJobInProgress/);
+
   assert.match(form, /Calcular/);
   assert.match(service, /payload = \{ definitionId \}/);
   assert.match(service, /manualInputs:/);
+  assert.match(service, /\/calculations/);
+  assert.match(service, /\/summary/);
+  assert.match(service, /\/jobs\//);
   assert.doesNotMatch(service, /\.\.\.dto|\.\.\.values/);
 });
 

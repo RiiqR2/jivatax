@@ -10,13 +10,13 @@ import { StatusBadge } from "@/components/shared/status-badge";
 import {
   CALCULATOR_NOT_IMPLEMENTED,
   EMPTY_APPLICABLE_MESSAGE,
-  formatRationale,
   hasExecutionHistory,
   listPresentationStatus,
   workPaperExecutionPath,
 } from "@/lib/work-papers";
 import { workPapersService } from "@/services/work-papers.service";
 import type { ApplicableWorkPaper } from "@/types/work-papers.types";
+import { WorkPapersSummaryTable } from "@/components/work-papers/work-papers-summary";
 
 function mutationErrorMessage(error: unknown): string {
   if (!axios.isAxiosError(error)) {
@@ -80,11 +80,6 @@ function PaperCard({
               {account.companyAccountCode} · {account.companyAccountName}
             </p>
             <p className="text-slate-600">SII {account.siiAccountCode}</p>
-            {formatRationale(account.rationale) ? (
-              <p className="text-xs text-slate-500">
-                {formatRationale(account.rationale)}
-              </p>
-            ) : null}
           </li>
         ))}
       </ul>
@@ -173,20 +168,26 @@ export function WorkPapersList({
       ) : null}
 
       {query.data && query.data.length > 0 ? (
-        <section className="mt-6 grid gap-4 lg:grid-cols-2">
-          {query.data.map((paper) => (
-            <PaperCard
-              key={paper.definitionId}
-              companyId={companyId}
-              taxPeriodId={taxPeriodId}
-              paper={paper}
-              creating={
-                create.isPending && create.variables === paper.definitionId
-              }
-              onCreate={(definitionId) => create.mutate(definitionId)}
-            />
-          ))}
-        </section>
+        <>
+          <WorkPapersSummaryTable
+            companyId={companyId}
+            taxPeriodId={taxPeriodId}
+          />
+          <section className="mt-6 grid gap-4 lg:grid-cols-2">
+            {query.data.map((paper) => (
+              <PaperCard
+                key={paper.definitionId}
+                companyId={companyId}
+                taxPeriodId={taxPeriodId}
+                paper={paper}
+                creating={
+                  create.isPending && create.variables === paper.definitionId
+                }
+                onCreate={(definitionId) => create.mutate(definitionId)}
+              />
+            ))}
+          </section>
+        </>
       ) : null}
     </main>
   );
