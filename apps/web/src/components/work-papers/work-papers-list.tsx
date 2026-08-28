@@ -8,15 +8,18 @@ import { ErrorState } from "@/components/shared/error-state";
 import { LoadingState } from "@/components/shared/loading-state";
 import { StatusBadge } from "@/components/shared/status-badge";
 import {
-  CALCULATOR_NOT_IMPLEMENTED,
   EMPTY_APPLICABLE_MESSAGE,
-  hasExecutionHistory,
-  listPresentationStatus,
+  formatAdjustmentsCell,
+  formatMetricCount,
+  formatProfessionalReviewCell,
+  hasCalculatedMetrics,
+  isJobInProgress,
+  operationalPresentationStatus,
+  relatedAccountsForDefinition,
   workPaperExecutionPath,
 } from "@/lib/work-papers";
 import { workPapersService } from "@/services/work-papers.service";
-import type { ApplicableWorkPaper } from "@/types/work-papers.types";
-import { WorkPapersSummaryTable } from "@/components/work-papers/work-papers-summary";
+import type { WorkPaperPeriodSummaryRow } from "@/types/work-papers.types";
 
 function mutationErrorMessage(error: unknown): string {
   if (!axios.isAxiosError(error)) {
@@ -29,71 +32,96 @@ function mutationErrorMessage(error: unknown): string {
   return "No fue posible crear el papel de trabajo.";
 }
 
-function PaperCard({
+function DetectedByCell({
+  definitionId,
+  relatedAccounts,
+}: {
+  definitionId: string;
+  relatedAccounts: ReturnType<typeof relatedAccountsForDefinition>;
+}) {
+  if (relatedAccounts.length === 0) {
+    return <span className="text-slate-400">—</span>;
+  }
+  return (
+    <ul className="space-y-1.5">
+      {relatedAccounts.map((account) => (
+        <li
+          key={`${definitionId}-${account.companyAccountId}-${account.siiAccountCode}`}
+        >
+          <p className="font-medium text-slate-800">
+            {account.companyAccountName}
+          </p>
+          <p className="text-xs text-slate-600">
+            {account.companyAccountCode} · SII {account.siiAccountCode}
+          </p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function WorkPaperRow({
+  row,
   companyId,
   taxPeriodId,
-  paper,
+  relatedAccounts,
   creating,
   onCreate,
 }: {
+  row: WorkPaperPeriodSummaryRow;
   companyId: string;
   taxPeriodId: string;
-  paper: ApplicableWorkPaper;
+  relatedAccounts: ReturnType<typeof relatedAccountsForDefinition>;
   creating: boolean;
   onCreate: (definitionId: string) => void;
 }) {
-  const presentation = listPresentationStatus(paper.executions);
-  const latest = presentation.latest;
-  const showCalculatorHint = paper.code !== "A.17";
+  const presentation = operationalPresentationStatus(row);
+  const showMetrics = hasCalculatedMetrics(row, row.code);
 
   return (
-    <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-emerald-800">{paper.code}</p>
-          <h2 className="mt-1 text-lg font-semibold text-slate-900">
-            {paper.name}
-          </h2>
+    <tr className="border-t border-slate-100 align-top">
+      <td className="px-4 py-3">
+        <p className="font-semibold text-emerald-800">{row.code}</p>
+        <p className="text-slate-700">{row.name}</p>
+      </td>
+      <td className="px-4 py-3 min-w-[12rem]">
+        <DetectedByCell
+          definitionId={row.definitionId}
+          relatedAccounts={relatedAccounts}
+        />
+      </td>
+      <td className="px-4 py-3">
+        <StatusBadge variant={presentation.variant}>
+          {presentation.label}
+        </StatusBadge>
+        {presentation.secondary ? (
           <p className="mt-1 text-xs text-slate-500">
-            Definición v{paper.definitionVersion}
+            {presentation.secondary}
           </p>
-        </div>
-        <div className="flex flex-col items-end gap-2">
-          <StatusBadge variant={presentation.variant}>
-            {presentation.label}
-          </StatusBadge>
-          {hasExecutionHistory(paper.executions) ? (
-            <span className="text-xs text-slate-500">
-              {paper.executions.length} revisiones
-            </span>
-          ) : null}
-        </div>
-      </div>
-
-      <ul className="mt-4 space-y-2 text-sm">
-        {paper.relatedAccounts.map((account) => (
-          <li
-            key={`${account.companyAccountId}-${account.siiAccountCode}-${account.roleKey}`}
-            className="rounded-lg bg-slate-50 px-3 py-2"
-          >
-            <p className="font-medium text-slate-800">
-              {account.companyAccountCode} · {account.companyAccountName}
-            </p>
-            <p className="text-slate-600">SII {account.siiAccountCode}</p>
-          </li>
-        ))}
-      </ul>
-
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        {showCalculatorHint ? (
-          <p className="text-xs text-slate-500">{CALCULATOR_NOT_IMPLEMENTED}</p>
-        ) : (
-          <span />
+        ) : null}
+      </td>
+      <td className="px-4 py-3">
+        {formatMetricCount(row.missingInputsCount, showMetrics)}
+      </td>
+      <td className="px-4 py-3">
+        {formatMetricCount(row.reconciliationWarningsCount, showMetrics)}
+      </td>
+      <td className="px-4 py-3">
+        {formatProfessionalReviewCell(
+          row.requiresProfessionalReview,
+          showMetrics,
         )}
-        {latest ? (
-          <Button asChild>
+      </td>
+      <td className="px-4 py-3">{formatAdjustmentsCell(row, showMetrics)}</td>
+      <td className="px-4 py-3 text-right whitespace-nowrap">
+        {row.latestExecutionId ? (
+          <Button asChild variant="outline">
             <Link
-              href={workPaperExecutionPath(companyId, taxPeriodId, latest.id)}
+              href={workPaperExecutionPath(
+                companyId,
+                taxPeriodId,
+                row.latestExecutionId,
+              )}
             >
               Abrir
             </Link>
@@ -102,13 +130,13 @@ function PaperCard({
           <Button
             type="button"
             disabled={creating}
-            onClick={() => onCreate(paper.definitionId)}
+            onClick={() => onCreate(row.definitionId)}
           >
             {creating ? "Creando…" : "Crear papel"}
           </Button>
         )}
-      </div>
-    </article>
+      </td>
+    </tr>
   );
 }
 
@@ -120,19 +148,38 @@ export function WorkPapersList({
   taxPeriodId: string;
 }) {
   const queryClient = useQueryClient();
-  const query = useQuery({
+  const applicable = useQuery({
     queryKey: ["work-papers-applicable", companyId, taxPeriodId],
     queryFn: () => workPapersService.applicable(companyId, taxPeriodId),
+  });
+  const summary = useQuery({
+    queryKey: ["work-papers-summary", companyId, taxPeriodId],
+    queryFn: () => workPapersService.summary(companyId, taxPeriodId),
+    refetchInterval: (current) => {
+      const rows = current.state.data;
+      if (!rows) return false;
+      return rows.some((row) => isJobInProgress(row.latestJobStatus))
+        ? 2000
+        : false;
+    },
   });
   const create = useMutation({
     mutationFn: (definitionId: string) =>
       workPapersService.createExecution(companyId, taxPeriodId, definitionId),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: ["work-papers-applicable", companyId, taxPeriodId],
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["work-papers-applicable", companyId, taxPeriodId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["work-papers-summary", companyId, taxPeriodId],
+        }),
+      ]);
     },
   });
+
+  const loading = applicable.isLoading || summary.isLoading;
+  const error = applicable.isError || summary.isError;
 
   return (
     <main className="mx-auto max-w-7xl p-5 sm:p-8">
@@ -146,12 +193,15 @@ export function WorkPapersList({
         </p>
       </header>
 
-      {query.isLoading ? <LoadingState label="Cargando papeles…" /> : null}
-      {query.isError ? (
+      {loading ? <LoadingState label="Cargando papeles…" /> : null}
+      {error ? (
         <div className="mt-6">
           <ErrorState
             description="No fue posible cargar los papeles de trabajo."
-            onRetry={() => void query.refetch()}
+            onRetry={() => {
+              void applicable.refetch();
+              void summary.refetch();
+            }}
           />
         </div>
       ) : null}
@@ -161,33 +211,47 @@ export function WorkPapersList({
         </p>
       ) : null}
 
-      {query.data && query.data.length === 0 ? (
+      {summary.data && summary.data.length === 0 ? (
         <p className="mt-8 rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
           {EMPTY_APPLICABLE_MESSAGE}
         </p>
       ) : null}
 
-      {query.data && query.data.length > 0 ? (
-        <>
-          <WorkPapersSummaryTable
-            companyId={companyId}
-            taxPeriodId={taxPeriodId}
-          />
-          <section className="mt-6 grid gap-4 lg:grid-cols-2">
-            {query.data.map((paper) => (
-              <PaperCard
-                key={paper.definitionId}
-                companyId={companyId}
-                taxPeriodId={taxPeriodId}
-                paper={paper}
-                creating={
-                  create.isPending && create.variables === paper.definitionId
-                }
-                onCreate={(definitionId) => create.mutate(definitionId)}
-              />
-            ))}
-          </section>
-        </>
+      {summary.data && summary.data.length > 0 ? (
+        <div className="mt-6 overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
+              <tr>
+                <th className="px-4 py-3">Papel</th>
+                <th className="px-4 py-3">Detectado por</th>
+                <th className="px-4 py-3">Estado</th>
+                <th className="px-4 py-3">Pendientes</th>
+                <th className="px-4 py-3">Conciliación</th>
+                <th className="px-4 py-3">Revisión</th>
+                <th className="px-4 py-3">Ajustes</th>
+                <th className="px-4 py-3 text-right">Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.data.map((row) => (
+                <WorkPaperRow
+                  key={row.definitionId}
+                  row={row}
+                  companyId={companyId}
+                  taxPeriodId={taxPeriodId}
+                  relatedAccounts={relatedAccountsForDefinition(
+                    applicable.data,
+                    row.definitionId,
+                  )}
+                  creating={
+                    create.isPending && create.variables === row.definitionId
+                  }
+                  onCreate={(definitionId) => create.mutate(definitionId)}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : null}
     </main>
   );

@@ -214,6 +214,77 @@ export function isValidA17Decimal(value: string): boolean {
   return DECIMAL_VALUE.test(value);
 }
 
+export function isCalculatorImplemented(definitionCode: string): boolean {
+  return definitionCode === "A.17";
+}
+
+export function hasCalculatedMetrics(
+  row: WorkPaperPeriodSummaryRow,
+  definitionCode: string,
+): boolean {
+  if (!isCalculatorImplemented(definitionCode)) return false;
+  if (row.executionStatus === "not_started") return false;
+  if (row.latestJobStatus === "completed") return true;
+  if (row.executionStatus === "finalized") return true;
+  return false;
+}
+
+export function formatMetricCount(count: number, showValues: boolean): string {
+  return showValues ? String(count) : "—";
+}
+
+export function formatAdjustmentsCell(
+  row: WorkPaperPeriodSummaryRow,
+  showValues: boolean,
+): string {
+  if (!showValues) return "—";
+  if (row.proposedAdjustmentsCount === 0) return "0";
+  if (row.proposedAdjustmentsTotal) {
+    return `${row.proposedAdjustmentsCount} · ${row.proposedAdjustmentsTotal}`;
+  }
+  return String(row.proposedAdjustmentsCount);
+}
+
+export function formatProfessionalReviewCell(
+  requiresReview: boolean,
+  showValues: boolean,
+): string {
+  if (!showValues) return "—";
+  return requiresReview ? PROFESSIONAL_REVIEW_LABEL : "—";
+}
+
+export function operationalPresentationStatus(row: WorkPaperPeriodSummaryRow): {
+  label: string;
+  variant: "neutral" | "info" | "warning" | "success" | "error";
+  secondary: string | null;
+} {
+  if (isJobInProgress(row.latestJobStatus)) {
+    return { label: "Procesando", variant: "info", secondary: null };
+  }
+  if (row.latestJobStatus === "failed") {
+    return { label: "Error", variant: "error", secondary: null };
+  }
+  if (row.executionStatus === "not_started") {
+    return {
+      label: "Sin iniciar",
+      variant: "neutral",
+      secondary: isCalculatorImplemented(row.code)
+        ? null
+        : CALCULATOR_NOT_IMPLEMENTED,
+    };
+  }
+  if (row.executionStatus === "finalized") {
+    return { label: "Finalizado", variant: "success", secondary: null };
+  }
+  return {
+    label: "Borrador",
+    variant: "warning",
+    secondary: isCalculatorImplemented(row.code)
+      ? null
+      : CALCULATOR_NOT_IMPLEMENTED,
+  };
+}
+
 export function relatedAccountsForExecution(
   papers: ApplicableWorkPaper[] | undefined,
   definitionId: string,
@@ -222,6 +293,13 @@ export function relatedAccountsForExecution(
     papers?.find((paper) => paper.definitionId === definitionId)
       ?.relatedAccounts ?? []
   );
+}
+
+export function relatedAccountsForDefinition(
+  papers: ApplicableWorkPaper[] | undefined,
+  definitionId: string,
+): ApplicableWorkPaper["relatedAccounts"] {
+  return relatedAccountsForExecution(papers, definitionId);
 }
 
 export function isJobInProgress(

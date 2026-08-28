@@ -7,18 +7,27 @@ import {
   EMPTY_APPLICABLE_MESSAGE,
   PROFESSIONAL_REVIEW_LABEL,
   canCalculateA17,
+  formatAdjustmentsCell,
+  formatMetricCount,
+  formatProfessionalReviewCell,
+  hasCalculatedMetrics,
   hasExecutionHistory,
+  isCalculatorImplemented,
   isJobInProgress,
   isValidA17Decimal,
   jobStatusLabel,
   latestExecution,
   listPresentationStatus,
+  operationalPresentationStatus,
   parseResultSnapshot,
   requiresProfessionalReview,
   workPaperExecutionPath,
   workPapersPath,
 } from "../src/lib/work-papers.ts";
-import type { WorkPaperExecutionSummary } from "../src/types/work-papers.types.ts";
+import type {
+  WorkPaperExecutionSummary,
+  WorkPaperPeriodSummaryRow,
+} from "../src/types/work-papers.types.ts";
 import { periodSelectionPath } from "../src/lib/accounting-navigation.ts";
 
 function execution(
@@ -32,6 +41,28 @@ function execution(
     revision,
     supersedesExecutionId: revision > 1 ? "older" : null,
     finalizedAt: status === "finalized" ? "2026-08-01T00:00:00.000Z" : null,
+  };
+}
+
+function summaryRow(
+  overrides: Partial<WorkPaperPeriodSummaryRow> = {},
+): WorkPaperPeriodSummaryRow {
+  return {
+    definitionId: "def-1",
+    code: "A.10",
+    name: "Impuesto a la Renta",
+    definitionVersion: 1,
+    executionStatus: "not_started",
+    latestExecutionId: null,
+    latestExecutionRevision: null,
+    latestJobId: null,
+    latestJobStatus: null,
+    missingInputsCount: 0,
+    reconciliationWarningsCount: 0,
+    requiresProfessionalReview: false,
+    proposedAdjustmentsCount: 0,
+    proposedAdjustmentsTotal: null,
+    ...overrides,
   };
 }
 
@@ -119,7 +150,71 @@ test("job helpers y polling se detienen en completed/failed", () => {
   assert.equal(jobStatusLabel("running"), "Procesando");
 });
 
-test("el listado y el detalle cubren empty state, cuentas, crear y abrir", () => {
+test("estado operativo integra job y execution sin columna JOB", () => {
+  assert.equal(
+    operationalPresentationStatus(summaryRow({ latestJobStatus: "running" }))
+      .label,
+    "Procesando",
+  );
+  assert.equal(
+    operationalPresentationStatus(summaryRow({ latestJobStatus: "failed" }))
+      .label,
+    "Error",
+  );
+  assert.equal(
+    operationalPresentationStatus(
+      summaryRow({
+        executionStatus: "draft",
+        latestJobStatus: "completed",
+      }),
+    ).label,
+    "Borrador",
+  );
+  assert.equal(
+    operationalPresentationStatus(
+      summaryRow({ executionStatus: "not_started", code: "A.10" }),
+    ).secondary,
+    CALCULATOR_NOT_IMPLEMENTED,
+  );
+  assert.equal(isCalculatorImplemented("A.17"), true);
+  assert.equal(isCalculatorImplemented("A.10"), false);
+});
+
+test("métricas muestran guión hasta cálculo real y cero solo después", () => {
+  const notCalculated = summaryRow({
+    executionStatus: "draft",
+    latestExecutionId: "exec-1",
+    missingInputsCount: 0,
+  });
+  assert.equal(hasCalculatedMetrics(notCalculated, "A.10"), false);
+  assert.equal(formatMetricCount(0, false), "—");
+  assert.equal(formatAdjustmentsCell(notCalculated, false), "—");
+  assert.equal(formatProfessionalReviewCell(false, false), "—");
+
+  const calculated = summaryRow({
+    code: "A.17",
+    executionStatus: "draft",
+    latestJobStatus: "completed",
+    missingInputsCount: 0,
+    reconciliationWarningsCount: 0,
+    proposedAdjustmentsCount: 0,
+  });
+  assert.equal(hasCalculatedMetrics(calculated, "A.17"), true);
+  assert.equal(formatMetricCount(0, true), "0");
+  assert.equal(formatAdjustmentsCell(calculated, true), "0");
+  assert.equal(formatProfessionalReviewCell(false, true), "—");
+
+  const withAdjustments = summaryRow({
+    code: "A.17",
+    executionStatus: "draft",
+    latestJobStatus: "completed",
+    proposedAdjustmentsCount: 2,
+    proposedAdjustmentsTotal: "1500.0000",
+  });
+  assert.equal(formatAdjustmentsCell(withAdjustments, true), "2 · 1500.0000");
+});
+
+test("el listado usa una sola tabla operativa sin cards duplicadas", () => {
   const list = readFileSync(
     new URL(
       "../src/components/work-papers/work-papers-list.tsx",
@@ -146,45 +241,29 @@ test("el listado y el detalle cubren empty state, cuentas, crear y abrir", () =>
     "utf8",
   );
 
-  const summary = readFileSync(
-    new URL(
-      "../src/components/work-papers/work-papers-summary.tsx",
-      import.meta.url,
-    ),
-    "utf8",
-  );
-
-  assert.match(list, /EMPTY_APPLICABLE_MESSAGE/);
-  assert.match(list, /Crear papel/);
-  assert.match(list, /Abrir/);
+  assert.doesNotMatch(list, /PaperCard|lg:grid-cols-2|WorkPapersSummaryTable/);
+  assert.doesNotMatch(list, /Resumen de Papeles de Trabajo/);
+  assert.match(list, /Detectado por/);
+  assert.match(list, /companyAccountName/);
   assert.match(list, /companyAccountCode/);
   assert.match(list, /siiAccountCode/);
-  assert.match(list, /definitionId/);
-  assert.doesNotMatch(list, /calculatorKey/);
-  assert.doesNotMatch(list, /Fila fuente/);
-  assert.doesNotMatch(list, /formatRationale/);
-  assert.match(list, /CALCULATOR_NOT_IMPLEMENTED/);
-  assert.match(list, /WorkPapersSummaryTable/);
+  assert.match(list, /Crear papel/);
+  assert.match(list, /Abrir/);
+  assert.match(list, /createExecution/);
+  assert.match(list, /operationalPresentationStatus/);
+  assert.match(list, /presentation\.secondary/);
 
   assert.match(detail, /canCalculateA17/);
   assert.match(detail, /Antecedentes pendientes/);
   assert.match(detail, /PROFESSIONAL_REVIEW_LABEL/);
   assert.match(detail, /A17CalculateForm/);
-  assert.match(detail, /CALCULATOR_NOT_IMPLEMENTED/);
   assert.match(detail, /refetchInterval/);
   assert.match(detail, /isJobInProgress/);
   assert.doesNotMatch(detail, /Fila fuente/);
-  assert.doesNotMatch(detail, /formatRationale/);
-
-  assert.match(summary, /Resumen de Papeles de Trabajo/);
-  assert.match(summary, /refetchInterval/);
-  assert.match(summary, /isJobInProgress/);
 
   assert.match(form, /Calcular/);
-  assert.match(service, /payload = \{ definitionId \}/);
-  assert.match(service, /manualInputs:/);
-  assert.match(service, /\/calculations/);
   assert.match(service, /\/summary/);
+  assert.match(service, /\/calculations/);
   assert.match(service, /\/jobs\//);
   assert.doesNotMatch(service, /\.\.\.dto|\.\.\.values/);
 });
