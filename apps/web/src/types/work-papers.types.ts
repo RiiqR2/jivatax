@@ -1,5 +1,43 @@
 export type WorkPaperExecutionStatus = "draft" | "finalized";
 
+export type WorkPaperJobStatus = "pending" | "running" | "completed" | "failed";
+
+export interface WorkPaperJobSummary {
+  id: string;
+  status: WorkPaperJobStatus;
+  jobType: string;
+  attempt: number;
+  progress: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  failedAt: string | null;
+  errorDetail: Record<string, unknown> | null;
+  resultReference: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface WorkPaperCalculationJobResponse {
+  id: string;
+  status: WorkPaperJobStatus;
+}
+
+export interface WorkPaperPeriodSummaryRow {
+  definitionId: string;
+  code: string;
+  name: string;
+  definitionVersion: number;
+  executionStatus: "not_started" | "draft" | "finalized";
+  latestExecutionId: string | null;
+  latestExecutionRevision: number | null;
+  latestJobId: string | null;
+  latestJobStatus: WorkPaperJobStatus | null;
+  missingInputsCount: number;
+  reconciliationWarningsCount: number;
+  requiresProfessionalReview: boolean;
+  proposedAdjustmentsCount: number;
+  proposedAdjustmentsTotal: string | null;
+}
+
 export interface RelatedWorkPaperAccount {
   roleKey: string;
   rationale: string | null;
@@ -98,6 +136,8 @@ export interface WorkPaperExecutionDetail {
   evidence: WorkPaperEvidence[];
   historicalEvidence: WorkPaperEvidence[];
   adjustments: TaxAdjustment[];
+  activeJob: WorkPaperJobSummary | null;
+  latestJob: WorkPaperJobSummary | null;
 }
 
 export interface A17ManualInput {

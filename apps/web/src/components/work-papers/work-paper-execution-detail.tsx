@@ -13,9 +13,11 @@ import {
   CALCULATOR_NOT_IMPLEMENTED,
   PROFESSIONAL_REVIEW_LABEL,
   canCalculateA17,
-  formatRationale,
   inputSourceLabel,
   isAutomaticInput,
+  isJobInProgress,
+  jobStatusLabel,
+  jobStatusVariant,
   parseResultSnapshot,
   reconciliationVariant,
   relatedAccountsForExecution,
@@ -27,13 +29,21 @@ import type { A17ManualInput } from "@/types/work-papers.types";
 
 function mutationErrorMessage(error: unknown): string {
   if (!axios.isAxiosError(error)) {
-    return "No fue posible calcular el papel.";
+    return "No fue posible iniciar el cálculo.";
   }
   const data = error.response?.data as
     { message?: string | string[] } | undefined;
   if (typeof data?.message === "string") return data.message;
   if (Array.isArray(data?.message)) return data.message.join(" ");
-  return "No fue posible calcular el papel.";
+  return "No fue posible iniciar el cálculo.";
+}
+
+function jobErrorMessage(
+  errorDetail: Record<string, unknown> | null,
+): string | null {
+  if (!errorDetail) return null;
+  const message = errorDetail.message;
+  return typeof message === "string" ? message : "El cálculo falló.";
 }
 
 export function WorkPaperExecutionDetail({
@@ -55,19 +65,34 @@ export function WorkPaperExecutionDetail({
     queryKey: ["work-paper-execution", companyId, taxPeriodId, executionId],
     queryFn: () =>
       workPapersService.execution(companyId, taxPeriodId, executionId),
+    refetchInterval: (current) => {
+      const job =
+        current.state.data?.activeJob ?? current.state.data?.latestJob ?? null;
+      return isJobInProgress(job?.status) ? 2000 : false;
+    },
   });
   const calculate = useMutation({
     mutationFn: (manualInputs: A17ManualInput[]) =>
-      workPapersService.calculateA17(
+      workPapersService.startCalculation(
         companyId,
         taxPeriodId,
         executionId,
         manualInputs,
       ),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: ["work-paper-execution", companyId, taxPeriodId, executionId],
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: [
+            "work-paper-execution",
+            companyId,
+            taxPeriodId,
+            executionId,
+          ],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["work-papers-summary", companyId, taxPeriodId],
+        }),
+      ]);
     },
   });
 
@@ -84,6 +109,8 @@ export function WorkPaperExecutionDetail({
       definitionCode: execution.definition.code,
       status: execution.status,
     });
+  const latestJob = execution?.latestJob ?? execution?.activeJob ?? null;
+  const jobBusy = isJobInProgress(latestJob?.status);
 
   return (
     <main className="mx-auto max-w-5xl space-y-5 p-5 sm:p-8">
@@ -128,6 +155,19 @@ export function WorkPaperExecutionDetail({
                 {execution.status === "finalized" ? "Finalizado" : "Borrador"}
               </StatusBadge>
             </div>
+            {latestJob ? (
+              <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+                <span className="text-slate-600">Proceso de cálculo:</span>
+                <StatusBadge variant={jobStatusVariant(latestJob.status)}>
+                  {jobStatusLabel(latestJob.status)}
+                </StatusBadge>
+                {latestJob.status === "failed" ? (
+                  <span className="text-red-700">
+                    {jobErrorMessage(latestJob.errorDetail)}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
             {requiresProfessionalReview(snapshot) ? (
               <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
                 {PROFESSIONAL_REVIEW_LABEL}
@@ -156,9 +196,6 @@ export function WorkPaperExecutionDetail({
                   >
                     {account.companyAccountCode} · {account.companyAccountName}{" "}
                     · SII {account.siiAccountCode}
-                    {formatRationale(account.rationale)
-                      ? ` · ${formatRationale(account.rationale)}`
-                      : ""}
                   </li>
                 ))}
               </ul>
@@ -348,7 +385,7 @@ export function WorkPaperExecutionDetail({
 
           {showCalculate ? (
             <A17CalculateForm
-              pending={calculate.isPending}
+              pending={calculate.isPending || jobBusy}
               error={
                 calculate.isError ? mutationErrorMessage(calculate.error) : null
               }

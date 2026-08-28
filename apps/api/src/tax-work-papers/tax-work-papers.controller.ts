@@ -63,12 +63,42 @@ export class TaxWorkPapersController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CalculateA17Dto,
   ) {
-    return this.service.calculateA17(
+    return this.service.enqueueCalculation(
       companyId,
       taxPeriodId,
       executionId,
       user.id,
       dto.manualInputs,
     );
+  }
+  @Post("executions/:executionId/calculations")
+  @UseGuards(CompanyWriteAccessGuard)
+  startCalculation(
+    @Param("companyId") companyId: string,
+    @Param("taxPeriodId") taxPeriodId: string,
+    @Param("executionId") executionId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CalculateA17Dto,
+  ) {
+    return this.service.enqueueCalculation(
+      companyId,
+      taxPeriodId,
+      executionId,
+      user.id,
+      dto.manualInputs,
+    );
+  }
+  @Get("jobs/:jobId") getJob(
+    @Param("companyId") companyId: string,
+    @Param("taxPeriodId") taxPeriodId: string,
+    @Param("jobId") jobId: string,
+  ) {
+    return this.service.getJob(companyId, taxPeriodId, jobId);
+  }
+  @Get("summary") summary(
+    @Param("companyId") companyId: string,
+    @Param("taxPeriodId") taxPeriodId: string,
+  ) {
+    return this.service.getPeriodSummary(companyId, taxPeriodId);
   }
 }

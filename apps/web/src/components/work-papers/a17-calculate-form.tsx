@@ -41,8 +41,8 @@ export function A17CalculateForm({
     <section className="rounded-xl border border-slate-200 bg-white p-5">
       <h2 className="font-semibold">Calcular A.17</h2>
       <p className="mt-1 text-sm text-slate-500">
-        Completa los antecedentes manuales. El cálculo se ejecuta en el
-        servidor; no se recalcula en esta pantalla.
+        Completa los antecedentes manuales. El cálculo se ejecuta de forma
+        asíncrona; puedes salir de esta pantalla y volver más tarde.
       </p>
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         {A17_MANUAL_FIELDS.map((field) => (
@@ -76,7 +76,7 @@ export function A17CalculateForm({
       ) : null}
       <div className="mt-4">
         <Button type="button" disabled={pending} onClick={submit}>
-          {pending ? "Calculando…" : "Calcular"}
+          {pending ? "Iniciando…" : "Calcular"}
         </Button>
       </div>
     </section>

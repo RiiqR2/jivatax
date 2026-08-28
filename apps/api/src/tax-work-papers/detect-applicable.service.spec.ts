@@ -49,6 +49,7 @@ describe("detectApplicable query contract", () => {
       } as never,
       { createQueryBuilder: () => qb } as never,
       new A17V1Calculator(),
+      {} as never,
     );
 
     const result = await service.detectApplicable("company-a", "period-a");
@@ -83,6 +84,7 @@ describe("detectApplicable query contract", () => {
         },
       } as never,
       new A17V1Calculator(),
+      {} as never,
     );
     await assert.rejects(
       () => service.detectApplicable("company-a", "period-other"),
