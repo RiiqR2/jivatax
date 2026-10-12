@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { config as loadEnv } from "dotenv";
 import { DataSource } from "typeorm";
+import { getDatabaseSslOptions } from "../config/database.config";
 import { CompanyEntity } from "../companies/entities/company.entity";
 import { StoredFileEntity } from "../files/entities/stored-file.entity";
 import { OrganizationMemberEntity } from "../organizations/entities/organization-member.entity";
@@ -45,6 +46,7 @@ export default new DataSource({
   username: process.env.DATABASE_USER ?? "jivatax",
   password: process.env.DATABASE_PASSWORD ?? "jivatax",
   database: process.env.DATABASE_NAME ?? "jivatax",
+  ssl: getDatabaseSslOptions(),
   entities: [
     UserEntity,
     OrganizationEntity,

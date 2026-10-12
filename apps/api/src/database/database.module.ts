@@ -1,7 +1,10 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
-import { databaseConfig } from "../config/database.config";
+import {
+  databaseConfig,
+  getDatabaseSslOptions,
+} from "../config/database.config";
 
 @Module({
   imports: [
@@ -10,7 +13,7 @@ import { databaseConfig } from "../config/database.config";
       imports: [ConfigModule.forFeature(databaseConfig)],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        type: "mysql",
+        type: "mysql" as const,
         host: config.getOrThrow<string>("database.host"),
         port: config.getOrThrow<number>("database.port"),
         username: config.getOrThrow<string>("database.user"),
@@ -21,6 +24,7 @@ import { databaseConfig } from "../config/database.config";
         logging: config.get<boolean>("database.logging", false),
         charset: "utf8mb4",
         timezone: "Z",
+        ssl: getDatabaseSslOptions(),
       }),
     }),
   ],
