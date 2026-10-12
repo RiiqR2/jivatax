@@ -6,6 +6,7 @@
     "dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/main.js",
+    "start:prod": "node dist/main.js",
     "auth:set-password": "ts-node src/auth/commands/set-password.ts",
     "lint": "eslint \"src/**/*.ts\"",
     "typeorm": "typeorm-ts-node-commonjs",
